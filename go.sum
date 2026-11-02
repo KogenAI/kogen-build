@@ -1,0 +1,8 @@
+github.com/KogenAI/kogen-coordinator v0.0.0-20261102193107-c4a49a4fe84f h1:ZdNwN4h136uHrGpMTNCHg2A54np+rY0c/4IberxzPEU=
+github.com/KogenAI/kogen-coordinator v0.0.0-20261102193107-c4a49a4fe84f/go.mod h1:hNyuwgd+/QEkQVU7tuJyBBgWffxrQtcYA6DZlgb1FCc=
+github.com/KogenAI/kogen-executor v0.0.0-20261102193603-1aea0728c24b h1:u0U6ZTrchJaKBy/2wEAd5APba0WYUpgjuekoqrkiuwI=
+github.com/KogenAI/kogen-executor v0.0.0-20261102193603-1aea0728c24b/go.mod h1:l1/cTLN+CZqq9gUFmCzu3kZ+lxagpTCaaNVx29aYzOk=
+github.com/KogenAI/kogen-loop v0.0.0-20261102055344-c6e2360290d4 h1:+VMCzH+0FYgr79FjWCAokdMbhAffOo9ua/Aw1U4H05k=
+github.com/KogenAI/kogen-loop v0.0.0-20261102055344-c6e2360290d4/go.mod h1:xuHxDT/F3nJeem9k/bSAtkJBPpQVnHpM4T3Sm/rCzRg=
+github.com/KogenAI/kogen-verification v0.0.0-20261102193616-587f67dae7e8 h1:ijg3H261+x+PVkFeL2emjuIi3GiFj+xanN8/alL4HYs=
+github.com/KogenAI/kogen-verification v0.0.0-20261102193616-587f67dae7e8/go.mod h1:7ZHQajaSEvj6Fz2EKVFGB7IzCGOv4T6uPFeILU8s30Y=
