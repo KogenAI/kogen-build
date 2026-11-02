@@ -1,2 +1,5 @@
 # npm dependencies of the real Cucumber and Quint the tests use.
 node_modules/
+
+# Kogen's local, never-committed state (setup results, readiness evidence, runs).
+.kogen/local/
