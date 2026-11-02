@@ -482,50 +482,83 @@ func TestKRevodGateInvalidBlocker(t *testing.T) {
 			t.Fatalf("review events %v", verdicts)
 		}
 	})
+	t.Run("quoted phrase in a real on_demand Build stays a blocker", func(t *testing.T) {
+		t.Parallel()
+		e, _ := revodGateLong(t)
+		f := e.prov
+		defect := finding("blocking", "The scanner prints 'no defects found' for broken input: app.txt no longer reports the parse error of an unterminated record.")
+		f.then(readPartsOf(f, catalogRequired), submit(f, "changes", defect))
+		start := e.head()
+		a := e.reviewed()
+		eq(t, "exit", a.exit, 1)
+		eq(t, "head", e.head(), start)
+		eq(t, "outcome", e.result(e.onlyRun())["outcome"], any("review_blocked"))
+		if verdicts := eventsNamed(e.events(e.onlyRun()), "review"); len(verdicts) != 1 || verdicts[0]["verdict"] != "changes" {
+			t.Fatalf("review events %v", verdicts)
+		}
+	})
 	t.Run("validation", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
 		if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("candidate"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		// The rule holds in the default parts mode as well.
-		r := &reviewRun{b: &Attempt{Root: root}}
-		r.b.Baseline = []string{"fixture.feature"}
 		if err := os.WriteFile(filepath.Join(root, "fixture.feature"), []byte("Feature: x\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		// The documented protected-fixture stop remains a blocker even when it clears the product.
 		fixtureStop := map[string]any{"verdict": "changes", "findings": []any{map[string]any{"path": "fixture.feature", "line": int64(1), "severity": "blocking",
 			"message": "The protected fixture asserts raw escaped HTML; this is a fixture defect, not a product defect."}}}
-		if verdict, problems, err := r.validate(fixtureStop, nil); err != nil || verdict == nil {
-			t.Fatalf("protected fixture stop refused: %v %v", problems, err)
-		}
-		for _, tc := range []struct {
+		type tcase struct {
 			message string
-			invalid bool
-		}{
+			invalid bool // in on_demand mode; parts mode never refuses
+		}
+		cases := []tcase{
 			{revodGateHistoricalBlocker, true},
 			{"Inspection incomplete; this is not a product defect.", true},
 			{"The review could not finish reading; it does not assert any defect.", true},
 			{"Reading stopped early, without asserting a candidate defect.", true},
 			{"No defect was found, but the inspection is not complete.", true},
+			{"Inspection incomplete; not a product defect. The tool prints 'no defects found'.", true},
 			{"Inspection of app.txt shows the parser drops the last record: a product defect.", false},
 			{"The inspection command in check.sh no longer runs, so the defect detection is disabled.", false},
 			{"Defect: no product validation of empty input; inspect app.txt line 1.", false},
-		} {
-			args := map[string]any{"verdict": "changes", "findings": []any{map[string]any{"path": "app.txt", "line": int64(1), "severity": "blocking", "message": tc.message}}}
-			verdict, problems, err := r.validate(args, nil)
-			if err != nil {
-				t.Fatal(err)
+			{"The scanner prints 'no defects found' for broken input: app.txt no longer reports the parse error.", false},
+			{"The scanner prints \"no defects found\" for broken input: app.txt no longer reports the parse error.", false},
+			{"The scanner prints “no defects found” for broken input: app.txt no longer reports the parse error.", false},
+			{"The scanner prints ‘no defects found’ for broken input: app.txt no longer reports the parse error.", false},
+			{"The scanner prints `no defects found` for broken input: app.txt no longer reports the parse error.", false},
+			{"The scanner's 'no defects found' line hides the parse error in app.txt.", false},
+			{"The scanner doesn't stop: 'no defects found' hides the parse error in app.txt.", false},
+			{"It prints 'no defects found' and then says no defects found.", true},
+			{"An unclosed 'quote does not hide that no defects found.", true},
+			{"An unclosed \"quote does not hide that no defects were identified.", true},
+			{"The scanner's output says no defects found.", true},
+		}
+		for _, mode := range []string{"on_demand", "parts", ""} {
+			r := &reviewRun{b: &Attempt{Root: root, Baseline: []string{"fixture.feature"}}}
+			if mode != "" {
+				r.b.Config = &project.Config{ReviewMaterial: project.ReviewMaterial{Mode: mode}}
 			}
-			if got := verdict == nil; got != tc.invalid {
-				t.Errorf("%q: invalid %v (%v), want %v", tc.message, got, problems, tc.invalid)
+			if verdict, problems, err := r.validate(fixtureStop, nil); err != nil || verdict == nil {
+				t.Fatalf("%s: protected fixture stop refused: %v %v", mode, problems, err)
 			}
-			// A note may say anything.
-			args["findings"] = []any{map[string]any{"path": "app.txt", "line": int64(1), "severity": "note", "message": tc.message}}
-			args["verdict"] = "approve"
-			if verdict, problems, _ := r.validate(args, nil); verdict == nil {
-				t.Errorf("note %q refused: %v", tc.message, problems)
+			for _, tc := range cases {
+				want := tc.invalid && mode == "on_demand"
+				args := map[string]any{"verdict": "changes", "findings": []any{map[string]any{"path": "app.txt", "line": int64(1), "severity": "blocking", "message": tc.message}}}
+				verdict, problems, err := r.validate(args, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := verdict == nil; got != want {
+					t.Errorf("%s: %q: invalid %v (%v), want %v", mode, tc.message, got, problems, want)
+				}
+				// A note may say anything.
+				args["findings"] = []any{map[string]any{"path": "app.txt", "line": int64(1), "severity": "note", "message": tc.message}}
+				args["verdict"] = "approve"
+				if verdict, problems, _ := r.validate(args, nil); verdict == nil {
+					t.Errorf("%s: note %q refused: %v", mode, tc.message, problems)
+				}
 			}
 		}
 	})

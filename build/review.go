@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
@@ -579,8 +580,8 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 
 // validate checks a submit_review call (REV-4): a verdict approve or changes with findings
 // {path, line, severity, message}; every path names a file of the checkout or of the start
-// HEAD; changes has a blocking finding, approve none; no blocking finding asserts that there is
-// no product defect; and an approval has read all pinned source parts (in the on_demand mode,
+// HEAD; changes has a blocking finding, approve none; in the on_demand mode only, no blocking
+// finding asserts that there is no product defect (quoted text ignored); and an approval has read all pinned source parts (in the on_demand mode,
 // any verdict has read every part covering a changed hunk). It returns the verdict, or the
 // problems to send back.
 func (r *reviewRun) validate(args map[string]any, input []any) (*reviewVerdict, []string, error) {
@@ -656,7 +657,7 @@ func (r *reviewRun) validate(args map[string]any, input []any) (*reviewVerdict, 
 		// A blocker at a protected path reports a protected fixture defect (the documented stop),
 		// which may well say that the product is not at fault.
 		path, _ := f["path"].(string)
-		if message, _ := f["message"].(string); f["severity"] == "blocking" && reviewNoDefect(message) && !slices.Contains(b.Baseline, path) {
+		if message, _ := f["message"].(string); f["severity"] == "blocking" && b.onDemand() && reviewNoDefect(message) && !slices.Contains(b.Baseline, path) {
 			problems = append(problems, "a blocking finding that asserts no product defect (such as inspection not completed) is not a verdict on the candidate; "+
 				"complete the reads the review requires, then submit approve, or changes with a concrete candidate defect")
 			break
@@ -707,8 +708,52 @@ var reviewNoDefectRe = regexp.MustCompile(`(?i)\bno\s+(?:(?:product|candidate|co
 	`|\bwithout\s+(?:asserting|claiming|alleging)\s+(?:a|any)\s+(?:(?:product|candidate)\s+)?defect`)
 
 // reviewNoDefect reports whether a blocking finding's message explicitly asserts no product
-// defect: invalid feedback, never a blocker.
-func reviewNoDefect(message string) bool { return reviewNoDefectRe.MatchString(message) }
+// defect: invalid feedback, never a blocker. Only the on_demand review applies it, and quoted
+// text (see reviewUnquoted) is ignored: a finding that merely quotes such a phrase is judged
+// by its own claim.
+func reviewNoDefect(message string) bool {
+	return reviewNoDefectRe.MatchString(reviewUnquoted(message))
+}
+
+// reviewQuoteClosers maps each paired quote opener to its closer.
+var reviewQuoteClosers = map[rune]rune{'"': '"', '“': '”', '‘': '’', '`': '`'}
+
+// reviewUnquoted is message without its quoted spans: text enclosed by a matching pair of
+// straight or curly double quotes, curly single quotes or backticks, or by straight single
+// quotes. A straight single quote opens only at the start or after a character that is not a
+// letter or digit, and closes at the next one followed by the end or by such a character, so
+// apostrophes neither open nor close. A quote with no closing partner encloses nothing.
+func reviewUnquoted(message string) string {
+	runes := []rune(message)
+	wordy := func(i int) bool {
+		return i >= 0 && i < len(runes) && (unicode.IsLetter(runes[i]) || unicode.IsDigit(runes[i]))
+	}
+	var out strings.Builder
+	for i := 0; i < len(runes); i++ {
+		closer, paired := reviewQuoteClosers[runes[i]]
+		single := runes[i] == '\'' && !wordy(i-1)
+		if !paired && !single {
+			out.WriteRune(runes[i])
+			continue
+		}
+		if single {
+			closer = '\''
+		}
+		end := -1
+		for j := i + 1; j < len(runes); j++ {
+			if runes[j] == closer && (!single || !wordy(j+1)) {
+				end = j
+				break
+			}
+		}
+		if end < 0 {
+			out.WriteRune(runes[i])
+			continue
+		}
+		i = end
+	}
+	return out.String()
+}
 
 // reviewInteger is v when it is a JSON integer (not a float).
 func reviewInteger(v any) (int64, bool) {
