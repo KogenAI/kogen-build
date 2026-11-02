@@ -1,0 +1,33 @@
+version: 1
+commands:
+  setup:
+    - 'npm ci --prefix testdata/tools/cucumber'
+  fix:
+    - 'gofmt -w .'
+  checks:
+    - name: format
+      run: 'test -z "$(gofmt -l .)"'
+    - name: compile
+      run: 'go build ./...'
+    - name: vet
+      run: 'go vet ./...'
+    - name: go-test
+      run: 'GOFLAGS=-trimpath go test ./...'
+  acceptance:
+    run: 'NODE_PATH="$KOGEN_CUCUMBER" "$KOGEN_NODE" "$KOGEN_CUCUMBER/@cucumber/cucumber/bin/cucumber.js" --strict --require ''features/steps/*.js'' --format "message:$KOGEN_ACCEPTANCE_REPORT" "$KOGEN_ACCEPTANCE_FEATURES"'
+    steps_dir: 'features/steps'
+models:
+  shape:
+    provider: chatgpt
+    model: gpt-6.1-sol
+    effort: low
+  build:
+    provider: chatgpt
+    model: gpt-6.1-terra
+    effort: high
+  review:
+    provider: chatgpt
+    model: gpt-6.1-terra
+    effort: medium
+shape_workers:
+  enabled: false
