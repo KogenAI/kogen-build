@@ -65,6 +65,11 @@ type materialSet struct {
 	// texts are the changed or added text files as they appear in Source (the external
 	// reviewer's parts keep a path's text whole).
 	texts []materialFileText
+	// partsSource is the source of the parts route (an external review whose complete prompt does
+	// not fit one session): Source with the full text of every changed text file left out, and
+	// partsTexts the added text files that remain in it.
+	partsSource string
+	partsTexts  []materialFileText
 }
 
 // materialHunkRange is the lines (1-based, inclusive) of one changed hunk: kind "diff" within
@@ -116,7 +121,8 @@ func (b *Attempt) materialOf(pass verify.Pass) (materialSet, error) {
 	var existing []string
 	var texts []materialFileText
 	var catalog []map[string]any
-	var parts []string
+	var parts, partsView []string
+	var partsTexts []materialFileText
 	for _, p := range changed {
 		old, wasThere := original[p]
 		if wasThere {
@@ -147,6 +153,7 @@ func (b *Attempt) materialOf(pass verify.Pass) (materialSet, error) {
 		})
 		if !isThere {
 			parts = append(parts, "--- "+p+" (deleted)")
+			partsView = append(partsView, "--- "+p+" (deleted)")
 			continue
 		}
 		heading := "--- " + p
@@ -156,11 +163,20 @@ func (b *Attempt) materialOf(pass verify.Pass) (materialSet, error) {
 		switch {
 		case entry.Mode == "160000":
 			parts = append(parts, heading+"\nSubproject commit "+entry.Object)
+			partsView = append(partsView, heading+"\nSubproject commit "+entry.Object)
 		case utf8.ValidString(content) && !strings.Contains(content, "\x00"):
 			parts = append(parts, heading+"\n"+content)
 			texts = append(texts, materialFileText{p, heading + "\n", content})
+			if wasThere {
+				// A changed file's hunks are in the diff and its full text is in the checkout.
+				partsView = append(partsView, heading+" (changed; full text in the checkout)")
+			} else {
+				partsView = append(partsView, heading+"\n"+content)
+				partsTexts = append(partsTexts, materialFileText{p, heading + "\n", content})
+			}
 		default:
 			parts = append(parts, heading+" (binary)")
+			partsView = append(partsView, heading+" (binary)")
 		}
 	}
 	diff, err := b.repo.Diff(b.Start, pass.Tree, existing)
@@ -209,8 +225,14 @@ func (b *Attempt) materialOf(pass verify.Pass) (materialSet, error) {
 	// Source that is not UTF-8 cannot be carried by JSON: the bytes that are not text become
 	// U+FFFD, as the provider request would make them.
 	source = strings.ToValidUTF8(source, "�")
+	partsSource := "# Check results of the final pass\n\n" + results + "\n\n" +
+		"# Diff of existing/deleted paths against start HEAD " + short(b.Start) + "\n\n" + diff + "\n" +
+		materialPartsHeading + "\n\n" +
+		"Newly added files appear here once, with their mode, instead of being repeated in the diff. A changed file's hunks are in the diff above and its full text is in the checkout, so only its heading is listed here.\n\n" +
+		strings.Join(partsView, "\n") + "\n"
+	partsSource = strings.ToValidUTF8(partsSource, "�")
 
-	set := materialSet{Authority: authority, Source: source, Files: catalog, Checks: results, texts: texts}
+	set := materialSet{Authority: authority, Source: source, Files: catalog, Checks: results, texts: texts, partsSource: partsSource, partsTexts: partsTexts}
 	if b.onDemand() {
 		if set.Manifest, set.Segments, set.Hunks, err = b.materialManifest(pass.Tree, catalog, texts, source); err != nil {
 			return materialSet{}, err
@@ -226,6 +248,11 @@ var materialHunkRe = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))
 // diff block and text lie in source, and the lines every changed hunk occupies in them (a
 // deleted path's hunks only in its diff block; binary and gitlink entries have none).
 func (b *Attempt) materialManifest(tree string, catalog []map[string]any, texts []materialFileText, source string) ([]map[string]any, []materialSegment, []materialHunkRange, error) {
+	return b.materialManifestAt(tree, catalog, texts, source, "# Full text of every changed or added file")
+}
+
+// materialManifestAt is materialManifest for a source whose file texts follow the heading text.
+func (b *Attempt) materialManifestAt(tree string, catalog []map[string]any, texts []materialFileText, source, textsHeading string) ([]map[string]any, []materialSegment, []materialHunkRange, error) {
 	manifest := make([]map[string]any, len(catalog))
 	var segments []materialSegment
 	ranges := []materialHunkRange{}
@@ -311,7 +338,7 @@ func (b *Attempt) materialManifest(tree string, catalog []map[string]any, texts 
 		}
 		manifest[i]["hunks"] = hunks
 	}
-	cursor = strings.Index(source, "# Full text of every changed or added file")
+	cursor = strings.Index(source, textsHeading)
 	for _, t := range texts {
 		at := strings.Index(source[cursor:], t.heading+t.content)
 		if at < 0 || t.content == "" {
@@ -361,6 +388,9 @@ func materialCovers(m materialSet, from, to int) []map[string]any {
 	}
 	return covers
 }
+
+// materialPartsHeading is the heading of the third section of the parts source.
+const materialPartsHeading = "# Full text of every added file"
 
 const materialOnDemandGuidance = `This catalog is evidence for this candidate, not new authority. It is the manifest
 of the changed material: per file its diff stat and hunks, per part the line ranges

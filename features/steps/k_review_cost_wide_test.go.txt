@@ -1,0 +1,233 @@
+package build
+
+// The acceptance harness of k-review-cost-wide. Its acceptance step overlays it into ./build,
+// builds the build test binary with `go test -c` and runs this test once per KRCW_MODE. Every
+// mode runs a whole Build in a disposable fixture repository with the package's scripted Claude
+// Code (lineupExec) as builder and external reviewer: no process, model or account. It prints
+// one KRCW observation line and judges nothing itself: the step compares the observations with
+// the feature's expected values.
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+// krcwLines is n fixture lines of one file: `{"file": "<name>", "line": <i>, "value": "<value>"}`.
+func krcwLines(name, value string, n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "{\"file\": %q, \"line\": %d, \"value\": %q}\n", name, i, value)
+	}
+	return b.String()
+}
+
+// krcwLine is line i of a fixture file as krcwLines writes it, without its newline.
+func krcwLine(name, value string, i int) string {
+	return fmt.Sprintf("{\"file\": %q, \"line\": %d, \"value\": %q}", name, i, value)
+}
+
+// krcwFixture is, per mode, the files committed before the Build, the candidate's changes and the
+// lines whose occurrences in the sent review prompts are counted.
+type krcwFixture struct {
+	start     map[string]string
+	candidate map[string]string
+	count     map[string]string
+}
+
+func krcwFixtures(mode string) krcwFixture {
+	switch mode {
+	case "hunk", "custody":
+		// One 15000-line golden fixture (about 760 KB) in which the candidate regenerates line 7500.
+		golden := krcwLines("golden", "golden fixture value", 15000)
+		changed := strings.Replace(golden, krcwLine("golden", "golden fixture value", 7500), krcwLine("golden", "regenerated value", 7500), 1)
+		return krcwFixture{
+			start:     map[string]string{"fixtures/golden.json": golden},
+			candidate: map[string]string{"app.txt": "candidate\n", "fixtures/golden.json": changed},
+			count: map[string]string{
+				"changed_line":   krcwLine("golden", "regenerated value", 7500),
+				"unchanged_line": krcwLine("golden", "golden fixture value", 1),
+			},
+		}
+	case "rewrite":
+		// Two 5000-line wire fixtures (about 250 KB each) that the candidate rewrites on every line.
+		return krcwFixture{
+			start: map[string]string{
+				"fixtures/a.wire.json": krcwLines("a", "wire v1", 5000),
+				"fixtures/b.wire.json": krcwLines("b", "wire v1", 5000),
+			},
+			candidate: map[string]string{
+				"app.txt":              "candidate\n",
+				"fixtures/a.wire.json": krcwLines("a", "wire v2", 5000),
+				"fixtures/b.wire.json": krcwLines("b", "wire v2", 5000),
+			},
+			count: map[string]string{
+				"changed_line":   krcwLine("a", "wire v2", 2500),
+				"unchanged_line": krcwLine("b", "wire v2", 4000),
+			},
+		}
+	case "inline":
+		// A small fixture whose complete review prompt fits one session.
+		small := krcwLines("small", "small fixture value", 50)
+		return krcwFixture{
+			start: map[string]string{"fixtures/small.json": small},
+			candidate: map[string]string{
+				"app.txt":             "candidate\n",
+				"fixtures/small.json": strings.Replace(small, krcwLine("small", "small fixture value", 25), krcwLine("small", "regenerated value", 25), 1),
+			},
+			count: map[string]string{
+				"changed_line":   krcwLine("small", "regenerated value", 25),
+				"unchanged_line": krcwLine("small", "small fixture value", 1),
+			},
+		}
+	}
+	return krcwFixture{}
+}
+
+var krcwHex = regexp.MustCompile(`\b[0-9a-f]{7,64}\b`)
+
+func TestKReviewCostWideAcceptance(t *testing.T) {
+	mode := os.Getenv("KRCW_MODE")
+	fx := krcwFixtures(mode)
+	if fx.start == nil {
+		t.Fatalf("unknown KRCW_MODE %q", mode)
+	}
+	e := newEnv(t)
+	e.useLineup("")
+	for rel, text := range fx.start {
+		e.write(rel, text)
+		e.run("git", "add", rel)
+	}
+	e.run("git", "commit", "-qm", "fixtures")
+	e.approve()
+	start := e.head()
+
+	f := newLineupExec(t)
+	f.build = func(n int, root string, in executor.Input) (executor.RoundResult, error) {
+		for rel, text := range fx.candidate {
+			writeFile(t, filepath.Join(root, rel), text, 0o644)
+		}
+		return executor.RoundResult{Claim: "done"}, nil
+	}
+	f.review = func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error) {
+		if mode == "custody" {
+			matches, _ := filepath.Glob(filepath.Join(root, ".kogen/local/runs/*/executor-review/review-1-part-1.txt"))
+			for _, m := range matches {
+				os.WriteFile(m, []byte("abbreviated"), 0o600)
+			}
+		}
+		return executor.RoundResult{Structured: verdictJSON("approve")}, nil
+	}
+	a := e.build(withLineup(f))
+
+	obs := map[string]any{"mode": mode, "exit": a.exit, "commits": e.commitsSince(start)}
+	// The stop the user is shown: its first line naming a candidate stop reason.
+	obs["stop"] = ""
+	for _, line := range strings.Split(a.shown(), "\n") {
+		if strings.Contains(line, "candidate/") {
+			obs["stop"] = strings.TrimSpace(line)
+			break
+		}
+	}
+	tasks := f.starts[executor.RoleReview]
+	obs["review_sessions"] = len(tasks)
+	reviewing := ""
+	for _, line := range strings.Split(a.out.String()+a.errs.String(), "\n") {
+		if strings.HasPrefix(line, "kogen: reviewing (review 1)") {
+			reviewing, _, _ = strings.Cut(line, ": the complete review prompt")
+		}
+	}
+	obs["reviewing_line"] = reviewing
+
+	id := e.onlyRun()
+	dir := e.runPath(id, "executor-review")
+	source, _ := os.ReadFile(filepath.Join(dir, "review-1-source.txt"))
+	// The retained evidence of the review's parts (review-1-material.json).
+	var ev struct {
+		Delivered   bool `json:"delivered"`
+		ReviewParts []struct {
+			File        string `json:"file"`
+			From        int    `json:"from"`
+			To          int    `json:"to"`
+			PromptBytes int    `json:"prompt_bytes"`
+		} `json:"review_parts"`
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, "review-1-material.json")); err == nil {
+		json.Unmarshal(raw, &ev)
+	}
+	obs["parts"] = len(ev.ReviewParts)
+	obs["delivered"] = ev.Delivered
+
+	// The parts carry the retained source consecutively, each byte once, each prompt within the
+	// ceiling, each part's text being its retained file.
+	covered, at, fits := true, 0, true
+	maxPrompt := 0
+	for i, p := range ev.ReviewParts {
+		text, err := os.ReadFile(filepath.Join(dir, p.File))
+		if err != nil || p.From != at || p.To > len(source) || p.From > p.To || !strings.HasSuffix(string(text), string(source[p.From:p.To])) {
+			covered = false
+			break
+		}
+		at = p.To
+		if i < len(tasks) {
+			prompt := len(tasks[i].Brief.Stable) + len(tasks[i].Brief.Dynamic)
+			maxPrompt = max(maxPrompt, prompt)
+			if tasks[i].Brief.Dynamic != string(text) || prompt != p.PromptBytes || prompt > 524288 {
+				fits = false
+			}
+		}
+	}
+	obs["parts_cover_source_once"] = len(ev.ReviewParts) > 0 && covered && at == len(source)
+	obs["part_prompts_fit"] = len(ev.ReviewParts) > 0 && fits
+	eventParts, eventBytes := -1, -1
+	for _, x := range eventsNamed(e.events(id), "review_parts") {
+		if n, ok := x["parts"].(float64); ok {
+			eventParts = int(n)
+		}
+		if n, ok := x["source_bytes"].(float64); ok {
+			eventBytes = int(n)
+		}
+	}
+	obs["review_parts_event"] = map[string]any{"parts": eventParts, "source_bytes_is_retained_source": eventBytes == len(source)}
+
+	// What every review session was sent: its stable and dynamic texts.
+	sent := ""
+	stable := ""
+	for _, task := range tasks {
+		sent += task.Brief.Stable + "\n" + task.Brief.Dynamic + "\n"
+		stable = task.Brief.Stable
+	}
+	counts := map[string]int{}
+	for name, line := range fx.count {
+		counts[name] = strings.Count(sent, line)
+	}
+	obs["sent_line_counts"] = counts
+	obs["sent_bytes_over_source"] = len(sent) - len(source)
+	obs["source_bytes"] = len(source)
+	obs["max_part_prompt"] = maxPrompt
+
+	// The retained source's section headings and path headings, hashes masked.
+	var sections, headings []string
+	for _, line := range strings.Split(string(source), "\n") {
+		switch {
+		case strings.HasPrefix(line, "# "):
+			sections = append(sections, krcwHex.ReplaceAllString(line, "<sha>"))
+		case strings.HasPrefix(line, "--- ") && !strings.HasPrefix(line, "--- a/") && line != "--- /dev/null":
+			headings = append(headings, line)
+		}
+	}
+	obs["source_sections"] = sections
+	obs["source_path_headings"] = headings
+	obs["task"] = ""
+	if i := strings.LastIndex(stable, "# Review task"); i >= 0 {
+		obs["task"] = stable[i:]
+	}
+	out, _ := json.Marshal(obs)
+	fmt.Println("KRCW " + string(out))
+}

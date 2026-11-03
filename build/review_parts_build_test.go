@@ -309,3 +309,55 @@ func TestReviewInPartsMandatoryMaterialStopsBeforeSending(t *testing.T) {
 		t.Fatal("the candidate was not kept")
 	}
 }
+
+// A one-line change in a large changed file is reviewed in one part carrying its hunk and not the
+// file's unchanged lines: the file's full text is read in the checkout.
+func TestReviewInPartsOmitsAChangedFilesFullText(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.useLineup("")
+	line := func(i int, value string) string { return fmt.Sprintf("{\"line\": %d, \"value\": %q}\n", i, value) }
+	var golden, changed strings.Builder
+	for i := 1; i <= 15000; i++ {
+		golden.WriteString(line(i, "golden value"))
+		if i == 7500 {
+			changed.WriteString(line(i, "regenerated value"))
+		} else {
+			changed.WriteString(line(i, "golden value"))
+		}
+	}
+	e.write("golden.json", golden.String())
+	e.run("git", "add", "golden.json")
+	e.run("git", "commit", "-qm", "fixtures")
+	e.approve()
+	start := e.head()
+	f := newLineupExec(t)
+	f.build = func(n int, root string, in executor.Input) (executor.RoundResult, error) {
+		lineupWriteApp(t, root, "candidate\n")
+		writeFile(t, filepath.Join(root, "golden.json"), changed.String(), 0o644)
+		return executor.RoundResult{Claim: "done"}, nil
+	}
+	f.review = func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error) {
+		return executor.RoundResult{Structured: verdictJSON("approve")}, nil
+	}
+	a := e.build(withLineup(f))
+	if a.exit != 0 || a.err != nil {
+		t.Fatalf("exit %d err %v\n%s", a.exit, a.err, a.shown())
+	}
+	eq(t, "commits", e.commitsSince(start), "1")
+	tasks := f.starts[executor.RoleReview]
+	if len(tasks) != 1 {
+		t.Fatalf("%d review sessions, want one part", len(tasks))
+	}
+	text := tasks[0].Brief.Dynamic
+	contains(t, "part", text, "--- golden.json (changed; full text in the checkout)")
+	contains(t, "part", text, "+"+strings.TrimSuffix(line(7500, "regenerated value"), "\n"))
+	if n := strings.Count(text, strings.TrimSuffix(line(7500, "regenerated value"), "\n")); n != 1 {
+		t.Errorf("the regenerated line is sent %d times, want once", n)
+	}
+	if n := strings.Count(text, strings.TrimSuffix(line(1, "golden value"), "\n")); n > 1 {
+		t.Errorf("an unchanged line is sent %d times", n)
+	}
+	contains(t, "progress", a.out.String()+a.errs.String(), "kogen: reviewing (review 1) in 1 part: the complete review prompt would be ")
+	contains(t, "task", tasks[0].Brief.Stable, "a changed file's full text is not repeated there: read it in the checkout")
+}

@@ -26,7 +26,7 @@ const reviewTask = "# Review task\n\n" +
 // reviewPartsTask replaces reviewTask's first paragraph when the source is reviewed in parts; it is
 // the same for every part.
 const reviewPartsTask = "# Review task\n\n" +
-	"The candidate's source does not fit one review prompt, so it is reviewed in ordered parts, each by its own independent session. This message carries the complete authority and one part: the check results, every changed path and one consecutive piece of the exact diff and full text of changed files, nothing clipped; the other pieces go to the other parts' sessions. Review against the approved Intent with this part as your focus and read any checkout file you need. Reviewers of earlier parts may have made verified repairs, so the checkout holds the current candidate.\n" +
+	"The candidate's source does not fit one review prompt, so it is reviewed in ordered parts, each by its own independent session. This message carries the complete authority and one part: the check results, every changed path and one consecutive piece of the exact review source, nothing clipped; the other pieces go to the other parts' sessions. The review source carries the diff of every changed or deleted path and the full text of every added file; a changed file's full text is not repeated there: read it in the checkout. Review against the approved Intent with this part as your focus and read any checkout file you need. Reviewers of earlier parts may have made verified repairs, so the checkout holds the current candidate.\n" +
 	reviewTaskTail
 
 const reviewTaskTail = "Repair concrete defects within the approved Intent with your tools; protected paths cannot be edited. Maintenance preferences are non-blocking notes.\n" +
@@ -174,12 +174,12 @@ func (c *reviewParter) texts(cuts []reviewCut) []string {
 // (from its `diff --git` line to the next block or the end of the diff) and its `--- <path>`
 // heading with its full text (to the next heading or the end), in source order.
 func (b *Attempt) reviewBlocks(tree string, m materialSet) ([]materialSegment, error) {
-	_, segments, _, err := b.materialManifest(tree, m.Files, m.texts, m.Source)
+	_, segments, _, err := b.materialManifestAt(tree, m.Files, m.partsTexts, m.partsSource, materialPartsHeading)
 	if err != nil {
 		return nil, err
 	}
 	heading := map[string]int{}
-	for _, t := range m.texts {
+	for _, t := range m.partsTexts {
 		heading[t.path] = len(t.heading)
 	}
 	for i, seg := range segments {

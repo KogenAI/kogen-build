@@ -149,12 +149,12 @@ func (x reviewExternal) reviewInParts(ctx context.Context, b *Attempt, role proj
 		return Approved{}, err
 	}
 	c := &reviewParter{
-		source: m.Source, sum: hashHex([]byte(m.Source)), checks: m.Checks, catalog: string(catalog), blocks: blocks, ceiling: reviewCeiling,
+		source: m.partsSource, sum: hashHex([]byte(m.partsSource)), checks: m.Checks, catalog: string(catalog), blocks: blocks, ceiling: reviewCeiling,
 		measure: func(dynamic string) int {
 			return reviewMeasure(x.exec, executor.Brief{Stable: stable, Dynamic: dynamic})
 		},
 	}
-	ev, err := writeReviewMaterial(dir, b.Review, pass.Tree, stable, m.Source, m.Files)
+	ev, err := writeReviewMaterial(dir, b.Review, pass.Tree, stable, m.partsSource, m.Files)
 	if err != nil {
 		return Approved{}, err
 	}
@@ -187,8 +187,12 @@ func (x reviewExternal) reviewInParts(ctx context.Context, b *Attempt, role proj
 		return Approved{}, err
 	}
 	n := len(texts)
-	b.Run.Event(map[string]any{"event": "review_parts", "review": b.Review, "parts": n, "source_bytes": len(m.Source), "ceiling": reviewCeiling})
-	b.s.Progress(fmt.Sprintf("kogen: reviewing (review %d) in %d parts: the complete review prompt would be %d bytes, over the %d-byte ceiling", b.Review, n, whole, reviewCeiling))
+	b.Run.Event(map[string]any{"event": "review_parts", "review": b.Review, "parts": n, "source_bytes": len(m.partsSource), "ceiling": reviewCeiling})
+	noun := "parts"
+	if n == 1 {
+		noun = "part"
+	}
+	b.s.Progress(fmt.Sprintf("kogen: reviewing (review %d) in %d %s: the complete review prompt would be %d bytes, over the %d-byte ceiling", b.Review, n, noun, whole, reviewCeiling))
 
 	current := pass
 	for k := 1; k <= n; k++ {
