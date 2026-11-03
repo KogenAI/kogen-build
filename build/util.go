@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-executor/core"
 )
 
 func itoa(n int) string { return strconv.Itoa(n) }

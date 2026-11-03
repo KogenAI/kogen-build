@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-executor/core"
 )
 
 // interrupt starts a Build whose first request hangs, interrupts it there and returns its

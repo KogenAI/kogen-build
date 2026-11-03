@@ -4,24 +4,24 @@ import (
 	"context"
 	"slices"
 
-	"github.com/KogenAI/kogen-build/build/core"
-	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
+	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-review/review"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/provider"
 	"kogen-loop/tools"
 )
 
 // The independent review runs in package review over a core.Attempt: the Build's own state and
-// the services of the Build in progress (host). A reviewer of build/review is a Reviewer of this
-// package through delegate, which hands it that core.Attempt.
+// the services of the Build in progress (host). A reviewer of kogen-review's review is a Reviewer
+// of this package through delegate, which hands it that core.Attempt.
 
 // delegate is a core.Reviewer as the Build's Reviewer, on the Build's own state.
 type delegate struct{ reviewer core.Reviewer }
 
-// nativeReviewer is the independent review and repair of chapter 06 (build/review).
+// nativeReviewer is the independent review and repair of chapter 06 (kogen-review's review).
 func nativeReviewer() Reviewer { return delegate{review.Independent{}} }
 
 func (d delegate) Review(ctx context.Context, b *Attempt, pass verify.Pass) (Approved, error) {
@@ -32,7 +32,8 @@ func (d delegate) Resume(ctx context.Context, b *Attempt) (Approved, error) {
 	return d.reviewer.Resume(ctx, b.reviewing())
 }
 
-// reviewing is the Build as a reviewer of build/review sees it: this very state, not a copy.
+// reviewing is the Build as a reviewer of kogen-review's review sees it: this very state, not a
+// copy.
 func (b *Attempt) reviewing() *core.Attempt {
 	return &core.Attempt{State: &b.State, Host: host{b}}
 }

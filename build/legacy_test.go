@@ -17,9 +17,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KogenAI/kogen-build/build/core"
-	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/core"
+	"github.com/KogenAI/kogen-review/review"
 )
 
 // The decoder of the Elixir Kogen's version 3 checkpoints (legacy.go), tested against real
@@ -754,7 +754,7 @@ func TestTheContinuationsOfRealCheckpoints(t *testing.T) {
 	eq(t, "landed scenario", landed.LastPass.Acceptance.Scenarios[1].Name+" "+landed.LastPass.Acceptance.Scenarios[1].Status, "Second passed")
 	eq(t, "landed steps", len(landed.LastPass.Acceptance.Scenarios[0].Steps), 2)
 
-	// The review stages hold the reviewer's session the way build/review keeps it.
+	// The review stages hold the reviewer's session the way kogen-review's review keeps it.
 	rv := load("review")
 	eq(t, "review stage", rv.Continuation.Stage, StageReview)
 	s, err := review.DecodeSession(rv.Continuation.Review)

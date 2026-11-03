@@ -11,11 +11,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/KogenAI/kogen-build/build/core"
-	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
+	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-review/review"
 	"kogen-loop/sys"
 )
 

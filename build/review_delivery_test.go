@@ -16,8 +16,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-executor/agent"
+	"github.com/KogenAI/kogen-review/review"
 	"kogen-loop/tools"
 )
 

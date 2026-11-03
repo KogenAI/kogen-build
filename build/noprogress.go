@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"strings"
 
-	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/sys"

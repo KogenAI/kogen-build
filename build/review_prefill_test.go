@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KogenAI/kogen-build/build/core"
-	"github.com/KogenAI/kogen-build/build/review"
+	"github.com/KogenAI/kogen-executor/core"
+	"github.com/KogenAI/kogen-review/review"
 	agent "kogen-loop/tools"
 )
 

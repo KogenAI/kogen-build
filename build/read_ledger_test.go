@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-executor/core"
 )
 
 // With Deps.ReadLedger on, a working-window reset re-opens the conversation with the mandatory

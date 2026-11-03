@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/core"
 )
 
 // Builders of Cucumber Messages reports for the acceptance script of the fixtures: the

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-executor/agent"
+	"github.com/KogenAI/kogen-review/review"
 )
 
 // revodGateEmptySourceControls are 60 clean control cells whose source fits inline (no pinned

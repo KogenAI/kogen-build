@@ -15,10 +15,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/durable"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/core"
 	"kogen-loop/sys"
 )
 

@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
+	"github.com/KogenAI/kogen-executor/core"
 	"kogen-loop/provider"
 	"kogen-loop/sys"
 )

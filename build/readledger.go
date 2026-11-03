@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-executor/core"
 	agent "kogen-loop/tools"
 )
 

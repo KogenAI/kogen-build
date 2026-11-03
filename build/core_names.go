@@ -1,11 +1,11 @@
 package build
 
 import (
-	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-executor/core"
 )
 
-// The persisted Build state, the run record and the review contract live in build/core, which
-// build and build/review share; build re-exports them under their own names.
+// The persisted Build state, the run record and the review contract live in kogen-executor's
+// core, which build and kogen-review's review share; build re-exports them under their own names.
 type (
 	Tokens        = core.Tokens
 	ReviewRecord  = core.ReviewRecord

@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/KogenAI/kogen-build/build/core"
-	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-review/review"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/provider"
 )
@@ -101,7 +101,7 @@ type Loaded struct {
 }
 
 // newReviewer is the reviewer a Build uses when Deps.Reviewer is nil: the independent
-// review and repair of chapter 06 (build/review).
+// review and repair of chapter 06 (kogen-review's review).
 func newReviewer(Deps) Reviewer { return nativeReviewer() }
 
 // newLegacy is the version 3 decoder a resume uses when Deps.Legacy is nil: the reader of

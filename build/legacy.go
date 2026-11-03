@@ -14,9 +14,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/KogenAI/kogen-build/build/core"
-	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/core"
+	"github.com/KogenAI/kogen-review/review"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/provider"
 )
@@ -985,7 +985,7 @@ func (c *legacyConv) stages(b *legacyMap) (plan []stageDef, progress *StageProgr
 
 // ---- the continuation ----
 
-// reviewState is the reviewer's saved session (build/review) for a review stage of a Build read
+// reviewState is the reviewer's saved session (kogen-review) for a review stage of a Build read
 // from a version 3 checkpoint: Elixir's `Kogen.Review` kept the same things. In the stage
 // review that is the session (role, the conversation to send next, usage and attempts so
 // far); in review_verify and review_retry_verify the continuation's own conversation, usage

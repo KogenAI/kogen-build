@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/executor"
 	"kogen-loop/sys"
 )
