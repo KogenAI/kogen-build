@@ -19,6 +19,11 @@ type Deps struct {
 	// pass and explicit resume); review requests are not counted. Zero is off. The limit and the
 	// count are kept in the checkpoint: a resume takes them from there, not from this field.
 	BuildRequestBudget int
+	// ReadLedger is internal and off by default; it is not a CLI flag, a project.yaml key or part
+	// of the checkpoint. On, a working-window reset of the native builder or reviewer re-opens
+	// the conversation with a read ledger instead of the newest exchange, and a re-opened review
+	// gets no pinned source prefill (readledger.go).
+	ReadLedger bool
 
 	// BuildBriefMaxFiles and BuildBriefMaxReadmeBytes cap optional native context.
 	// Nonpositive values leave the corresponding context uncapped.

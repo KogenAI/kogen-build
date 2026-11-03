@@ -62,6 +62,9 @@ type Attempt struct {
 	// force is the tool the request being sent must call (RequestSpec.ForceTool), so that the
 	// size measured for it is that of the request actually sent.
 	force string
+	// ledgerReset is the read_ledger_reset event of the reset that prepared the request being
+	// sent, until Request logs it with the bytes its prefill appended.
+	ledgerReset map[string]any
 }
 
 // noRunNotice follows a refusal that happened before any run was created (stdout, indented
@@ -530,14 +533,21 @@ func (b *Attempt) Request(ctx context.Context, sp RequestSpec) (*provider.Respon
 	}
 	b.force = sp.ForceTool
 	defer func() { b.force = "" }()
+	b.ledgerReset = nil
 	input, err := b.prepareContext(sp.Owner, sp.Role, sp.Instructions, sp.Input, sp.Tools)
 	if err != nil {
 		return nil, nil, err
 	}
+	reopened := len(input)
 	if sp.Prefill != nil {
 		if input, err = sp.Prefill(input); err != nil {
 			return nil, nil, err
 		}
+	}
+	if b.ledgerReset != nil {
+		b.ledgerReset["prefilled_bytes"] = contentBytes(input[reopened:])
+		b.Run.Event(b.ledgerReset)
+		b.ledgerReset = nil
 	}
 	cont := b.Continuation
 	switch {

@@ -1018,7 +1018,7 @@ func (c *reviewCustody) prefilled(window []any) map[string]bool {
 // complete rendered request prefillMargin bytes under the ceiling. Nothing else changes; a
 // part counts as delivered only once a completed response follows the message (prefillScan).
 func (b *Attempt) prefillSource(role project.Role, instructions string, defs, input []any) ([]any, error) {
-	if b.WorkingContext["review"] == nil || b.onDemand() {
+	if b.WorkingContext["review"] == nil || b.onDemand() || (b.deps.ReadLedger && resetCarriesWindow(input)) {
 		return input, nil
 	}
 	if err := b.validateWorkingContext(); err != nil {
@@ -1170,8 +1170,13 @@ func (b *Attempt) reviewDelivery(input, kept []any, tree string) (map[string]any
 			"any other part by id when a claim depends on it; nothing beyond that is required. A verdict with unread " +
 			"required parts is invalid feedback, not a candidate defect. Nothing is appended automatically."
 	} else {
-		note += "Kogen also appends unread pinned parts as native source data messages; they count once a completed response follows them. " +
-			"Read unread pinned parts in batches of about 10 read_file calls per response, not one per response; " +
+		if b.deps.ReadLedger {
+			note += "After a working-window reset Kogen appends no pinned parts to this review: read the unread parts with read_file; " +
+				"the read_ledger message lists the reads this conversation made, and every pinned part can be read again. "
+		} else {
+			note += "Kogen also appends unread pinned parts as native source data messages; they count once a completed response follows them. "
+		}
+		note += "Read unread pinned parts in batches of about 10 read_file calls per response, not one per response; " +
 			"use a smaller batch only after a native not-delivered notice shows a batch did not fit. " +
 			"A not-delivered read is not counted and must be read again."
 	}

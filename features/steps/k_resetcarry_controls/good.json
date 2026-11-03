@@ -1,0 +1,30 @@
+{
+ "review-on": {
+  "status": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "=== RUN   TestKResetCarryAcceptance\nKRC {\"all_parts_read\":true,\"commits\":\"1\",\"exit\":0,\"invalid_verdicts\":0,\"mode\":\"review-on\",\"option\":\"on\",\"prefills_after_reset\":0,\"prefills_before_reset\":1,\"read_ledger_reset_events\":[{\"bytes\":\"\\u003cbytes of the carried ledger\\u003e\",\"dropped\":0,\"entries\":3,\"event\":\"read_ledger_reset\",\"owner\":\"review\",\"prefilled_bytes\":0}],\"reopen\":{\"carries_exchange\":false,\"carries_part_bodies\":false,\"ledger_dropped\":0,\"ledger_entries\":[{\"end_line\":1000,\"note\":\"pad-1 line 0001 of the read ledger fixture\",\"path\":\"fixtures/pad-1.txt\",\"sha256\":\"\\u003csha256 of the read output\\u003e\",\"start_line\":1,\"tool\":\"read_file\"},{\"end_line\":1000,\"note\":\"pad-2 line 0001 of the read ledger fixture\",\"path\":\"fixtures/pad-2.txt\",\"sha256\":\"\\u003csha256 of the read output\\u003e\",\"start_line\":1,\"tool\":\"read_file\"},{\"end_line\":1000,\"note\":\"pad-3 line 0001 of the read ledger fixture\",\"path\":\"fixtures/pad-3.txt\",\"sha256\":\"\\u003csha256 of the read output\\u003e\",\"start_line\":1,\"tool\":\"read_file\"}],\"ledger_messages\":1,\"ledger_type\":\"read_ledger\",\"prefill_messages\":0},\"reread_part_1\":{\"hash_bound\":true,\"read_after_reset\":true},\"resets\":1,\"verdict\":\"approve\"}\n--- PASS: TestKResetCarryAcceptance (7.31s)\nPASS\n",
+  "stderr": ""
+ },
+ "review-off": {
+  "status": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "=== RUN   TestKResetCarryAcceptance\nKRC {\"all_parts_read\":true,\"commits\":\"1\",\"exit\":0,\"invalid_verdicts\":0,\"mode\":\"review-off\",\"option\":\"off\",\"prefills_after_reset\":1,\"prefills_before_reset\":1,\"read_ledger_reset_events\":[],\"reopen\":{\"carries_exchange\":true,\"carries_part_bodies\":true,\"ledger_messages\":0,\"prefill_messages\":1},\"reread_part_1\":{\"hash_bound\":true,\"read_after_reset\":true},\"resets\":1,\"verdict\":\"approve\"}\n--- PASS: TestKResetCarryAcceptance (5.17s)\nPASS\n",
+  "stderr": ""
+ },
+ "build-on": {
+  "status": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "=== RUN   TestKResetCarryAcceptance\nKRC {\"commits\":\"1\",\"exit\":0,\"mode\":\"build-on\",\"option\":\"on\",\"prefills_after_reset\":0,\"prefills_before_reset\":0,\"read_ledger_reset_events\":[{\"bytes\":\"\\u003cbytes of the carried ledger\\u003e\",\"dropped\":0,\"entries\":3,\"event\":\"read_ledger_reset\",\"owner\":\"build\",\"prefilled_bytes\":0}],\"reopen\":{\"carries_exchange\":false,\"carries_part_bodies\":false,\"ledger_dropped\":0,\"ledger_entries\":[{\"end_line\":1000,\"note\":\"pad-1 line 0001 of the read ledger fixture\",\"path\":\"fixtures/pad-1.txt\",\"sha256\":\"\\u003csha256 of the read output\\u003e\",\"start_line\":1,\"tool\":\"read_file\"},{\"end_line\":1000,\"note\":\"pad-2 line 0001 of the read ledger fixture\",\"path\":\"fixtures/pad-2.txt\",\"sha256\":\"\\u003csha256 of the read output\\u003e\",\"start_line\":1,\"tool\":\"read_file\"},{\"end_line\":1000,\"note\":\"pad-3 line 0001 of the read ledger fixture\",\"path\":\"fixtures/pad-3.txt\",\"sha256\":\"\\u003csha256 of the read output\\u003e\",\"start_line\":1,\"tool\":\"read_file\"}],\"ledger_messages\":1,\"ledger_type\":\"read_ledger\",\"prefill_messages\":0},\"resets\":1}\n--- PASS: TestKResetCarryAcceptance (3.00s)\nPASS\n",
+  "stderr": ""
+ },
+ "build-off": {
+  "status": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "=== RUN   TestKResetCarryAcceptance\nKRC {\"commits\":\"1\",\"exit\":0,\"mode\":\"build-off\",\"option\":\"off\",\"prefills_after_reset\":0,\"prefills_before_reset\":0,\"read_ledger_reset_events\":[],\"reopen\":{\"carries_exchange\":true,\"carries_part_bodies\":false,\"ledger_messages\":0,\"prefill_messages\":0},\"resets\":1}\n--- PASS: TestKResetCarryAcceptance (3.91s)\nPASS\n",
+  "stderr": ""
+ }
+}

@@ -1,0 +1,399 @@
+package build
+
+// The acceptance harness of k-resetcarry. Its acceptance step overlays it into ./build, builds
+// the build test binary with `go test -c` and runs this test once per KRC_MODE. Every mode runs
+// a whole Build in a disposable fixture repository against the package's scripted provider
+// (fakeProvider): no process, model or account. The modes force one working-window reset of the
+// native reviewer (review-on, review-off) or of the native builder (build-on, build-off), with
+// Deps.ReadLedger on or off. It prints one KRC observation line and judges nothing itself: the
+// step compares the observations with the feature's expected values.
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-executor/agent"
+	"kogen-loop/tools"
+)
+
+// krcPad is the text of fixture file fixtures/pad-<n>.txt: 1000 numbered lines.
+func krcPad(n int) string {
+	var b strings.Builder
+	for i := 1; i <= 1000; i++ {
+		fmt.Fprintf(&b, "pad-%d line %04d of the read ledger fixture\n", n, i)
+	}
+	return b.String()
+}
+
+// krcApp is the candidate's app.txt in the review modes: about 290 KB, so that the review source
+// is pinned in parts that one window cannot hold.
+func krcApp() string {
+	var b strings.Builder
+	for i := 1; i <= 13000; i++ {
+		fmt.Fprintf(&b, "app line %05d value\n", i)
+	}
+	return b.String()
+}
+
+// krcOption sets Deps.ReadLedger and reports "on", "off" or "absent" (no such bool field).
+func krcOption(in *Input, on bool) string {
+	field := reflect.ValueOf(&in.Deps).Elem().FieldByName("ReadLedger")
+	if !field.IsValid() || field.Kind() != reflect.Bool {
+		return "absent"
+	}
+	field.SetBool(on)
+	if on {
+		return "on"
+	}
+	return "off"
+}
+
+// krcLedgers are the read_ledger messages of a request: their parsed content, and its bytes.
+func krcLedgers(req map[string]any) ([]map[string]any, []int) {
+	var docs []map[string]any
+	var sizes []int
+	for _, it := range requestInput(req) {
+		m, _ := it.(map[string]any)
+		text, ok := m["content"].(string)
+		if !ok || m["role"] != "user" {
+			continue
+		}
+		var doc map[string]any
+		if json.Unmarshal([]byte(text), &doc) != nil || doc["type"] != "read_ledger" {
+			continue
+		}
+		docs = append(docs, doc)
+		sizes = append(sizes, len(text))
+	}
+	return docs, sizes
+}
+
+// krcReads is path -> the outputs of the read_file calls of the requests, in order.
+func krcReads(reqs []map[string]any) map[string][]string {
+	out := map[string][]string{}
+	for _, req := range reqs {
+		calls := map[any]string{}
+		for _, it := range requestInput(req) {
+			m, _ := it.(map[string]any)
+			switch m["type"] {
+			case "function_call":
+				if m["name"] == "read_file" {
+					arguments, _ := m["arguments"].(string)
+					path, _ := tools.DecodeArguments(arguments)["path"].(string)
+					calls[m["call_id"]] = path
+				}
+			case "function_call_output":
+				path, ok := calls[m["call_id"]]
+				text, isText := m["output"].(string)
+				if ok && isText {
+					seen := false
+					for _, o := range out[path] {
+						seen = seen || o == text
+					}
+					if !seen {
+						out[path] = append(out[path], text)
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// krcEntries is the ledger's entries, each sha256 shown as "<sha256 of the read output>" when it
+// is the SHA-256 of what read_file returns for its path in the checkout now (the fixture files do
+// not change).
+func krcEntries(t *testing.T, root string, doc map[string]any) []any {
+	out := []any{}
+	list, _ := doc["entries"].([]any)
+	tl := &tools.Tools{Root: root, Enabled: []string{"read_file"}}
+	for _, e := range list {
+		entry, _ := e.(map[string]any)
+		shown := map[string]any{}
+		for k, v := range entry {
+			shown[k] = v
+		}
+		path, _ := entry["path"].(string)
+		read, err := tl.Run("read_file", map[string]any{"path": path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text, _ := read.Cut().Value().(string); entry["sha256"] == hashHex([]byte(text)) {
+			shown["sha256"] = "<sha256 of the read output>"
+		}
+		out = append(out, shown)
+	}
+	return out
+}
+
+// krcCatalog is path -> sha256 of the pinned parts a review request's catalog lists.
+func krcCatalog(req map[string]any) map[string]any {
+	out := map[string]any{}
+	blocks, _ := requestInput(req)[0].(map[string]any)["content"].([]any)
+	if len(blocks) != 2 {
+		return out
+	}
+	text, _ := blocks[1].(map[string]any)["text"].(string)
+	_, rest, _ := strings.Cut(text, "# Pinned complete candidate source evidence\n")
+	line, _, _ := strings.Cut(rest, "\n")
+	var catalog map[string]any
+	json.Unmarshal([]byte(line), &catalog)
+	list, _ := catalog["parts"].([]any)
+	for _, p := range list {
+		part, _ := p.(map[string]any)
+		if path, ok := part["path"].(string); ok {
+			out[path] = part["sha256"]
+		}
+	}
+	return out
+}
+
+// krcCarried reports whether a request carries any function call or output, and whether it
+// carries complete pinned part text: a read_file output or native prefill entry of a part.
+func krcCarried(t *testing.T, req map[string]any, parts []string) (exchange, bodies bool, prefills int) {
+	texts := map[string]bool{}
+	for _, p := range parts {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		texts["1\t"+strings.TrimRight(string(data), "\n")] = true
+	}
+	for _, it := range requestInput(req) {
+		m, _ := it.(map[string]any)
+		switch m["type"] {
+		case "function_call":
+			exchange = true
+		case "function_call_output":
+			exchange = true
+			if s, ok := m["output"].(string); ok && texts[s] {
+				bodies = true
+			}
+		}
+		if s, ok := m["content"].(string); ok && m["role"] == "user" && strings.HasPrefix(s, prefillMarker+"\n") {
+			prefills++
+		}
+	}
+	if len(prefilledParts(t, req)) > 0 {
+		bodies = true
+	}
+	return exchange, bodies, prefills
+}
+
+// krcFirstReset is the index of the first request that carries a working-window reset, or -1.
+func krcFirstReset(t *testing.T, reqs []map[string]any) int {
+	for i, req := range reqs {
+		if resetHandoff(t, req) != nil {
+			return i
+		}
+	}
+	return -1
+}
+
+// krcLedgerEvents are the read_ledger_reset events, the bytes compared with the carried ledgers.
+func krcLedgerEvents(events []map[string]any, sizes []int) []any {
+	out := []any{}
+	for i, ev := range eventsNamed(events, "read_ledger_reset") {
+		shown := map[string]any{}
+		for k, v := range ev {
+			shown[k] = v
+		}
+		if i < len(sizes) && ev["bytes"] == float64(sizes[i]) {
+			shown["bytes"] = "<bytes of the carried ledger>"
+		}
+		out = append(out, shown)
+	}
+	return out
+}
+
+func krcResets(events []map[string]any, owner string) int {
+	n := 0
+	for _, ev := range eventsNamed(events, "window_reset") {
+		if ev["owner"] == owner {
+			n++
+		}
+	}
+	return n
+}
+
+func TestKResetCarryAcceptance(t *testing.T) {
+	mode := os.Getenv("KRC_MODE")
+	review := strings.HasPrefix(mode, "review-")
+	on := strings.HasSuffix(mode, "-on")
+	if mode != "review-on" && mode != "review-off" && mode != "build-on" && mode != "build-off" {
+		t.Fatalf("KRC_MODE %q", mode)
+	}
+	e := newEnv(t)
+	f := e.prov
+	for n := 1; n <= 3; n++ {
+		e.write(fmt.Sprintf("fixtures/pad-%d.txt", n), krcPad(n))
+	}
+	e.run("git", "add", "fixtures")
+	e.run("git", "commit", "-qm", "read ledger fixtures")
+	e.approve()
+	start := e.head()
+	pads := []any{"read_file", map[string]any{"path": "fixtures/pad-1.txt"}, "read_file", map[string]any{"path": "fixtures/pad-2.txt"},
+		"read_file", map[string]any{"path": "fixtures/pad-3.txt"}}
+
+	reread := ""
+	if review {
+		// The builder writes a large app.txt; the reviewer's first response reads the three pad
+		// files, which forces the reset. In its first response after the reset it reads part 1
+		// again, then the parts it does not know were delivered, up to eight per response, and approves.
+		f.then(f.calls(writeApp(krcApp())[0], writeApp(krcApp())[1], "finish", map[string]any{"summary": "done"}))
+		rereadDone := false
+		reviewer := func(w http.ResponseWriter, r *http.Request) {
+			reqs := f.reviewRequests()
+			req := reqs[len(reqs)-1]
+			if len(reqs) == 1 {
+				f.calls(pads...)(w, r)
+				return
+			}
+			parts := pinnedOf(req)
+			known, _ := inWindow(req)
+			for path := range prefilledParts(t, req) {
+				known[path] = true
+			}
+			reset := resetHandoff(t, req)
+			if reset != nil {
+				if d, ok := reset["review_delivery"].(map[string]any); ok {
+					if source, ok := d["source"].(map[string]any); ok {
+						unread := map[int]bool{}
+						for _, n := range source["unread"].([]any) {
+							unread[int(n.(float64))] = true
+						}
+						for i, p := range parts {
+							if !unread[i+1] {
+								known[p] = true
+							}
+						}
+					}
+				}
+			}
+			var pairs []any
+			if reset != nil && !rereadDone && len(parts) > 0 {
+				rereadDone = true
+				reread = parts[0]
+				pairs = append(pairs, "read_file", map[string]any{"path": parts[0]})
+			}
+			for _, p := range parts {
+				if !known[p] && len(pairs) < 16 {
+					pairs = append(pairs, "read_file", map[string]any{"path": p})
+				}
+			}
+			if len(pairs) > 0 {
+				f.calls(pairs...)(w, r)
+				return
+			}
+			submit(f, "approve")(w, r)
+		}
+		for i := 0; i < 40; i++ {
+			f.then(reviewer)
+		}
+	} else {
+		// The builder reads the three pad files and writes two large scratch files over two
+		// responses, which forces the reset; after it, it writes app.txt and finishes.
+		scratch := func(n int) []any {
+			return []any{"write_file", map[string]any{"path": fmt.Sprintf(".kogen/local/scratch-%d.txt", n), "content": strings.Repeat("x", 300_000)}}
+		}
+		f.then(f.calls(append(append([]any{}, pads[:4]...), scratch(1)...)...))
+		f.then(f.calls(append(append([]any{}, pads[4:]...), scratch(2)...)...))
+		f.then(f.calls(writeApp("candidate\n")[0], writeApp("candidate\n")[1], "finish", map[string]any{"summary": "done"}))
+	}
+
+	option := ""
+	mutate := []func(*Input){func(in *Input) { option = krcOption(in, on) }}
+	if review {
+		mutate = append(mutate, useRealReviewer)
+	}
+	a := e.build(mutate...)
+	id := e.onlyRun()
+	events := e.events(id)
+	obs := map[string]any{"mode": mode, "option": option, "exit": a.exit, "commits": e.gitOut("rev-list", "--count", start+"..HEAD")}
+	if a.exit != 0 {
+		obs["stop"] = a.shown()
+	}
+	owner := "build"
+	var reqs []map[string]any
+	if review {
+		owner = "review"
+		reqs = f.reviewRequests()
+	} else {
+		for _, req := range f.requests() {
+			if requestInstructions(req) == agent.Prompt(agent.Builder) {
+				reqs = append(reqs, req)
+			}
+		}
+	}
+	obs["resets"] = krcResets(events, owner)
+	var sizes []int
+	resetAt := len(reqs)
+	if i := krcFirstReset(t, reqs); i >= 0 {
+		req := reqs[i]
+		docs, ledgerSizes := krcLedgers(req)
+		sizes = ledgerSizes
+		reopen := map[string]any{"ledger_messages": len(docs)}
+		if len(docs) == 1 {
+			reopen["ledger_type"], reopen["ledger_dropped"] = docs[0]["type"], docs[0]["dropped"]
+			reopen["ledger_entries"] = krcEntries(t, e.root, docs[0])
+		}
+		var parts []string
+		if review {
+			parts = pinnedOf(req)
+		}
+		exchange, bodies, prefills := krcCarried(t, req, parts)
+		reopen["carries_exchange"], reopen["carries_part_bodies"], reopen["prefill_messages"] = exchange, bodies, prefills
+		obs["reopen"] = reopen
+		resetAt = i
+	}
+	// The native prefills (review_source_prefill events) before and after the first reset.
+	before, after, reset := 0, 0, false
+	for _, ev := range events {
+		switch {
+		case ev["event"] == "window_reset" && ev["owner"] == owner:
+			reset = true
+		case ev["event"] == "review_source_prefill" && reset:
+			after++
+		case ev["event"] == "review_source_prefill":
+			before++
+		}
+	}
+	obs["prefills_before_reset"], obs["prefills_after_reset"] = before, after
+	obs["read_ledger_reset_events"] = krcLedgerEvents(events, sizes)
+	if review {
+		if data, err := os.ReadFile(e.runPath(id, "review-1.json")); err == nil {
+			var doc map[string]any
+			json.Unmarshal(data, &doc)
+			obs["verdict"] = doc["verdict"]
+		}
+		invalid := 0
+		for _, out := range f.toolOutputs() {
+			if strings.HasPrefix(out, "invalid verdict") {
+				invalid++
+			}
+		}
+		obs["invalid_verdicts"] = invalid
+		for _, ev := range eventsNamed(events, "review_material") {
+			obs["all_parts_read"] = ev["parts"] == ev["parts_read"] && ev["parts"].(float64) > 0
+		}
+		if reread != "" {
+			data, err := os.ReadFile(reread)
+			ok := err == nil
+			want := "1\t" + strings.TrimRight(string(data), "\n")
+			got := krcReads(reqs[resetAt:])[reread]
+			catalog := krcCatalog(reqs[len(reqs)-1])[reread] == hashHex(data)
+			after := false
+			for _, o := range got {
+				after = after || o == want
+			}
+			obs["reread_part_1"] = map[string]any{"read_after_reset": ok && after, "hash_bound": catalog}
+		}
+	}
+	line, _ := json.Marshal(obs)
+	fmt.Println("KRC " + string(line))
+}

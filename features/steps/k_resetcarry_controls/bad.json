@@ -1,0 +1,30 @@
+{
+ "review-on": {
+  "status": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "=== RUN   TestKResetCarryAcceptance\nKRC {\"all_parts_read\":true,\"commits\":\"1\",\"exit\":0,\"invalid_verdicts\":0,\"mode\":\"review-on\",\"option\":\"absent\",\"prefills_after_reset\":1,\"prefills_before_reset\":1,\"read_ledger_reset_events\":[],\"reopen\":{\"carries_exchange\":true,\"carries_part_bodies\":true,\"ledger_messages\":0,\"prefill_messages\":1},\"reread_part_1\":{\"hash_bound\":true,\"read_after_reset\":true},\"resets\":1,\"verdict\":\"approve\"}\n--- PASS: TestKResetCarryAcceptance (3.77s)\nPASS\n",
+  "stderr": ""
+ },
+ "review-off": {
+  "status": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "=== RUN   TestKResetCarryAcceptance\nKRC {\"all_parts_read\":true,\"commits\":\"1\",\"exit\":0,\"invalid_verdicts\":0,\"mode\":\"review-off\",\"option\":\"absent\",\"prefills_after_reset\":1,\"prefills_before_reset\":1,\"read_ledger_reset_events\":[],\"reopen\":{\"carries_exchange\":true,\"carries_part_bodies\":true,\"ledger_messages\":0,\"prefill_messages\":1},\"reread_part_1\":{\"hash_bound\":true,\"read_after_reset\":true},\"resets\":1,\"verdict\":\"approve\"}\n--- PASS: TestKResetCarryAcceptance (3.12s)\nPASS\n",
+  "stderr": ""
+ },
+ "build-on": {
+  "status": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "=== RUN   TestKResetCarryAcceptance\nKRC {\"commits\":\"1\",\"exit\":0,\"mode\":\"build-on\",\"option\":\"absent\",\"prefills_after_reset\":0,\"prefills_before_reset\":0,\"read_ledger_reset_events\":[],\"reopen\":{\"carries_exchange\":true,\"carries_part_bodies\":false,\"ledger_messages\":0,\"prefill_messages\":0},\"resets\":1}\n--- PASS: TestKResetCarryAcceptance (3.02s)\nPASS\n",
+  "stderr": ""
+ },
+ "build-off": {
+  "status": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "=== RUN   TestKResetCarryAcceptance\nKRC {\"commits\":\"1\",\"exit\":0,\"mode\":\"build-off\",\"option\":\"absent\",\"prefills_after_reset\":0,\"prefills_before_reset\":0,\"read_ledger_reset_events\":[],\"reopen\":{\"carries_exchange\":true,\"carries_part_bodies\":false,\"ledger_messages\":0,\"prefill_messages\":0},\"resets\":1}\n--- PASS: TestKResetCarryAcceptance (2.69s)\nPASS\n",
+  "stderr": ""
+ }
+}
