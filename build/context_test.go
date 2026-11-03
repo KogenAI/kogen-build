@@ -102,7 +102,10 @@ func TestAnArchivedWindowThatChangedIsRefused(t *testing.T) {
 	e := newEnv(t)
 	f := e.prov
 	big := map[string]any{"command": "head -c 20000 /dev/zero | tr '\\0' x"}
-	for i := 0; i < 36; i++ {
+	// Each result reaches the model as 12302 bytes (the output is cut at a complete line), so the
+	// working window first exceeds the 524288-byte input budget after 40 results and is reset and
+	// archived on the 41st request. 44 calls leave margin over that reset point.
+	for i := 0; i < 44; i++ {
 		f.then(f.calls("shell", big))
 	}
 	opened := make(chan struct{})

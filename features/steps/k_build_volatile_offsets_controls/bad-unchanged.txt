@@ -1,0 +1,14 @@
+KBVO attempt record request_offset_ms=false load_average=false
+KBVO request_offset_ms differs: log
+KBVO load_average differs: log
+KBVO load_average null differs: log
+KBVO every _ms number equal
+KBVO timestamp equal
+KBVO provider_request_id differs: log
+KBVO pass differs: log
+KBVO outcome differs: log
+KBVO stream_bytes differs: log
+KBVO event at equal
+KBVO new timing keys differs: log
+KBVO new non-timing key differs: log
+--- PASS: TestKBuildVolatileOffsetsAcceptance (1.87s)

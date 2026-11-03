@@ -2,10 +2,8 @@ github.com/KogenAI/kogen-coordinator v0.0.0-20261103113131-ffca7072fe15 h1:rc2ID
 github.com/KogenAI/kogen-coordinator v0.0.0-20261103113131-ffca7072fe15/go.mod h1:hNyuwgd+/QEkQVU7tuJyBBgWffxrQtcYA6DZlgb1FCc=
 github.com/KogenAI/kogen-executor v0.0.0-20261103084720-09eabaf5b7dc h1:F+QBh+Y/rFUnMHRl5WA+7VLa729uremTjCnR3RNsS1E=
 github.com/KogenAI/kogen-executor v0.0.0-20261103084720-09eabaf5b7dc/go.mod h1:ZAIbzEpVi6GyU86oINgGcZ2FRWz1t1hOANrvyuuHHrI=
-github.com/KogenAI/kogen-loop v0.0.0-20261102055344-c6e2360290d4 h1:+VMCzH+0FYgr79FjWCAokdMbhAffOo9ua/Aw1U4H05k=
-github.com/KogenAI/kogen-loop v0.0.0-20261102055344-c6e2360290d4/go.mod h1:xuHxDT/F3nJeem9k/bSAtkJBPpQVnHpM4T3Sm/rCzRg=
-github.com/KogenAI/kogen-review v0.0.0-20261103113204-11d83000d2f2 h1:OUha7d6uU4GCMHE5earKvQegThPRQvq1hbrmRSxK67c=
-github.com/KogenAI/kogen-review v0.0.0-20261103113204-11d83000d2f2/go.mod h1:7W68EvxcllUZpjyGYggQS/XePibk5QkENL5R6mXJVDI=
+github.com/KogenAI/kogen-loop v0.0.0-20261103193244-a5aa5f4ee775 h1:0NcEoKZu/6sYsUyUUKGRm1vtRU9rHD9TDbJHavp8Go8=
+github.com/KogenAI/kogen-loop v0.0.0-20261103193244-a5aa5f4ee775/go.mod h1:xuHxDT/F3nJeem9k/bSAtkJBPpQVnHpM4T3Sm/rCzRg=
 github.com/KogenAI/kogen-review v0.0.0-20261103124347-cfc2fb29917c h1:SDgeWcwjdP8Rz87JDxZYFe/nWijMSb1vHKnMzpQHDJ4=
 github.com/KogenAI/kogen-review v0.0.0-20261103124347-cfc2fb29917c/go.mod h1:7W68EvxcllUZpjyGYggQS/XePibk5QkENL5R6mXJVDI=
 github.com/KogenAI/kogen-verification v0.0.0-20261103020618-01aa16c01767 h1:BCgXQofpkvlOMXyADzgTjLWszOimaEIPx5l1lX1LlFQ=

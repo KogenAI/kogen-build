@@ -186,13 +186,19 @@ type budgetObservation struct {
 	requests, log, checkpoint, result, outcome string
 }
 
-// volatileKeys are the nondeterministic values of a run: its timing, clock and the random
-// run, operation and prompt-cache identities.
+// volatileKeys are the nondeterministic values of a run: its timing, clock, host load and the
+// random run, operation and prompt-cache identities. volatileKey also masks every key that ends
+// in _ms (a millisecond offset or duration) or _at (a timestamp).
 var volatileKeys = map[string]bool{
 	"wall_ms": true, "model_active_ms": true, "t0": true, "at": true, "timestamp": true, "started_at": true,
 	"operation_id": true, "attempt_id": true, "conversation_id": true, "session_id": true, "prompt_cache_key": true,
 	"cache_id": true, "run_id": true, "approval": true, "approval_bytes": true, "index": true, "identity": true, "request_bytes": true, "ttft_ms": true, "duration_ms": true,
 	"headers_ms": true, "first_byte_ms": true, "last_byte_ms": true, "last_progress_ms": true, "max_gap_ms": true, "gap_hist": true,
+	"load_average": true,
+}
+
+func volatileKey(k string) bool {
+	return volatileKeys[k] || strings.HasSuffix(k, "_ms") || strings.HasSuffix(k, "_at")
 }
 
 var cacheIdentity = regexp.MustCompile(`conversation-[0-9a-f]+`)
@@ -215,7 +221,7 @@ func observeBuild(t *testing.T, e *env, id string) budgetObservation {
 			out := map[string]any{}
 			for k, val := range x {
 				switch {
-				case volatileKeys[k]:
+				case volatileKey(k):
 					out[k] = "<volatile>"
 				case k == "cache_ids":
 					ids := map[string]any{}
@@ -353,4 +359,87 @@ func TestBuildRequestBudgetReview(t *testing.T) {
 	}
 	_, state := e.checkpoint(id)
 	eq(t, "count", budgetOf(state), any(map[string]any{"limit": float64(1), "count": float64(1)}))
+}
+
+// TestTheGoldenMaskCatchesTimingAndHostLoadOnly rewrites values of the first provider attempt
+// record of a recorded Build: timing and host-load values leave observeBuild equal, any other
+// value makes the log differ.
+func TestTheGoldenMaskCatchesTimingAndHostLoadOnly(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	f := e.prov
+	f.then(landScript(f)...)
+	if a := e.build(); a.exit != 0 {
+		t.Fatalf("exit %d: %s", a.exit, a.shown())
+	}
+	id := e.onlyRun()
+	logPath := e.runPath(id, "log.jsonl")
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded := observeBuild(t, e, id)
+	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	at := -1
+	for i, line := range lines {
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(line), &doc); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := doc["provider"].(map[string]any); ok && doc["event"] == "provider_attempt" {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		t.Fatalf("no provider_attempt event in %s", logPath)
+	}
+	// observe observeBuilds the run with the attempt record rewritten by change.
+	observe := func(change func(provider map[string]any)) budgetObservation {
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(lines[at]), &doc); err != nil {
+			t.Fatal(err)
+		}
+		change(doc["provider"].(map[string]any))
+		b, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rewritten := append(append(append([]string{}, lines[:at]...), string(b)), lines[at+1:]...)
+		if err := os.WriteFile(logPath, []byte(strings.Join(rewritten, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return observeBuild(t, e, id)
+	}
+	defer os.WriteFile(logPath, raw, 0o600)
+	for name, change := range map[string]func(map[string]any){
+		"request_offset_ms": func(p map[string]any) { p["request_offset_ms"] = 987654 },
+		"load_average":      func(p map[string]any) { p["load_average"] = []any{9.87, 6.54, 3.21} },
+		"load_average null": func(p map[string]any) { p["load_average"] = nil },
+	} {
+		if got := observe(change); !reflect.DeepEqual(got, recorded) {
+			t.Errorf("%s: observation differs from the recorded Build:\n%s\nrecorded:\n%s", name, got.log, recorded.log)
+		}
+	}
+	// A key the recorded Build lacks is compared with the same key at another value.
+	for _, key := range []string{"queue_ms", "spawn_offset_ms", "ended_at"} {
+		first := observe(func(p map[string]any) { p[key] = 123 })
+		second := observe(func(p map[string]any) { p[key] = "later" })
+		if !reflect.DeepEqual(first, second) {
+			t.Errorf("%s: observations of two values differ:\n%s\n%s", key, first.log, second.log)
+		}
+	}
+	for name, change := range map[string]func(map[string]any){
+		"provider_request_id": func(p map[string]any) { p["provider_request_id"] = "req-changed" },
+		"pass":                func(p map[string]any) { p["pass"] = "changed-pass" },
+		"stream_bytes":        func(p map[string]any) { p["stream_bytes"] = 987654321 },
+	} {
+		if got := observe(change); got.log == recorded.log {
+			t.Errorf("%s: the changed value is masked", name)
+		}
+	}
+	// A new non-timing key is compared at two values: added at all, even a masked key would differ.
+	if first, second := observe(func(p map[string]any) { p["attempts_seen"] = 1 }), observe(func(p map[string]any) { p["attempts_seen"] = 2 }); first.log == second.log {
+		t.Error("a new non-timing key: the changed value is masked")
+	}
 }

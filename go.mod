@@ -10,4 +10,4 @@ require (
 	kogen-loop v0.0.0
 )
 
-replace kogen-loop => github.com/KogenAI/kogen-loop v0.0.0-20261102055344-c6e2360290d4
+replace kogen-loop => github.com/KogenAI/kogen-loop v0.0.0-20261103193244-a5aa5f4ee775
