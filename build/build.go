@@ -614,6 +614,13 @@ func (b *Attempt) Request(ctx context.Context, sp RequestSpec) (*provider.Respon
 // in this Build, recorded in the run log and as b.LastPass. The fixers belong to the end of a
 // builder round, not to a pass.
 func (b *Attempt) Verify(ctx context.Context) (verify.Pass, error) {
+	if err := b.promoteModel(); err != nil {
+		return verify.Pass{}, err
+	}
+	models, err := maintainedModels(b.Root)
+	if err != nil {
+		return verify.Pass{}, err
+	}
 	b.Pass++
 	if err := b.Track(); err != nil {
 		return verify.Pass{}, err
@@ -621,7 +628,9 @@ func (b *Attempt) Verify(ctx context.Context) (verify.Pass, error) {
 	if err := b.facts.update(b, "verifying", ""); err != nil {
 		return verify.Pass{}, err
 	}
-	pass, err := verify.Verify(ctx, b.s, b.verifyInput(b.Pass))
+	in := b.verifyInput(b.Pass)
+	in.MaintainedModels = models
+	pass, err := verify.Verify(ctx, b.s, in)
 	if err != nil {
 		return verify.Pass{}, err
 	}

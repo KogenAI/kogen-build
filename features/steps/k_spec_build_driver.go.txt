@@ -1,0 +1,92 @@
+package build
+
+import (
+ "encoding/json"
+ "os"
+ "path/filepath"
+ "strings"
+ "testing"
+
+ "github.com/KogenAI/kogen-coordinator/project"
+ "github.com/KogenAI/kogen-verification/verify"
+)
+
+// The driver reports observations; the protected JS observer owns expectations.
+func TestKSpecBuildReceipt(t *testing.T) {
+ e := newEnv(t)
+ mode := os.Getenv("KS_MODE")
+ model := "module fixture { var x: int\n action init = x' = 0\n action step = x' = x\n val Safe = x == 0\n}\n"
+ original := e.read(project.IntentMDPath(testSlug))
+ if mode != "empty" {
+  e.write(".kogen/intents/fixture/model.qnt", model)
+  e.write(project.IntentMDPath(testSlug), strings.Replace(original, "not applicable — no model for this fixture", ".kogen/intents/fixture/model.qnt invariants=Safe seed=7 samples=3 steps=4", 1))
+  e.approve()
+ }
+ // This synthetic Quint records the exact argv and supplied model bytes. Its only
+ // red result is an invariant run against an intentionally changed maintained model.
+ trace := filepath.Join(e.aux,"trace.jsonl")
+ tool := filepath.Join(e.aux,"quint.js")
+ writeFile(t, tool, `const fs=require('fs');const a=process.argv.slice(2);const text=fs.readFileSync(a[1],'utf8');fs.appendFileSync(process.env.KS_TRACE,JSON.stringify({args:a,text})+'\n');if(a[0]==='run'&&text.includes('val Safe = false')){console.log('[violation] Safe');process.exitCode=1;}`, 0o644)
+ e.extraEnv = append(e.extraEnv,"KS_TRACE="+trace)
+ run := func(slug string, value string) *attempt {
+  e.prov.then(e.prov.calls("write_file",map[string]any{"path":"app.txt","content":value+"\n"},"finish",map[string]any{"summary":"done"}))
+  return e.build(func(in *Input){in.Slug=slug;in.Deps.Tools=verify.Tools{Node:os.Getenv("KOGEN_NODE"),Quint:tool}})
+ }
+ a := run(testSlug,"candidate")
+ receipt := map[string]any{"firstExit":a.exit,"firstError":a.shown()}
+ firstHead := e.head()
+ paths := []string{}
+ for _, p := range strings.Split(e.gitOut("ls-tree","-r","--name-only","HEAD"),"\n") {
+  if strings.HasSuffix(p,".qnt") && !strings.HasPrefix(p,".kogen/intents/") {paths=append(paths,p)}
+ }
+ receipt["maintainedPaths"] = paths
+ contents:=[]string{}
+ for _,p:=range paths {contents=append(contents,e.read(p))}
+ receipt["maintainedContents"]=contents
+ receipt["historyIntact"]=mode=="empty" || e.read(".kogen/intents/fixture/model.qnt")==model
+ receipt["firstClean"]=e.gitOut("status","--porcelain")==""
+ if a.exit==0 {
+  // Install a second approved, model-free Intent with its own matching report.
+  slug:="later"
+  md:=strings.ReplaceAll(original,"fixture","later")
+  feature:=project.FeaturePath(slug)
+  e.write(project.IntentMDPath(slug),md)
+  e.write(feature,testFeature)
+  green:=filepath.Join(e.aux,"later.ndjson")
+  writeFile(t,green,reportFor(t,feature,testFeature,"PASSED"),0o644)
+  accept:=filepath.Join(e.aux,"accept.sh")
+  writeFile(t,accept,"#!/bin/sh\ncp '"+green+"' \"$KOGEN_ACCEPTANCE_REPORT\"\n",0o755)
+  cfg,err:=project.LoadConfig(e.root);if err!=nil {t.Fatal(err)}
+  baseline,err:=project.Baseline(e.root,slug,cfg);if err!=nil {t.Fatal(err)}
+  err=project.WriteApproval(e.root,project.Approval{Slug:slug,SHA256:project.Hash(e.root,baseline),Base:e.head(),Approver:"Kogen Integration <kogen-integration@example.invalid>",ApprovedAt:"2026-10-22T00:00:00Z"});if err!=nil {t.Fatal(err)}
+  os.WriteFile(trace,nil,0o644)
+  b:=run(slug,"later")
+  receipt["secondExit"]=b.exit
+  receipt["secondError"]=b.shown()
+  data,_:=os.ReadFile(trace);receipt["secondTrace"]=string(data)
+  receipt["historyAfterSecond"]=e.gitOut("show",firstHead+":"+project.IntentMDPath(testSlug))==strings.TrimSpace(e.read(project.IntentMDPath(testSlug)))
+  if mode!="empty" && b.exit==0 && len(paths)>0 {
+   // A changed candidate model is a synthetic invariant violation, not an acceptance failure.
+   e.write(paths[0],strings.Replace(model,"val Safe = x == 0","val Safe = false",1))
+   // Observe the ordinary Build verification boundary on this later candidate.
+   // A new Intent avoids replaying an already-landed approval.
+   third:="violating"
+   e.write(project.IntentMDPath(third),strings.ReplaceAll(original,"fixture",third))
+   e.write(project.FeaturePath(third),testFeature)
+   writeFile(t,green,reportFor(t,project.FeaturePath(third),testFeature,"PASSED"),0o644)
+   baseline,err=project.Baseline(e.root,third,cfg);if err!=nil {t.Fatal(err)}
+   err=project.WriteApproval(e.root,project.Approval{Slug:third,SHA256:project.Hash(e.root,baseline),Base:e.head(),Approver:"Kogen Integration <kogen-integration@example.invalid>",ApprovedAt:"2026-10-22T00:00:00Z"});if err!=nil {t.Fatal(err)}
+   // Build requires production-clean startup: commit this synthetic model revision
+   // as the project baseline, then let ordinary verification expose its invariant.
+   e.run("git","add",paths[0]);e.run("git","commit","-qm","Synthetic violated maintained model")
+   // Refresh approval against that baseline.
+   err=project.WriteApproval(e.root,project.Approval{Slug:third,SHA256:project.Hash(e.root,baseline),Base:e.head(),Approver:"Kogen Integration <kogen-integration@example.invalid>",ApprovedAt:"2026-10-22T00:00:00Z"});if err!=nil {t.Fatal(err)}
+   start:=e.head();os.WriteFile(trace,nil,0o644)
+   c:=run(third,"violating")
+   receipt["thirdExit"]=c.exit;receipt["thirdOutput"]=c.shown();receipt["thirdNoCommit"]=e.head()==start
+   data,_=os.ReadFile(trace);receipt["thirdTrace"]=string(data)
+  }
+ }
+ data,err:=json.Marshal(receipt);if err!=nil {t.Fatal(err)}
+ if err=os.WriteFile(os.Getenv("KS_RECEIPT"),data,0o644);err!=nil {t.Fatal(err)}
+}
