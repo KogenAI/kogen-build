@@ -1,7 +1,6 @@
 package build
 
 import (
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -9,8 +8,8 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 )
 
-// A native round that answers the red feedback without a tool call, into the same red, stops
-// the Build (LOOP-7) instead of verifying again and again.
+// A builder round that leaves the candidate unchanged after a red pass is not verified again:
+// the first gets a notice and the second stops the Build.
 
 // says is a response of text only: the builder ends its turn without a tool call.
 func says(text string) handler {
@@ -36,7 +35,7 @@ func passEvents(t *testing.T, e *env, id string) int {
 	return strings.Count(string(log), `"event":"pass"`)
 }
 
-func TestARedAnswerWithoutAToolCallAfterTheSameRedStopsWithTheCandidatePreserved(t *testing.T) {
+func TestASecondRoundWithoutEditsIntoTheSameRedStopsWithTheCandidatePreserved(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	head := e.head()
@@ -49,14 +48,14 @@ func TestARedAnswerWithoutAToolCallAfterTheSameRedStopsWithTheCandidatePreserved
 	id := e.onlyRun()
 	out := a.out.String()
 	contains(t, "stdout", out, "failed fixture: no_progress (Build "+id+")\n")
-	contains(t, "stdout", out, "candidate/no_progress: the builder was told which required acceptance items are missing and answered again without a tool call; verification pass 3 is the same red as the pass before it; edits are left in place\n")
-	contains(t, "stdout", out, "  failing: acceptance\n  missing: failed: First (line 2)\n  missing: failed: Second (line 5)\n")
+	contains(t, "stdout", out, "candidate/no_progress: no edits: round 3 made no edits after the builder was told round 2 made none; verification pass 1 is still red and was not run again; edits are left in place\n")
+	contains(t, "stdout", out, "  failing: acceptance\n  first failure: failed: First (line 2)\n  rounds without edits: 2 of 3\n")
 	contains(t, "stdout", out, "  edited: app.txt\n")
 	eq(t, "model requests", e.prov.count(), 3)
-	eq(t, "pass events", passEvents(t, e, id), 3)
+	eq(t, "pass events", passEvents(t, e, id), 1)
 	res := e.result(id)
 	eq(t, "outcome", res["outcome"], any("no_progress"))
-	eq(t, "passes", res["passes"], any(float64(3)))
+	eq(t, "passes", res["passes"], any(float64(1)))
 	eq(t, "candidate", e.read("app.txt"), "red\n")
 	eq(t, "head", e.head(), head)
 }
@@ -89,15 +88,12 @@ func lastInput(req map[string]any) string {
 	return ""
 }
 
-const missingItemsNoticeText = "Required acceptance items are still missing: verification pass 2 is the same red as the pass before it, " +
-	"and your last round ended without a tool call. The Build is not complete until each of these acceptance scenarios passes:\n" +
-	"- failed: First (line 2)\n- failed: Second (line 5)\n" +
-	"Act on them now with your tools (change the code and the tests it needs), then call finish. " +
-	"If a correct implementation cannot make them pass because a protected acceptance file is wrong, " +
-	"call report_blocker with its paths, the contradiction and your observed evidence instead. " +
-	"Another round without a tool call into the same red stops the Build as no_progress.\n\n"
+const noEditNoticeText = "Round 2 made no edits: the candidate is byte-identical to the tree verification pass 1 checked, so it was not verified again; pass 1 is still red.\n" +
+	"Make an edit toward the first named failure: failed: First (line 2).\n" +
+	"If a correct implementation cannot make it pass because a protected file is wrong, report a protected-file blocker with its paths, the contradiction and your observed evidence instead.\n" +
+	"Another round without edits stops the Build as no_progress (no edits)."
 
-func TestAToolFreeRoundIntoTheSameRedGetsOneNoticeNamingTheMissingItemsAndTheBuildLands(t *testing.T) {
+func TestARoundWithoutEditsIntoTheSameRedIsNotVerifiedAgainAndGetsOnlyTheNotice(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	f := e.prov
@@ -114,55 +110,48 @@ func TestAToolFreeRoundIntoTheSameRedGetsOneNoticeNamingTheMissingItemsAndTheBui
 	reqs := f.requests()
 	eq(t, "model requests", len(reqs), 3)
 	eq(t, "outcome", e.result(id)["outcome"], any("landed"))
-	eq(t, "passes", e.result(id)["passes"], any(float64(3)))
-	notice := lastInput(reqs[2])
-	if !strings.HasPrefix(notice, missingItemsNoticeText+"Verification pass 2 is not green.") {
-		t.Fatalf("the builder's next message is not the notice then the pass feedback:\n%s", notice)
+	eq(t, "passes", e.result(id)["passes"], any(float64(2)))
+	eq(t, "pass events", passEvents(t, e, id), 2)
+	eq(t, "the builder's next message", lastInput(reqs[2]), noEditNoticeText)
+	if !strings.HasPrefix(lastInput(reqs[1]), "Verification pass 1 is not green.") {
+		t.Fatalf("the first red pass did not get the pass feedback:\n%s", lastInput(reqs[1]))
 	}
-	if strings.Contains(lastInput(reqs[1]), "Required acceptance items") {
-		t.Fatalf("the first red pass got a notice:\n%s", lastInput(reqs[1]))
-	}
-	notices := eventsNamed(e.events(id), "missing_items_notice")
-	eq(t, "notices", len(notices), 1)
-	eq(t, "notice pass", notices[0]["pass"], any(float64(2)))
-	eq(t, "notice missing", fmt.Sprint(notices[0]["missing"]), "[failed: First (line 2) failed: Second (line 5)]")
+	contains(t, "stderr", a.errs.String(), "kogen: round 2 made no edits; not verifying the tree of pass 1 again; asked the builder to edit toward failed: First (line 2) or report a protected-file blocker\n")
 }
 
-func TestAnIdenticalRedGetsNoSecondNoticeAfterARoundWithToolCallsThatChangedNothing(t *testing.T) {
+func TestAReadOnlyRoundCountsAsARoundWithoutEdits(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	f := e.prov
 	f.then(
 		f.calls("write_file", map[string]any{"path": "app.txt", "content": "red\n"}, "finish", map[string]any{"summary": "first"}),
-		says("The round is complete."),
-		f.calls("shell", map[string]any{"command": "cat app.txt"}, "finish", map[string]any{"summary": "diagnosed"}),
+		f.calls("read_file", map[string]any{"path": "app.txt"}, "finish", map[string]any{"summary": "diagnosed"}),
+		says("I changed nothing."),
 	)
 	f.then(sayings(12)...)
 	a := e.build()
 	eq(t, "exit", a.exit, 1)
 	id := e.onlyRun()
-	contains(t, "stdout", a.out.String(), "candidate/no_progress: the builder was told which required acceptance items are missing and answered again without a tool call; verification pass 4 is the same red")
-	contains(t, "stdout", a.out.String(), "  missing: failed: First (line 2)\n  missing: failed: Second (line 5)\n")
-	eq(t, "model requests", f.count(), 4)
-	eq(t, "notices", len(eventsNamed(e.events(id), "missing_items_notice")), 1)
+	contains(t, "stdout", a.out.String(), "candidate/no_progress: no edits: round 3 made no edits after the builder was told round 2 made none; verification pass 1 is still red")
+	eq(t, "model requests", f.count(), 3)
+	eq(t, "pass events", passEvents(t, e, id), 1)
 }
 
-func TestARoundWithAToolCallIsProgressEvenWhenTheTreeAndTheRedAreUnchanged(t *testing.T) {
+func TestARoundThatEditsIsVerifiedEvenWhenTheFailingSetIsUnchanged(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	f := e.prov
 	f.then(
 		f.calls("write_file", map[string]any{"path": "app.txt", "content": "red\n"}, "finish", map[string]any{"summary": "first"}),
-		f.calls("shell", map[string]any{"command": "cat app.txt"}, "finish", map[string]any{"summary": "diagnosed"}),
-		f.calls("read_file", map[string]any{"path": "app.txt"}, "finish", map[string]any{"summary": "read"}),
+		f.calls("write_file", map[string]any{"path": "app.txt", "content": "red\nagain\n"}, "finish", map[string]any{"summary": "second"}),
 		f.calls("write_file", map[string]any{"path": "app.txt", "content": "green\n"}, "finish", map[string]any{"summary": "repaired"}),
 	)
 	a := e.build()
 	if a.exit != 0 {
 		t.Fatalf("exit %d\n%s", a.exit, a.shown())
 	}
-	eq(t, "passes", e.result(e.onlyRun())["passes"], any(float64(4)))
-	eq(t, "model requests", f.count(), 4)
+	eq(t, "passes", e.result(e.onlyRun())["passes"], any(float64(3)))
+	eq(t, "model requests", f.count(), 3)
 }
 
 func TestARoundWithoutAToolCallContinuesWhenTheFixersChangedTheCandidate(t *testing.T) {
@@ -211,11 +200,12 @@ func TestAnIgnoredFileChangeIsNotProgressBecauseVerificationSeesOnlyTheCandidate
 	e.prov.then(sayings(5)...)
 	a := e.build()
 	eq(t, "exit", a.exit, 1)
-	contains(t, "stdout", a.out.String(), "candidate/no_progress:")
+	contains(t, "stdout", a.out.String(), "candidate/no_progress: no edits:")
 	eq(t, "model requests", e.prov.count(), 3)
+	eq(t, "pass events", passEvents(t, e, e.onlyRun()), 1)
 }
 
-func TestARedStageGateRepeatedWithoutAToolCallStopsAtTheStage(t *testing.T) {
+func TestARedStageGateRepeatedWithoutEditsStopsAtTheStage(t *testing.T) {
 	t.Parallel()
 	checks := []string{"if grep -qx red app.txt; then echo scoped-red; exit 23; fi"}
 	e, _ := stagedEnv(t, checks)
@@ -225,9 +215,9 @@ func TestARedStageGateRepeatedWithoutAToolCallStopsAtTheStage(t *testing.T) {
 	a := e.build()
 	eq(t, "exit", a.exit, 1)
 	out := a.out.String()
-	contains(t, "stdout", out, "candidate/no_progress:")
-	contains(t, "stdout", out, "  failing: stage-foundation-1\n")
-	eq(t, "model requests", f.count(), 3) // write, finish, the answer without a tool call
+	contains(t, "stdout", out, "candidate/no_progress: no edits: round 3 made no edits after the builder was told round 2 made none;")
+	contains(t, "stdout", out, "  failing: stage-foundation-1\n  first failure: stage-foundation-1\n")
+	eq(t, "model requests", f.count(), 4) // write, finish, two answers without edits
 	eq(t, "candidate", e.read("app.txt"), "red\n")
 	_, _, state := e.stageCheckpoint()
 	eq(t, "active", state["stage_progress"].(map[string]any)["active"], any("foundation"))

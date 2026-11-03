@@ -122,6 +122,11 @@ func (b *Attempt) drive(ctx context.Context, sess executor.Session, in executor.
 				return err
 			}
 		}
+		start, err := b.checkRepo().Tree(b.Start, b.Excluded)
+		if err != nil {
+			return err
+		}
+		b.noEdit.roundStart = start
 		res, err := b.runRound(ctx, sess, in)
 		if err != nil {
 			if e, ok := sys.AsError(err); ok && e.Class == "executor" && e.Reason == executor.ReasonUsageLimit && b.ext != nil {
@@ -137,6 +142,7 @@ func (b *Attempt) drive(ctx context.Context, sess executor.Session, in executor.
 			return err
 		}
 		b.blockerNote = ""
+		b.noEdit.rounds++
 		if b.ext != nil {
 			rounds++
 			if err := b.afterExternalRound(res, rounds); err != nil {
@@ -255,7 +261,15 @@ func (b *Attempt) roundEnd(ctx context.Context) (feedback string, landed bool, e
 	if err := verify.Fix(ctx, b.s, b.verifyInput(b.Pass)); err != nil {
 		return "", false, err
 	}
+	stage := ""
 	if b.StageProgress != nil && b.StageProgress.Phase == phaseStage {
+		stage = b.StagePlan[len(b.StageProgress.Completed)].ID
+	}
+	notice, check, err := b.noEditRound(stage)
+	if err != nil || !check {
+		return notice, false, err
+	}
+	if stage != "" {
 		return b.stageGate(ctx)
 	}
 	return b.verifyAndReview(ctx, true)
@@ -292,17 +306,14 @@ func (b *Attempt) stageGate(ctx context.Context) (string, bool, error) {
 	if err := b.hostOrBaseStop(pass); err != nil {
 		return "", false, err
 	}
-	notice, err := b.stalled(stage.ID, pass)
-	if err != nil {
-		return "", false, err
-	}
+	b.remember(stage.ID, pass)
 	editedNotice := b.unmovedNotice(stage.ID, pass)
 	if !pass.Green {
 		b.Repairs++
 		if err := b.Track(); err != nil {
 			return "", false, err
 		}
-		return withNotice(editedNotice, withNotice(notice, "Stage "+stage.ID+" failed; remain at this stage.\n"+b.PassFeedback(pass, "finish"))), false, nil
+		return withNotice(editedNotice, "Stage "+stage.ID+" failed; remain at this stage.\n"+b.PassFeedback(pass, "finish")), false, nil
 	}
 	p.Completed = append(p.Completed, stage.ID)
 	p.Active, p.Phase = nil, phaseFinal
@@ -350,7 +361,7 @@ func (b *Attempt) verifyStage(ctx context.Context, stage stageDef) (verify.Pass,
 	return pass, b.Track()
 }
 
-// withNotice puts a missing-items notice, when there is one, and a blank line before feedback.
+// withNotice puts a notice, when there is one, and a blank line before feedback.
 func withNotice(notice, feedback string) string {
 	if notice == "" {
 		return feedback

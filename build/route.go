@@ -20,7 +20,7 @@ var _ route.Steps[verify.Pass, Approved] = steps{}
 
 // Verify is the whole-Intent pass. A builder pass (after a builder round) is also checked for a
 // repeated host or base failure; a pass that only restarts verification after a drifted review
-// is not. A red pass goes back to the builder as its feedback, with a missing-items notice.
+// is not. A red pass goes back to the builder as its feedback, with the unmoved-failing-set notice when it applies.
 func (s steps) Verify(ctx context.Context, builderPass bool) (verify.Pass, bool, string, error) {
 	b := s.b
 	pass, err := b.Verify(ctx)
@@ -32,14 +32,11 @@ func (s steps) Verify(ctx context.Context, builderPass bool) (verify.Pass, bool,
 			return verify.Pass{}, false, "", err
 		}
 	}
-	notice, err := b.stalled("", pass)
-	if err != nil {
-		return verify.Pass{}, false, "", err
-	}
+	b.remember("", pass)
 	editedNotice := b.unmovedNotice("", pass)
 	if !pass.Green {
 		b.Repairs++
-		return pass, false, withNotice(editedNotice, withNotice(notice, b.PassFeedback(pass, "finish"))), nil
+		return pass, false, withNotice(editedNotice, b.PassFeedback(pass, "finish")), nil
 	}
 	return pass, true, "", nil
 }

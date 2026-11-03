@@ -1,66 +1,112 @@
 package build
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"strings"
 
-	"github.com/KogenAI/kogen-executor/core"
-	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/sys"
 )
 
-// progressWatch is the native builder's evidence that a round answered the failure feedback
-// it was given. It is not part of the State: a resumed Build starts without a prior red pass,
-// so its first pass can never be taken for a repeat.
-type progressWatch struct {
-	// tools counts the tool calls (including finish) of the native round in progress.
-	tools int
-	// red identifies the last red pass whose feedback the builder holds: the stage, the
-	// exact candidate tree and the failing items. Empty after a green pass.
-	red string
-	// streak counts the consecutive identical red passes of an external Build, identified by
-	// streakSig (stage, candidate tree and failing-set fingerprint).
-	streak    int
-	streakSig string
-	// noticed holds the red identities that already got the missing-items notice. A green pass
-	// clears it.
-	noticed map[string]bool
+// noEditWatch is the Build's evidence for rounds that leave the candidate unchanged. It is not
+// part of the State: a fresh or resumed invocation starts without a remembered red pass, so its
+// first round is always verified.
+type noEditWatch struct {
+	// roundStart is the candidate tree at the start of the builder round in progress ("" when
+	// the round's start is unknown, as when a Build resumes at the end of a round).
+	roundStart string
+	// red is the latest clean red pass, nil after a green pass.
+	red *redPass
+	// rounds counts the builder rounds this invocation ran, and noEdits those without edits.
+	rounds, noEdits int
 }
 
-// externalNoProgressPasses is the number of consecutive identical red passes that stops an
-// external Build.
-const externalNoProgressPasses = 3
+// redPass is a remembered red verification pass with its stage ("" for the whole Intent) and
+// the round that received the no-edit notice for it (0: none yet).
+type redPass struct {
+	stage       string
+	pass        verify.Pass
+	noticeRound int
+}
 
-// externalStalled is the external executor's no-progress rule: the third consecutive clean red
-// pass with the same failing-set fingerprint over the same candidate tree records
-// executor_no_progress and stops like the round cap.
-func (b *Attempt) externalStalled(stage string, pass verify.Pass) error {
-	if pass.Green || !pass.Clean || len(pass.Moved) != 0 || len(pass.Failing) == 0 {
-		b.watch.streak, b.watch.streakSig = 0, ""
-		return nil
+// remember records what a verification pass means for the no-edit rule: a green pass clears the
+// remembered red pass, a clean red pass over a nonempty tree replaces it.
+func (b *Attempt) remember(stage string, pass verify.Pass) {
+	switch {
+	case pass.Green:
+		b.noEdit.red = nil
+	case pass.Clean && len(pass.Moved) == 0 && pass.Tree != "":
+		b.noEdit.red = &redPass{stage: stage, pass: pass}
 	}
-	anon := pass
-	anon.N = 0
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		stage, strings.Join(pass.Failing, "\x00"), b.PassFeedback(anon, "finish"),
-	}, "\x1f")))
-	fingerprint := hex.EncodeToString(sum[:])
-	sig := fingerprint + "\x1f" + pass.Tree
-	if b.watch.streak > 0 && b.watch.streakSig == sig {
-		b.watch.streak++
-	} else {
-		b.watch.streak, b.watch.streakSig = 1, sig
+}
+
+// firstFailure is the first named failure of a pass: its first missing acceptance item, else its
+// first failing check.
+func firstFailure(pass verify.Pass) string {
+	if missing := missingAcceptanceItems(pass); len(missing) > 0 {
+		return missing[0]
 	}
-	if b.watch.streak < externalNoProgressPasses {
-		return nil
+	if len(pass.Failing) > 0 {
+		return pass.Failing[0]
 	}
-	b.Run.Event(map[string]any{
-		"event": "executor_no_progress", "rounds": b.Executor.Rounds,
-		"fingerprint": fingerprint, "failing": core.NonNil(pass.Failing),
-	})
-	return executor.RoundLimit(b.Executor.Rounds)
+	return ""
+}
+
+// noEditNotice is the whole message to a builder whose round left the tree of a red pass as it was.
+func noEditNotice(round int, pass verify.Pass) string {
+	n := itoa(pass.N)
+	return "Round " + itoa(round) + " made no edits: the candidate is byte-identical to the tree verification pass " + n +
+		" checked, so it was not verified again; pass " + n + " is still red.\n" +
+		"Make an edit toward the first named failure: " + firstFailure(pass) + ".\n" +
+		"If a correct implementation cannot make it pass because a protected file is wrong, report a protected-file blocker " +
+		"with its paths, the contradiction and your observed evidence instead.\n" +
+		"Another round without edits stops the Build as no_progress (no edits)."
+}
+
+// noEditRound decides, after the fixers, what a round that left the candidate tree unchanged
+// means. stage is the active stage ID ("" for the whole Intent). A round with edits, or whose tree
+// no remembered red pass checked, is verified as usual (check true). A round that left the tree
+// of the remembered red pass gets one notice instead of a verification, and a second one stops
+// the Build as no_progress; neither runs a pass, its checks or its acceptance.
+func (b *Attempt) noEditRound(stage string) (feedback string, check bool, err error) {
+	w := &b.noEdit
+	start := w.roundStart
+	w.roundStart = ""
+	if start == "" {
+		return "", true, nil
+	}
+	tree, err := b.checkRepo().Tree(b.Start, b.Excluded)
+	if err != nil {
+		return "", false, err
+	}
+	if tree != start {
+		return "", true, nil
+	}
+	w.noEdits++
+	red := w.red
+	if red == nil || red.stage != stage || red.pass.Tree != tree {
+		b.s.Progress("kogen: round " + itoa(b.Round) + " made no edits")
+		return "", true, nil
+	}
+	pass := red.pass
+	if red.noticeRound == 0 {
+		red.noticeRound = b.Round
+		first := firstFailure(pass)
+		b.s.Progress("kogen: round " + itoa(b.Round) + " made no edits; not verifying the tree of pass " + itoa(pass.N) +
+			" again; asked the builder to edit toward " + first + " or report a protected-file blocker")
+		return noEditNotice(b.Round, pass), false, nil
+	}
+	b.s.Progress("kogen: round " + itoa(b.Round) + " made no edits")
+	e := sys.Fail("candidate", "no_progress", "no edits: round "+itoa(b.Round)+" made no edits after the builder was told round "+
+		itoa(red.noticeRound)+" made none; verification pass "+itoa(pass.N)+" is still red and was not run again; edits are left in place", 1)
+	e.Lines = []string{
+		"candidate tree: " + pass.Tree,
+		"failing: " + strings.Join(pass.Failing, ", "),
+		"first failure: " + firstFailure(pass),
+		"rounds without edits: " + itoa(w.noEdits) + " of " + itoa(w.rounds),
+		"No further verification or model request was made. Fix the named failure by hand, or `kogen intent resume " +
+			b.Run.ID + "` to verify again and give the builder the feedback again.",
+	}
+	return "", false, e
 }
 
 // missingAcceptanceItems are the expected scenarios of the pass's acceptance that did not pass,
@@ -77,79 +123,4 @@ func missingAcceptanceItems(pass verify.Pass) []string {
 		}
 	}
 	return items
-}
-
-// missingItemsNotice is the user message that tells the builder which acceptance scenarios
-// are still missing; the pass's ordinary feedback follows it.
-func missingItemsNotice(pass verify.Pass, missing []string) string {
-	var sb strings.Builder
-	sb.WriteString("Required acceptance items are still missing: verification pass " + itoa(pass.N) +
-		" is the same red as the pass before it, and your last round ended without a tool call. " +
-		"The Build is not complete until each of these acceptance scenarios passes:\n")
-	for _, m := range missing {
-		sb.WriteString("- " + m + "\n")
-	}
-	sb.WriteString("Act on them now with your tools (change the code and the tests it needs), then call finish. " +
-		"If a correct implementation cannot make them pass because a protected acceptance file is wrong, " +
-		"call report_blocker with its paths, the contradiction and your observed evidence instead. " +
-		"Another round without a tool call into the same red stops the Build as no_progress.")
-	return sb.String()
-}
-
-// stalled decides what a red pass means for the native builder (LOOP-7): the round made no
-// tool call (it cannot have changed anything, read anything or run anything), and its pass is
-// the same red as the pass whose full feedback it answered: same stage, same candidate tree
-// (verification materializes exactly that tree, so the checks saw identical input) and same
-// failing items. Another round would send the same feedback to the same conversation. Any
-// tool call, any change of tree, stage or failing items, and any pass that is not clean is
-// progress or unknown, and the Build continues. An external executor's passes are watched by
-// externalStalled instead.
-//
-// When that stall holds while acceptance scenarios are not passing, the first time for a red
-// identity it is not a stop: the returned notice names the missing scenarios and goes to the
-// builder before the pass's ordinary feedback. The same identity stalling again stops the Build.
-func (b *Attempt) stalled(stage string, pass verify.Pass) (notice string, err error) {
-	if b.ext != nil {
-		return "", b.externalStalled(stage, pass)
-	}
-	if pass.Green {
-		b.watch.red, b.watch.noticed = "", nil
-		return "", nil
-	}
-	if !pass.Clean || len(pass.Moved) != 0 || pass.Tree == "" || len(pass.Failing) == 0 {
-		b.watch.red = ""
-		return "", nil
-	}
-	sig := strings.Join([]string{stage, pass.Tree, strings.Join(pass.Failing, "\x00")}, "\x1f")
-	repeat := b.watch.tools == 0 && b.watch.red == sig
-	b.watch.red = sig
-	if !repeat {
-		return "", nil
-	}
-	missing := missingAcceptanceItems(pass)
-	if len(missing) > 0 && !b.watch.noticed[sig] {
-		if b.watch.noticed == nil {
-			b.watch.noticed = map[string]bool{}
-		}
-		b.watch.noticed[sig] = true
-		b.Run.Event(map[string]any{"event": "missing_items_notice", "pass": pass.N, "missing": missing})
-		return missingItemsNotice(pass, missing), nil
-	}
-	reason := "the builder answered the failure feedback without a tool call, and verification pass " + itoa(pass.N) +
-		" is the same red as the pass before it; edits are left in place"
-	if len(missing) > 0 {
-		reason = "the builder was told which required acceptance items are missing and answered again without a tool call; " +
-			"verification pass " + itoa(pass.N) + " is the same red as the pass before it; edits are left in place"
-	}
-	e := sys.Fail("candidate", "no_progress", reason, 1)
-	e.Lines = []string{
-		"candidate tree: " + pass.Tree,
-		"failing: " + strings.Join(pass.Failing, ", "),
-	}
-	for _, m := range missing {
-		e.Lines = append(e.Lines, "missing: "+m)
-	}
-	e.Lines = append(e.Lines, "No further verification or model request was made. Fix the named failure by hand, or `kogen intent resume "+
-		b.Run.ID+"` to verify again and give the builder the feedback again.")
-	return "", e
 }

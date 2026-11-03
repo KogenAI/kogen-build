@@ -1,0 +1,12 @@
+{
+  "None": false,
+  "Path": ".kogen/models/build-no-edit-turns-end-build/model.qnt",
+  "Invariants": [
+    "AcceptanceOncePerTree",
+    "NoEditStopFollowsNotice",
+    "RoundsCountedApart"
+  ],
+  "Seed": "7",
+  "Samples": "200",
+  "Steps": "12"
+}

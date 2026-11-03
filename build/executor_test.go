@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -374,7 +375,9 @@ func TestExternalRoundLimitDefaultsToTheExecutorsOwn(t *testing.T) {
 	e := newEnv(t)
 	e.useExecutor("")
 	reviews := 0
-	f := newFakeExecutor(t, externalWritesApp("red\n", harnessUsage(1, 0, 1, 0)))
+	f := newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {
+		return externalWritesApp(fmt.Sprintf("red\n%d\n", n), harnessUsage(1, 0, 1, 0))(n, ctx, root, in)
+	})
 	f.desc.Capabilities.MaxRounds = 3
 	a := e.build(withExecutor(f, &reviews))
 	if a.exit != 1 {

@@ -6,7 +6,7 @@ import (
 )
 
 // envMemory is the environment failures (check name to failure text) of the previous builder
-// pass of this Build attempt, and that pass's number. Like progressWatch it is not part of the
+// pass of this Build attempt, and that pass's number. Like noEditWatch it is not part of the
 // State: a resumed Build starts without it.
 type envMemory struct {
 	pass     int

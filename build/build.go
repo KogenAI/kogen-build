@@ -54,8 +54,8 @@ type Attempt struct {
 	diag        *Diagnostic
 	// ext is the external build executor of a fresh Build (nil: the native builder).
 	ext *externalBuild
-	// watch is the no-progress evidence of the native builder's rounds (noprogress.go).
-	watch   progressWatch
+	// noEdit is the evidence for rounds that leave the candidate unchanged (noprogress.go).
+	noEdit  noEditWatch
 	unmoved unmovedWatch
 	// env is the previous builder pass's environment failures (envfailure.go).
 	env envMemory

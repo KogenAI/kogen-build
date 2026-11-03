@@ -11,10 +11,13 @@ import (
 )
 
 // redTry is a builder response that leaves the candidate red and finishes: the pass fails
-// and the same builder gets the feedback.
-func redTry(f *fakeProvider) handler {
-	return f.calls("write_file", map[string]any{"path": "app.txt", "content": "red\n"}, "finish", map[string]any{"summary": "try"})
+// and the same builder gets the feedback. Try n writes content no other try writes, so that each
+// round edits the candidate and is verified.
+func redTry(f *fakeProvider, n int) handler {
+	return f.calls("write_file", map[string]any{"path": "app.txt", "content": redContent(n)}, "finish", map[string]any{"summary": "try"})
 }
+
+func redContent(n int) string { return fmt.Sprintf("red\n%d\n", n) }
 
 // budgetOf is the saved budget of a checkpoint's state (nil when absent).
 func budgetOf(state map[string]any) any { return state["build_request_budget"] }
@@ -31,7 +34,7 @@ func TestBuildRequestBudgetAcrossPasses(t *testing.T) {
 			e := newEnv(t)
 			f := e.prov
 			for i := 0; i < limit+2; i++ {
-				f.then(redTry(f))
+				f.then(redTry(f, i+1))
 			}
 			start := e.head()
 			a := e.build(func(in *Input) { in.BuildRequestBudget = limit })
@@ -43,7 +46,7 @@ func TestBuildRequestBudgetAcrossPasses(t *testing.T) {
 			res := e.result(id)
 			eq(t, "outcome", res["outcome"], any("build_request_budget"))
 			eq(t, "passes", res["passes"], any(float64(limit)))
-			eq(t, "retained candidate", e.read("app.txt"), "red\n")
+			eq(t, "retained candidate", e.read("app.txt"), redContent(limit))
 			ev := budgetEvents(e, id)
 			if len(ev) != 1 || ev[0]["role"] != "build" || ev[0]["count"] != float64(limit) || ev[0]["limit"] != float64(limit) {
 				t.Fatalf("events: %v", ev)
@@ -62,7 +65,7 @@ func TestBuildRequestBudgetAcrossPasses(t *testing.T) {
 			e := newEnv(t)
 			f := e.prov
 			for i := 1; i < limit; i++ {
-				f.then(redTry(f))
+				f.then(redTry(f, i))
 			}
 			f.then(landScript(f)...)
 			start := e.head()
@@ -286,7 +289,7 @@ func TestBuildRequestBudgetOff(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			f.then(f.calls("read_file", map[string]any{"path": "app.txt"}))
 		}
-		f.then(redTry(f), redTry(f))
+		f.then(redTry(f, 1), redTry(f, 2))
 		f.then(landScript(f)...)
 		a := e.build(func(in *Input) {
 			if zero {

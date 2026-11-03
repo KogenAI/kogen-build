@@ -7,17 +7,7 @@ import (
 	"github.com/KogenAI/kogen-executor/executor"
 )
 
-func countEvents(evs []map[string]any, name string) int {
-	n := 0
-	for _, ev := range evs {
-		if ev["event"] == name {
-			n++
-		}
-	}
-	return n
-}
-
-func TestExternalNoProgressStopsOnThirdIdenticalRed(t *testing.T) {
+func TestExternalRoundsWithoutEditsGetANoticeThenStopAsNoProgress(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	e.useExecutor("")
@@ -27,13 +17,40 @@ func TestExternalNoProgressStopsOnThirdIdenticalRed(t *testing.T) {
 	if a.exit != 1 {
 		t.Fatalf("exit %d\n%s", a.exit, a.shown())
 	}
-	contains(t, "stdout", a.out.String(), "candidate/executor_round_limit")
-	eq(t, "rounds", len(f.seen()), 3)
+	contains(t, "stdout", a.out.String(), "candidate/no_progress: no edits: round 3 made no edits after the builder was told round 2 made none;")
+	seen := f.seen()
+	eq(t, "rounds", len(seen), 3)
+	eq(t, "round 3 input", seen[2].Feedback, noEditNoticeText)
 	eq(t, "reviews", reviews, 0)
 	id := e.onlyRun()
-	evs := e.events(id)
-	eq(t, "events", countEvents(evs, "executor_no_progress"), 1)
-	eq(t, "outcome", e.result(id)["outcome"], any("executor_round_limit"))
+	eq(t, "pass events", passEvents(t, e, id), 1)
+	eq(t, "outcome", e.result(id)["outcome"], any("no_progress"))
+}
+
+func TestAnInvalidExternalBlockerClaimWithoutEditsGetsTheNoteThenTheNotice(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.useExecutor("")
+	f := newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {
+		switch n {
+		case 1:
+			return externalWritesApp("red\n", executor.Usage{})(n, ctx, root, in)
+		case 2:
+			return executor.RoundResult{Ending: executor.EndBlocker, Claim: "blocked",
+				Blocker: &executor.BlockerClaim{Paths: []string{"app.txt"}, Reason: "r", Evidence: "e"}}, nil
+		}
+		return executor.RoundResult{Ending: executor.EndNoCall, Claim: "nothing"}, nil
+	})
+	f.desc.Capabilities.Blocker = true
+	a := e.build(withExecutor(f, nil))
+	if a.exit != 1 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	seen := f.seen()
+	eq(t, "rounds", len(seen), 3)
+	eq(t, "round 3 input", seen[2].Feedback, invalidBlockerMessage+"\n\n"+noEditNoticeText)
+	contains(t, "stdout", a.out.String(), "candidate/no_progress: no edits: round 3 made no edits after the builder was told round 2 made none;")
+	eq(t, "pass events", passEvents(t, e, e.onlyRun()), 1)
 }
 
 func TestExternalNoProgressResetsWhenTheTreeChanges(t *testing.T) {
@@ -54,5 +71,5 @@ func TestExternalNoProgressResetsWhenTheTreeChanges(t *testing.T) {
 		t.Fatalf("exit %d\n%s", a.exit, a.shown())
 	}
 	eq(t, "rounds", len(f.seen()), 4)
-	eq(t, "events", countEvents(e.events(e.onlyRun()), "executor_no_progress"), 0)
+	eq(t, "outcome", e.result(e.onlyRun())["outcome"], any("executor_round_limit"))
 }
