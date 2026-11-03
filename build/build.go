@@ -89,7 +89,10 @@ const noRunNotice = "no newly created Build run; correct the named prerequisite 
 // other error; the exit code is then 70).
 func Build(ctx context.Context, s *sys.Session, in Input) (exit int, err error) {
 	var b *Attempt
-	return conclude(s, &b, buildRun(ctx, s, in, &b))
+	err = buildRun(ctx, s, in, &b)
+	exit, resultErr := conclude(s, &b, err)
+	recordOutcome(in.Outcome, b, err)
+	return exit, resultErr
 }
 
 // Resume is `kogen intent resume <build-id>`: it continues a stopped Build of this checkout
@@ -97,7 +100,30 @@ func Build(ctx context.Context, s *sys.Session, in Input) (exit int, err error) 
 // already landed. Returns and errors are those of Build.
 func Resume(ctx context.Context, s *sys.Session, in ResumeInput) (exit int, err error) {
 	var b *Attempt
-	return conclude(s, &b, resumeRun(ctx, s, in, &b))
+	err = resumeRun(ctx, s, in, &b)
+	exit, resultErr := conclude(s, &b, err)
+	recordOutcome(in.Outcome, b, err)
+	return exit, resultErr
+}
+
+// recordOutcome captures only the attempt owned by this invocation, never a run directory lookup.
+func recordOutcome(out *Outcome, b *Attempt, err error) {
+	if out == nil {
+		return
+	}
+	out.Checks = []verify.CommandResult{}
+	out.Error = nil
+	errors.As(err, &out.Error)
+	if b != nil && out.Error != nil {
+		out.Error = b.stopError(out.Error)
+	}
+	if b == nil {
+		return
+	}
+	if b.LastPass != nil {
+		out.Checks = append(out.Checks, b.LastPass.Checks...)
+	}
+	out.Tree, _ = b.repo.Tree(b.Start, b.Excluded)
 }
 
 // conclude turns the end of a command into its exit code, reporting a stopped or

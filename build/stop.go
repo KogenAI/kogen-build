@@ -60,14 +60,18 @@ func (b *Attempt) result(outcome string, extra map[string]any) map[string]any {
 
 // stopped reports a Build that ends without a commit on an error (GIT-8, CLI-7) and returns
 // the error's exit code.
-func (b *Attempt) stopped(e *sys.Error) (int, error) {
+func (b *Attempt) stopError(e *sys.Error) *sys.Error {
 	if e.Class == "provider" && e.Reason == "context_too_long" {
 		e = &sys.Error{
 			Class: "candidate", Reason: "context_exhausted", Exit: 1, Lines: e.Lines, ProviderFailure: e.ProviderFailure,
 			Detail: "the conversation no longer fits " + b.Config.Models["build"].Model + "'s context; edits are left in place",
 		}
 	}
-	e = agent.WithOriginHint(e)
+	return agent.WithOriginHint(e)
+}
+
+func (b *Attempt) stopped(e *sys.Error) (int, error) {
+	e = b.stopError(e)
 	report := b.Phase != "startup"
 	if report {
 		b.s.Puts(fmt.Sprintf("failed %s: %s (Build %s)", b.Slug, e.Reason, b.Run.ID))

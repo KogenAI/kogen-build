@@ -4,6 +4,31 @@ Kogen's implementation workflow: `kogen intent build`, `resume` and `recover`.
 
 It is a component of [Kogen](https://github.com/KogenAI/kogen), which pins an exact version of it and assembles the `kogen` program.
 
+## Standalone developer Build command
+
+Build the entry point from this module, without an assembled `kogen` executable:
+
+```sh
+go build -o kogen-build ./cmd/kogen-build
+./kogen-build build --project /path/to/checkout --slug my-intent
+./kogen-build resume --project /path/to/checkout --id BUILD_ID
+```
+
+The command uses the existing provider configuration and credentials. Where verification
+uses Kogen's Node, Quint or Cucumber tools, supply their existing paths via `KOGEN_NODE`,
+`KOGEN_QUINT` and `KOGEN_CUCUMBER` (the latter is the `node_modules` directory).
+Approval, independent review, verification, commit, interruption and resume remain the
+ordinary Build behavior. Human progress and diagnostics go to stderr. Stdout is one JSON
+object, also on refusal or stop:
+
+- `exit_code`: integer phase exit code, also used as the process exit status.
+- `branch`: current symbolic branch, or an empty string for detached HEAD.
+- `tree`: candidate Git tree identity (checkout tree on a pre-run refusal).
+- `checks`: ordered project check records from the latest verification pass, each with
+  `name`, `command`, `status` and `output`; `[]` when no pass ran.
+- `error`: null on success, otherwise an object with string `category`, `kind` and
+  `message` when the phase reports a structured error.
+
 ## Packages
 
 - `build`: the builder rounds, native and external executors, working context, verification gates, the independent review and repair stage, the commit stage, checkpoints, resume and recovery.
