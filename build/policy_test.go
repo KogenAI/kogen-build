@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/KogenAI/kogen-executor/executor"
 )
 
 // The builder's policy moved here from kogen-executor's agent package with its recorded bytes:
@@ -141,4 +143,45 @@ func TestUnknownBuilderToolNamesPanic(t *testing.T) {
 		}
 	}()
 	BuilderToolDefinitions("nope")
+}
+
+// TestSubmissionSchemaIsTheExternalBuildersResult pins the external builder's structured
+// submission, which moved here from kogen-executor's Claude Code adapter (its BuildSchema): the
+// exact bytes it always sent as --json-schema (309 bytes, SHA-256 below), and that its blocker
+// is exactly the executor contract's builder-reported blocker claim, which the adapter decodes.
+func TestSubmissionSchemaIsTheExternalBuildersResult(t *testing.T) {
+	sum := sha256.Sum256([]byte(SubmissionSchema))
+	if len(SubmissionSchema) != 309 || hex.EncodeToString(sum[:]) != "e3679f8c9225fd0a9580b414767daeb8cf4de3df1d36ad2f9aee90e12ff77ce4" {
+		t.Errorf("the submission schema changed: %d bytes, %x", len(SubmissionSchema), sum)
+	}
+	var schema struct {
+		Type       string `json:"type"`
+		Properties struct {
+			Summary map[string]any `json:"summary"`
+			Blocker struct {
+				Type                 string                    `json:"type"`
+				Properties           map[string]map[string]any `json:"properties"`
+				Required             []string                  `json:"required"`
+				AdditionalProperties bool                      `json:"additionalProperties"`
+			} `json:"blocker"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(SubmissionSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	var fields []string
+	claim := reflect.TypeOf(executor.BlockerClaim{})
+	for i := range claim.NumField() {
+		name, _, _ := strings.Cut(claim.Field(i).Tag.Get("json"), ",")
+		fields = append(fields, name)
+	}
+	blocker := schema.Properties.Blocker
+	if blocker.Type != "object" || blocker.AdditionalProperties || !reflect.DeepEqual(blocker.Required, fields) || len(blocker.Properties) != len(fields) {
+		t.Errorf("the blocker %+v is not the executor's blocker claim %v", blocker, fields)
+	}
+	for _, f := range fields {
+		if _, ok := blocker.Properties[f]; !ok {
+			t.Errorf("the blocker has no %s", f)
+		}
+	}
 }

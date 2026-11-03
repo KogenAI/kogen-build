@@ -6,5 +6,7 @@ github.com/KogenAI/kogen-loop v0.0.0-20261102055344-c6e2360290d4 h1:+VMCzH+0FYgr
 github.com/KogenAI/kogen-loop v0.0.0-20261102055344-c6e2360290d4/go.mod h1:xuHxDT/F3nJeem9k/bSAtkJBPpQVnHpM4T3Sm/rCzRg=
 github.com/KogenAI/kogen-review v0.0.0-20261103113204-11d83000d2f2 h1:OUha7d6uU4GCMHE5earKvQegThPRQvq1hbrmRSxK67c=
 github.com/KogenAI/kogen-review v0.0.0-20261103113204-11d83000d2f2/go.mod h1:7W68EvxcllUZpjyGYggQS/XePibk5QkENL5R6mXJVDI=
+github.com/KogenAI/kogen-review v0.0.0-20261103124347-cfc2fb29917c h1:SDgeWcwjdP8Rz87JDxZYFe/nWijMSb1vHKnMzpQHDJ4=
+github.com/KogenAI/kogen-review v0.0.0-20261103124347-cfc2fb29917c/go.mod h1:7W68EvxcllUZpjyGYggQS/XePibk5QkENL5R6mXJVDI=
 github.com/KogenAI/kogen-verification v0.0.0-20261103020618-01aa16c01767 h1:BCgXQofpkvlOMXyADzgTjLWszOimaEIPx5l1lX1LlFQ=
 github.com/KogenAI/kogen-verification v0.0.0-20261103020618-01aa16c01767/go.mod h1:7ZHQajaSEvj6Fz2EKVFGB7IzCGOv4T6uPFeILU8s30Y=

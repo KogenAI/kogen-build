@@ -575,6 +575,12 @@ func defaultRole() project.Role { return project.Role{Model: "gpt-6.1-sol", Effo
 // validateReview checks a submit_review call as the Build's review does: review.Validate over
 // the Build's checkout and the Env it serves its review.
 func validateReview(b *Attempt, args map[string]any, input []any) (*review.Verdict, []string, error) {
-	in := review.Input{Candidate: review.Candidate{Root: b.Root, Start: b.Start, Excluded: b.Excluded}}
+	in := review.Input{Candidate: review.Candidate{Root: b.Root, Repo: b.repo, Start: b.Start, Excluded: b.Excluded}}
 	return review.Validate(in, reviewEnv{b}, args, input)
+}
+
+// materialOf is the review material of pass as the Build's review makes it: kogen-review's
+// review.MaterialOf over what the Build gives the review of pass.
+func materialOf(b *Attempt, pass verify.Pass) (materialSet, error) {
+	return review.MaterialOf(b.reviewSubject(pass))
 }

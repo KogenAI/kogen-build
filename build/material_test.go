@@ -349,7 +349,7 @@ func TestTheMaterialEqualsTheElixirReference(t *testing.T) {
 	}
 	pass := verify.Pass{Tree: tree, Model: verify.ModelNone, Acceptance: &verify.Acceptance{Scenarios: make([]verify.ScenarioResult, 1)},
 		Checks: []verify.CommandResult{{Name: "tidy"}, {Name: "unit"}}}
-	m, err := b.materialOf(pass)
+	m, err := materialOf(b, pass)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,7 +564,7 @@ func materialAuthorityOf(t *testing.T, b *Attempt) string {
 	b.Slug = testSlug
 	b.Config = &project.Config{Acceptance: &project.Acceptance{Run: "true"}}
 	b.intent = &project.Intent{Text: "# Intent\n\nSlug: " + testSlug + "\n"}
-	m, err := b.materialOf(verify.Pass{Tree: tree, Model: verify.ModelNone, Acceptance: &verify.Acceptance{Scenarios: make([]verify.ScenarioResult, 1)}})
+	m, err := materialOf(b, verify.Pass{Tree: tree, Model: verify.ModelNone, Acceptance: &verify.Acceptance{Scenarios: make([]verify.ScenarioResult, 1)}})
 	if err != nil {
 		t.Fatal(err)
 	}

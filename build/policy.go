@@ -7,9 +7,10 @@ import (
 	"kogen-loop/tools"
 )
 
-// The builder's model-facing policy, owned here: its instructions (prompts/builder.md) and its
-// terminal tools. Every byte is the one the builders have always been given
-// (testdata/prompts_golden.json, testdata/defs_golden.json).
+// The builder's model-facing policy, owned here: its instructions (prompts/builder.md), its
+// terminal tools and the structured submission an external builder finishes with. Every byte is
+// the one the builders have always been given (testdata/prompts_golden.json,
+// testdata/defs_golden.json, and SubmissionSchema the Claude Code adapter's former BuildSchema).
 
 //go:embed prompts/*.md
 var promptFiles embed.FS
@@ -19,6 +20,12 @@ const (
 	FinishTool        = "finish"
 	ReportBlockerTool = "report_blocker"
 )
+
+// SubmissionSchema is the JSON Schema of an external builder's structured final result, which
+// the Build hands its executor as the task's schema (executor.Task.Schema): an optional summary
+// and an optional blocker, the executor contract's builder-reported blocker claim
+// (executor.BlockerClaim: paths, reason, evidence).
+const SubmissionSchema = `{"type":"object","properties":{"summary":{"type":"string"},"blocker":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"reason":{"type":"string"},"evidence":{"type":"string"}},"required":["paths","reason","evidence"],"additionalProperties":false}},"additionalProperties":false}`
 
 func promptFile(name string) string {
 	b, err := promptFiles.ReadFile("prompts/" + name + ".md")

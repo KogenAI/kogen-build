@@ -15,7 +15,8 @@ import (
 // The independent review runs in kogen-review's review over a narrow input: the saved candidate,
 // the exact approved Intent, the verification evidence, the permitted tools and, to resume, the
 // review's checkpoint. The Build adapts its state to that input (reviewInput) and serves what the
-// review asks of it while it runs (reviewEnv); the review returns its verdict, findings and
+// review asks of it while it runs (reviewEnv): the review makes its own material from the input
+// and reads the candidate from its checkout. The review returns its verdict, findings and
 // repairs, which the Build records. A reviewer of kogen-review's review is a Reviewer of this
 // package through delegate.
 
@@ -64,6 +65,29 @@ func (b *Attempt) reviewed(res review.Result, err error) (Approved, error) {
 
 // reviewInput is the Build's state as the review of pass is given it.
 func (b *Attempt) reviewInput(pass verify.Pass) review.Input {
+	in := b.reviewSubject(pass)
+	in.Intent.Plan = b.NavigationIn(phaseReview)
+	in.Evidence.Diagnostic = slices.Concat(b.diagnosticMessages(), b.reviewBaselineMessage(pass))
+	in.Evidence.BaselineFailing = len(b.baselineFailures()) > 0
+	in.Tools = review.Tools{
+		Native: func(enabled []string) *tools.Tools {
+			return &tools.Tools{Root: b.Root, Session: b.s, Repo: agent.Git(b.repo), Enabled: enabled, Protected: b.Baseline, Excluded: b.Excluded}
+		},
+		Record: func(call tools.Call, result tools.Output) map[string]any {
+			return b.toolRecordFields(call, result, b.reviewPartID)
+		},
+		Round: b.runGuardedRound,
+		Home:  b.s.Getenv("HOME"),
+	}
+	in.Number, in.Last, in.Executor = b.Review, b.LastReview, b.ReviewExecutor
+	in.Run = review.Run{ID: b.Run.ID, Dir: b.Run.Dir}
+	return in
+}
+
+// reviewSubject is what the review of pass judges, the part of its input its material is made
+// from: the saved candidate in the Build's checkout, the exact approved Intent and the green pass
+// with the configured commands.
+func (b *Attempt) reviewSubject(pass verify.Pass) review.Input {
 	approval, err := decodeBase64(b.ApprovalBytes)
 	if err != nil {
 		approval = nil
@@ -72,23 +96,18 @@ func (b *Attempt) reviewInput(pass verify.Pass) review.Input {
 	if b.Executor != nil {
 		builder = b.Executor.SessionID
 	}
+	text := ""
+	if b.intent != nil {
+		text = b.intent.Text
+	}
+	commands := review.Commands{Fix: b.Config.Fix, Checks: b.Config.Checks}
+	if b.Config.Acceptance != nil {
+		commands.Acceptance = b.Config.Acceptance.Run
+	}
 	return review.Input{
-		Candidate: review.Candidate{Root: b.Root, Start: b.Start, Tree: pass.Tree, Protected: b.Baseline, Excluded: b.Excluded, Builder: builder},
-		Intent:    review.Intent{Approval: approval, Source: b.SourceProvenance, Role: b.Config.Models["review"], Plan: b.NavigationIn(phaseReview)},
-		Evidence: review.Evidence{Pass: pass, Diagnostic: slices.Concat(b.diagnosticMessages(), b.reviewBaselineMessage(pass)),
-			BaselineFailing: len(b.baselineFailures()) > 0},
-		Tools: review.Tools{
-			Native: func(enabled []string) *tools.Tools {
-				return &tools.Tools{Root: b.Root, Session: b.s, Repo: agent.Git(b.repo), Enabled: enabled, Protected: b.Baseline, Excluded: b.Excluded}
-			},
-			Record: func(call tools.Call, result tools.Output) map[string]any {
-				return b.toolRecordFields(call, result, b.reviewPartID)
-			},
-			Round: b.runGuardedRound,
-			Home:  b.s.Getenv("HOME"),
-		},
-		Number: b.Review, Last: b.LastReview, Executor: b.ReviewExecutor,
-		Run: review.Run{ID: b.Run.ID, Dir: b.Run.Dir},
+		Candidate: review.Candidate{Root: b.Root, Repo: b.repo, Start: b.Start, Tree: pass.Tree, Protected: b.Baseline, Excluded: b.Excluded, Builder: builder},
+		Intent:    review.Intent{Slug: b.Slug, Text: text, Approval: approval, Source: b.SourceProvenance, Role: b.Config.Models["review"]},
+		Evidence:  review.Evidence{Pass: pass, Commands: commands},
 	}
 }
 
@@ -109,11 +128,6 @@ func (e reviewEnv) Request(ctx context.Context, r review.Request) (*provider.Res
 	})
 }
 
-func (e reviewEnv) Material(pass verify.Pass) (materialSet, error) { return e.b.materialOf(pass) }
-func (e reviewEnv) Blocks(tree string, m materialSet) ([]materialSegment, error) {
-	return e.b.reviewBlocks(tree, m)
-}
-
 // Prepare opens a fresh review conversation: the unfinished observations of an earlier review
 // that ended without a verdict are not carried into it (its archives stay in custody).
 func (e reviewEnv) Prepare(tree string, m materialSet, role project.Role, instructions string, defs, diagnostic []any) ([]any, error) {
@@ -129,19 +143,6 @@ func (e reviewEnv) Prefill(role project.Role, instructions string, defs, input [
 	return e.b.prefillSource(role, instructions, defs, input)
 }
 func (e reviewEnv) Custody() error { return e.b.validateWorkingContext() }
-
-func (e reviewEnv) Tree() (string, error) { return e.b.repo.Tree(e.b.Start, e.b.Excluded) }
-func (e reviewEnv) Changed(from, to string) ([]string, error) {
-	return e.b.repo.Changed(from, to)
-}
-func (e reviewEnv) Diff(from, to string, paths []string) (string, error) {
-	return e.b.repo.Diff(from, to, paths)
-}
-func (e reviewEnv) InStart(path string) bool {
-	_, ok := e.b.repo.Show(e.b.Start, path)
-	return ok
-}
-func (e reviewEnv) Drift(observed, green string) string { return e.b.treeDrift(observed, green) }
 
 func (e reviewEnv) Verify(ctx context.Context) (verify.Pass, error) { return e.b.Verify(ctx) }
 func (e reviewEnv) Feedback(pass verify.Pass, completion string) string {
@@ -180,24 +181,3 @@ func (e reviewEnv) Progress(line string)              { e.b.s.Progress(line) }
 func (e reviewEnv) Event(event map[string]any)        { e.b.Run.Event(event) }
 func (e reviewEnv) Write(name string, data any) error { return e.b.Run.Write(name, data) }
 func (e reviewEnv) Err() error                        { return e.b.s.Err() }
-
-// reviewBlocks locates each changed path's material in the review source: its block in the diff
-// (from its `diff --git` line to the next block or the end of the diff) and its `--- <path>`
-// heading with its full text (to the next heading or the end), in source order.
-func (b *Attempt) reviewBlocks(tree string, m materialSet) ([]materialSegment, error) {
-	_, segments, _, err := b.materialManifestAt(tree, m.Files, m.PartsTexts, m.PartsSource, materialPartsHeading)
-	if err != nil {
-		return nil, err
-	}
-	heading := map[string]int{}
-	for _, t := range m.PartsTexts {
-		heading[t.Path] = len(t.Heading)
-	}
-	for i, seg := range segments {
-		if seg.Kind == "file" {
-			segments[i].Start -= heading[seg.Path]
-		}
-	}
-	slices.SortFunc(segments, func(a, b materialSegment) int { return a.Start - b.Start })
-	return segments, nil
-}
