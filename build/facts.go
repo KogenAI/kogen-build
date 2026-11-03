@@ -105,8 +105,9 @@ func startFacts(root, slug string, run *Run, cfg *project.Config, parent, rootRu
 // entries recorded) into this run's record, then adds the checkpointed last pass and review.
 func (f *localFacts) inherit(b *Attempt, previous *Run) {
 	if bytes, err := os.ReadFile(filepath.Join(b.Root, ".kogen/local/facts", previous.ID+".json")); err == nil {
-		var old map[string]any
-		if json.Unmarshal(bytes, &old) == nil && old != nil {
+		value, err := decodeJSONNumbers(bytes)
+		old, ok := value.(map[string]any)
+		if err == nil && ok && old != nil {
 			for _, key := range []string{"verification", "reviews"} {
 				var entries []any
 				if list, ok := old[key].([]any); ok {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-verification/verify"
 )
 
@@ -144,4 +145,16 @@ func TestADamagedCatalogCannotAbortCustodyPublicationAndInheritedEvidenceKeepsOr
 	}
 	eq(t, "resumed_from", doc["resumed_from"], any(original.ID))
 	eq(t, "root_run", doc["root_run"], any(original.ID))
+}
+
+func TestInheritedReviewNotePreservesIntegerLine(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".kogen/local/facts/previous.json"), `{"reviews":[{"findings":[{"severity":"note","path":"app.txt","line":1,"message":"looks fine"}]}]}`, 0o644)
+	facts := &localFacts{record: map[string]any{}}
+	facts.inherit(&Attempt{State: State{Root: root}}, &Run{ID: "previous"})
+	review := facts.record["reviews"].([]any)[0].(map[string]any)
+	line := review["findings"].([]any)[0].(map[string]any)["line"]
+	if line != json.Number("1") || core.Display(line) != "1" {
+		t.Fatalf("line = %#v, display = %q", line, core.Display(line))
+	}
 }

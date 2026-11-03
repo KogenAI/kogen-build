@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/sys"
 )
@@ -30,12 +31,25 @@ func (r *scriptedReviewer) Resume(ctx context.Context, b *Attempt) (Approved, er
 
 func approve(b *Attempt, pass verify.Pass) Approved {
 	b.Review++
-	rec := ReviewRecord{N: b.Review, Verdict: "approve", Tree: pass.Tree, Findings: []map[string]any{
-		{"severity": "note", "path": "app.txt", "line": float64(1), "message": "looks fine"},
-		{"severity": "note", "path": "README.md", "line": nil, "message": "second"},
-	}}
+	notes, err := decodeJSONNumbers([]byte(`[{"severity":"note","path":"app.txt","line":1,"message":"looks fine"},{"severity":"note","path":"README.md","line":null,"message":"second"}]`))
+	if err != nil {
+		panic(err)
+	}
+	items := notes.([]any)
+	rec := ReviewRecord{N: b.Review, Verdict: "approve", Tree: pass.Tree, Findings: []map[string]any{items[0].(map[string]any), items[1].(map[string]any)}}
 	b.LastReview = &rec
 	return Approved{Pass: pass, Review: rec}
+}
+
+func TestDecodedReviewNoteLineDisplaysAsInteger(t *testing.T) {
+	note, err := decodeJSONNumbers([]byte(`{"severity":"note","path":"app.txt","line":1,"message":"looks fine"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := note.(map[string]any)["line"]
+	if line != json.Number("1") || core.Display(line) != "1" {
+		t.Fatalf("line = %#v, display = %q", line, core.Display(line))
+	}
 }
 
 func TestTheReviewHookRunsAfterAGreenPassAndItsApprovalIsCommitted(t *testing.T) {
