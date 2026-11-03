@@ -3,6 +3,7 @@ package build
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/KogenAI/kogen-review/review"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-executor/executor/claudecode"
 )
@@ -349,7 +349,7 @@ func reviewBody(t *testing.T, e *env) string {
 	t.Helper()
 	reqs, bodies := e.prov.requests(), e.prov.rawRequests()
 	for i, req := range reqs {
-		if text := requestInstructions(req); text == agent.Prompt(agent.Reviewer) {
+		if text := requestInstructions(req); text == review.ReviewerInstructions() {
 			return string(bodies[i])
 		}
 	}

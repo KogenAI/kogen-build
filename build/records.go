@@ -155,7 +155,7 @@ func (b *Attempt) reviewPartID(path string) (int, bool) {
 		if err != nil {
 			return 0, false
 		}
-		v, err := core.DecodeJSONNumbers(data)
+		v, err := decodeJSONNumbers(data)
 		if err != nil {
 			return 0, false
 		}

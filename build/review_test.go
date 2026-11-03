@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-review/review"
 )
@@ -48,7 +47,7 @@ func (e *env) startReviewed() (*attempt, <-chan struct{}) {
 func (f *fakeProvider) reviewRequests() []map[string]any {
 	var out []map[string]any
 	for _, req := range f.requests() {
-		if text := requestInstructions(req); text == agent.Prompt(agent.Reviewer) {
+		if text := requestInstructions(req); text == review.ReviewerInstructions() {
 			out = append(out, req)
 		}
 	}
@@ -138,7 +137,7 @@ func TestTheReviewerApprovesUnchangedCodeWithoutRepairs(t *testing.T) {
 		t.Fatalf("%d review requests", len(reqs))
 	}
 	req := reqs[0]
-	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Replace(requestInstructions(req), "\n"+agent.LimitRaises+"\n", "", 1)))); got != "1ab7ff81c6b94254ac71958230859fd9c76ffc15baa25ad2552017cbd11cceb9" {
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Replace(requestInstructions(req), "\n"+review.LimitRaises+"\n", "", 1)))); got != "1ab7ff81c6b94254ac71958230859fd9c76ffc15baa25ad2552017cbd11cceb9" {
 		t.Fatalf("emitted reviewer prompt hash = %s", got)
 	}
 	// A fresh conversation: one opening message, the reviewer's tools, no builder replay.
@@ -1394,7 +1393,7 @@ func TestReviewValidateAcceptanceSet(t *testing.T) {
 	for i, tc := range reviewShapeCases() {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
 			t.Parallel()
-			verdict, problems, err := review.Validate(a.reviewing(), decodeReviewArgs(t, tc.args), nil)
+			verdict, problems, err := validateReview(a, decodeReviewArgs(t, tc.args), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

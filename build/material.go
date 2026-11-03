@@ -460,7 +460,7 @@ func (b *Attempt) materialRelocate(role project.Role, instructions string, defs 
 		if err != nil {
 			return err
 		}
-		v, err := core.DecodeJSONNumbers(data)
+		v, err := decodeJSONNumbers(data)
 		if err != nil {
 			return err
 		}
@@ -625,7 +625,7 @@ func (b *Attempt) reviewCustody(input []any) (*reviewCustody, error) {
 		if err != nil {
 			return nil, err
 		}
-		v, err := core.DecodeJSONNumbers(data)
+		v, err := decodeJSONNumbers(data)
 		if err != nil {
 			return nil, fmt.Errorf("working-context archive %s: %w", ref.Path, err)
 		}
@@ -730,7 +730,7 @@ func prefillEntries(item any, review int) map[string]string {
 	if !ok {
 		return nil
 	}
-	v, err := core.DecodeJSONNumbers([]byte(body))
+	v, err := decodeJSONNumbers([]byte(body))
 	if err != nil {
 		return nil
 	}

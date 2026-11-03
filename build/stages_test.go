@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"github.com/KogenAI/kogen-executor/agent"
 )
 
 // Staged Builds: one approved Intent, durable verified stages, explicit continuation.
@@ -368,7 +367,7 @@ func TestAStagedBuildGivesTheBuilderItsNavigationAndKeepsInstructionsFrozen(t *t
 	contains(t, "opening", opening, "Active stage 1/2: ")
 	var instructions []string
 	for _, req := range reqs {
-		if requestInstructions(req) == agent.Prompt(agent.Builder) {
+		if requestInstructions(req) == BuilderInstructions() {
 			instructions = append(instructions, requestInstructions(req))
 		}
 	}

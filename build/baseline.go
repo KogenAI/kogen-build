@@ -64,8 +64,8 @@ func (b *Attempt) stopRecord() map[string]any {
 	}
 	b.baselineRunning = nil
 	stopped := time.Now()
-	return map[string]any{"name": r.name, "command": r.command, "started_at": core.ISOTime(r.started),
-		"stopped_at": core.ISOTime(stopped), "wall_ms": stopped.Sub(r.started).Milliseconds()}
+	return map[string]any{"name": r.name, "command": r.command, "started_at": isoTime(r.started),
+		"stopped_at": isoTime(stopped), "wall_ms": stopped.Sub(r.started).Milliseconds()}
 }
 
 // reportBaselineStop keeps the baseline check a stop interrupted for the stop record and prints
@@ -120,8 +120,8 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 		b.baselineRunning = nil
 		wall := ended.Sub(started).Milliseconds()
 		b.Run.Event(map[string]any{"event": "command_result", "name": c.Name, "status": r.Status, "output": Cap(r.Output),
-			"started_at": core.ISOTime(started), "ended_at": core.ISOTime(ended), "wall_ms": wall})
-		timings = append(timings, map[string]any{"name": c.Name, "started_at": core.ISOTime(started), "ended_at": core.ISOTime(ended), "wall_ms": wall})
+			"started_at": isoTime(started), "ended_at": isoTime(ended), "wall_ms": wall})
+		timings = append(timings, map[string]any{"name": c.Name, "started_at": isoTime(started), "ended_at": isoTime(ended), "wall_ms": wall})
 		b.CheckBaseline = append(b.CheckBaseline, verify.CommandResult{Name: c.Name, Command: c.Run, Status: r.Status, Output: verify.Cap(r.Output)})
 		if c.Run == ":" && digest != "" && ctx.Err() == nil && b.Run != nil && b.Run.LogErr() == nil {
 			if after, _, err := baselineIdentity(b.Root, b.Config.Checks); err == nil && after == digest {
@@ -140,7 +140,7 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 		names = append(names, r.Name)
 	}
 	b.Run.Event(map[string]any{"event": "baseline_checks", "checks": len(b.CheckBaseline), "failing": core.NonNil(names),
-		"started_at": core.ISOTime(began), "ended_at": core.ISOTime(finished), "wall_ms": finished.Sub(began).Milliseconds(), "timings": timings})
+		"started_at": isoTime(began), "ended_at": isoTime(finished), "wall_ms": finished.Sub(began).Milliseconds(), "timings": timings})
 	if len(failing) == 0 {
 		return nil
 	}

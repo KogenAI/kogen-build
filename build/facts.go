@@ -65,14 +65,14 @@ func startFacts(root, slug string, run *Run, cfg *project.Config, parent, rootRu
 		rootRun = run.ID
 	}
 	now := time.Now()
-	f := &localFacts{root: root, checkout: c, clock: &phaseClock{phase: "startup", started: now, at: core.ISOTime(now)}}
+	f := &localFacts{root: root, checkout: c, clock: &phaseClock{phase: "startup", started: now, at: isoTime(now)}}
 	f.record = map[string]any{
 		"checkout_id":        c.ID,
 		"slug":               slug,
 		"run_id":             run.ID,
 		"resumed_from":       resumedFrom,
 		"root_run":           rootRun,
-		"started_at":         core.ISOTime(now),
+		"started_at":         isoTime(now),
 		"state":              "active",
 		"phase":              "startup",
 		"verification_pass":  nil,
@@ -230,7 +230,7 @@ func (f *localFacts) update(b *Attempt, phase, outcome string) error {
 		}
 		b.Run.Event(map[string]any{"event": "phase_duration", "phase": name, "timestamp": c.at, "wall_ms": now.Sub(c.started).Milliseconds()})
 		if outcome == "" {
-			f.clock = &phaseClock{phase: phase, started: now, at: core.ISOTime(now)}
+			f.clock = &phaseClock{phase: phase, started: now, at: isoTime(now)}
 		} else {
 			f.clock = nil
 		}

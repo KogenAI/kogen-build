@@ -146,7 +146,7 @@ func stageBound(s *State, e StageEvidence) bool {
 
 // sameJSON is whether the encoded document and the value are the same parsed JSON.
 func sameJSON(raw []byte, want any) bool {
-	got, err := core.DecodeJSONNumbers(raw)
+	got, err := decodeJSONNumbers(raw)
 	if err != nil {
 		return false
 	}
@@ -154,7 +154,7 @@ func sameJSON(raw []byte, want any) bool {
 	if err != nil {
 		return false
 	}
-	reread, err := core.DecodeJSONNumbers(wanted)
+	reread, err := decodeJSONNumbers(wanted)
 	return err == nil && canonical(got) == canonical(reread)
 }
 

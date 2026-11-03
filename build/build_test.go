@@ -351,7 +351,7 @@ func TestDefaultShellRequestAndReplayCompatibility(t *testing.T) {
 	}
 	reqs := e.prov.requests()
 	defs, _ := reqs[0]["tools"].([]any)
-	expected := agent.AsAny(agent.Defs(builderDefs...))
+	expected := agent.AsAny(BuilderToolDefinitions(builderDefs...))
 	got, _ := json.Marshal(defs)
 	want, _ := json.Marshal(expected)
 	if !bytes.Equal(got, want) {

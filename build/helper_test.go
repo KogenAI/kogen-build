@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/KogenAI/kogen-review/review"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -570,3 +571,10 @@ func sessionOf(e *env) *sys.Session {
 }
 
 func defaultRole() project.Role { return project.Role{Model: "gpt-6.1-sol", Effort: "medium"} }
+
+// validateReview checks a submit_review call as the Build's review does: review.Validate over
+// the Build's checkout and the Env it serves its review.
+func validateReview(b *Attempt, args map[string]any, input []any) (*review.Verdict, []string, error) {
+	in := review.Input{Candidate: review.Candidate{Root: b.Root, Start: b.Start, Excluded: b.Excluded}}
+	return review.Validate(in, reviewEnv{b}, args, input)
+}

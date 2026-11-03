@@ -1,11 +1,11 @@
 package build
 
 import (
+	"github.com/KogenAI/kogen-review/review"
 	"strings"
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/core"
 	"kogen-loop/provider"
 )
@@ -66,7 +66,7 @@ func TestTheBuilderAndEachReviewHaveTheirOwnSavedCacheIdentity(t *testing.T) {
 	}
 }
 
-func reviewerInstructions() string { return agent.Prompt(agent.Reviewer) }
+func reviewerInstructions() string { return review.ReviewerInstructions() }
 
 func TestAResumedBuildKeepsItsConversationsIdentity(t *testing.T) {
 	t.Parallel()

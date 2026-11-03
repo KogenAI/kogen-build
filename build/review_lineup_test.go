@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-review/review"
@@ -180,7 +179,7 @@ func TestClaudeLineupReviewExactTree(t *testing.T) {
 		// The reviewer gets the authority and the candidate, never the builder's claim.
 		contains(t, "brief", brief, "# Intent")
 		contains(t, "brief", brief, "--- app.txt")
-		if strings.Count(brief, agent.LimitRaises) != 1 {
+		if strings.Count(brief, review.LimitRaises) != 1 {
 			t.Fatalf("brief must carry the limit rule once")
 		}
 		lacks(t, "brief", brief, "the fixture is candidate")
@@ -492,7 +491,7 @@ func TestClaudeLineupReviewRefusesResume(t *testing.T) {
 		t.Fatal("the refused resume started a reviewer")
 	}
 	// The reviewer of an external checkpoint cannot be revived through the seam either.
-	if _, err := (review.External{}).Resume(context.Background(), nil); err == nil {
+	if _, err := (review.External{}).Resume(context.Background(), review.Input{}, nil); err == nil {
 		t.Fatal("review.External.Resume accepted")
 	}
 

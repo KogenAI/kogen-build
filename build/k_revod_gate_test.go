@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-review/review"
 )
 
@@ -20,14 +19,14 @@ func revodGateEmptySourceControls(t *testing.T) {
 		b.Review, b.WorkingContext = cell+1, map[string]*OwnerContext{}
 		source := fmt.Sprintf("# Check results of the final pass\n\nacceptance: passed (%d scenarios)\n\n", cell%7) +
 			strings.Repeat(fmt.Sprintf("--- cell%02d.txt\nclean control %d\n", cell, cell), 1+cell*37)
-		input, err := b.materialPrepare(tree, testMaterial(source), materialRole(), agent.Prompt(agent.Reviewer), nil, nil, false)
+		input, err := b.materialPrepare(tree, testMaterial(source), materialRole(), review.ReviewerInstructions(), nil, nil, false)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if b.WorkingContext["review"].InlineMaterial == nil || len(b.WorkingContext["review"].History) != 0 {
 			t.Fatalf("cell %d pinned its source", cell)
 		}
-		if verdict, problems, err := review.Validate(b.reviewing(), map[string]any{"verdict": "approve", "findings": []any{}}, input); err != nil || verdict == nil {
+		if verdict, problems, err := validateReview(b, map[string]any{"verdict": "approve", "findings": []any{}}, input); err != nil || verdict == nil {
 			t.Fatalf("cell %d approval refused: %v %v", cell, problems, err)
 		}
 	}

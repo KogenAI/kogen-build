@@ -48,7 +48,9 @@ type Deps struct {
 }
 
 // Reviewer is the independent review and repair of a green pass (chapter 06). The Build
-// calls it after every green verification pass and commits what it approves.
+// calls it after every green verification pass and commits what it approves. kogen-review's
+// reviewers are Reviewers through delegate (host.go), which hands them only the review's
+// narrow input and Env; this seam is for a program's or a test's own reviewer.
 //
 // An implementation works on the *Attempt it is given, in the Build's own state:
 //

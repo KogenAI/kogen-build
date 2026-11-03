@@ -1235,7 +1235,7 @@ func legacyModelMatches(saved any, st *State, title string) bool {
 // also refuses atoms its VM has not seen, which says nothing about the checkpoint's own
 // validity.
 func legacyDecode(raw []byte) (*Loaded, error) {
-	v, err := core.DecodeJSONNumbers(raw)
+	v, err := decodeJSONNumbers(raw)
 	m, ok := v.(map[string]any)
 	if err != nil || !ok {
 		return nil, errors.New(legacyMalformed)
@@ -1247,7 +1247,7 @@ func legacyDecode(raw []byte) (*Loaded, error) {
 	if !ok || len(text) > legacyMaxState || strings.ContainsAny(text, "\r\n") {
 		return nil, errors.New(legacyMalformed)
 	}
-	encoded, err := core.DecodeBase64(text)
+	encoded, err := decodeBase64(text)
 	if err != nil {
 		return nil, errors.New(legacyMalformed)
 	}

@@ -14,51 +14,45 @@ import (
 	"kogen-loop/sys"
 )
 
-// commit is the verified commit (GIT-3..8) of what review approved. When the candidate is no
-// longer the reviewed tree, verification and review start over (the feedback or the landing
-// of that is returned). On a commit it reports the landing and returns landed true.
-func (b *Attempt) commit(ctx context.Context, ap Approved) (feedback string, landed bool, err error) {
-	return b.commitApproved(ctx, ap, true)
-}
-
-// commitApproved is commit. With restart false, a candidate that is no longer the reviewed
-// tree stops the Build instead of starting verification and review again: the resume of a
-// failed commit never runs a new cycle.
-func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool) (feedback string, landed bool, err error) {
+// commitApproved is the verified commit (GIT-3..8) of what review approved; on a commit it
+// reports the landing. When the candidate is no longer the reviewed tree it commits nothing and
+// reports drifted (the routing starts verification and review over); with restart false that
+// stops the Build instead: the resume of a failed commit never runs a new cycle.
+func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool) (drifted bool, err error) {
 	b.s.Progress("kogen: committing")
 	if err := b.s.Err(); err != nil {
-		return "", false, err
+		return false, err
 	}
 	if err := b.BaselineIntact(); err != nil {
-		return "", false, err
+		return false, err
 	}
 	if err := b.headIntact(); err != nil {
-		return "", false, err
+		return false, err
 	}
 	pass, review := ap.Pass, ap.Review
 	tree, err := b.repo.Tree(b.Start, b.Excluded)
 	if err != nil {
-		return "", false, err
+		return false, err
 	}
 	if !(pass.Green && pass.Clean && review.Tree == pass.Tree) || tree != pass.Tree {
 		if !restart {
-			return "", false, core.ResumeRefused("the candidate is no longer the reviewed tree " + pass.Tree + "; " + b.treeDrift(tree, pass.Tree))
+			return false, core.ResumeRefused("the candidate is no longer the reviewed tree " + pass.Tree + "; " + b.treeDrift(tree, pass.Tree))
 		}
 		// Something changed after the reviewed pass: verify and review again.
-		return b.verifyAndReview(ctx, false)
+		return true, nil
 	}
 	headTree, err := b.repo.Resolve(b.Start + "^{tree}")
 	if err != nil {
-		return "", false, err
+		return false, err
 	}
 	alreadyPresent := tree == headTree
 	commit := b.Start
 	if !alreadyPresent {
 		if err := b.Save(Continuation{Stage: StageCommit, Tree: pass.Tree}); err != nil {
-			return "", false, err
+			return false, err
 		}
 		if err := b.facts.update(b, "committing", ""); err != nil {
-			return "", false, err
+			return false, err
 		}
 		b.Run.Event(map[string]any{"event": "commit", "tree": pass.Tree})
 		commit, err = b.repo.Commit(b.s, git.CommitSpec{
@@ -73,13 +67,13 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 			if errors.As(err, &failure) && failure.Class == "environment" && failure.Reason == "commit_failed" && b.repo.Head() == b.Start {
 				b.Continuation = Continuation{Stage: StageCommitFailed, Tree: pass.Tree}
 			}
-			return "", false, err
+			return false, err
 		}
 	}
 	os.Remove(project.ApprovalPath(b.Root, b.Slug))
 	b.SetPhase(phaseLanded)
 	if err := b.Save(Continuation{Stage: StageLanded, Commit: commit, AlreadyPresent: alreadyPresent}); err != nil {
-		return "", false, err
+		return false, err
 	}
 	var notes []map[string]any
 	for _, f := range review.Findings {
@@ -93,10 +87,10 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 	}
 	b.Run.Event(map[string]any{"event": "outcome", "outcome": outcome, "commit": commit})
 	if err := b.Run.Write("result.json", b.result(outcome, map[string]any{"commit": commit})); err != nil {
-		return "", false, err
+		return false, err
 	}
 	if err := b.facts.update(b, "", outcome); err != nil {
-		return "", false, err
+		return false, err
 	}
 	if alreadyPresent {
 		b.s.Puts(fmt.Sprintf("already present %s at HEAD %s (Build %s)", b.Slug, commit, b.Run.ID))
@@ -122,7 +116,7 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 	if x := b.ReviewExecutor; x != nil {
 		b.s.Puts("  review executor: " + x.Name + " (" + executorUsageLine(x.Usage) + ")")
 	}
-	return "", true, nil
+	return false, nil
 }
 
 func duration(d interface{ Seconds() float64 }) string {
@@ -134,15 +128,4 @@ func duration(d interface{ Seconds() float64 }) string {
 		return fmt.Sprintf("%dm%02ds", s/60, s%60)
 	}
 	return fmt.Sprintf("%ds", s)
-}
-
-// commitFailedResume is the explicit resume of a commit_failed checkpoint: the saved approved
-// pass and review go straight to the commit step, with no builder round, review or rerun of
-// the checks. A candidate that is no longer the reviewed tree stops the Build.
-func (b *Attempt) commitFailedResume(ctx context.Context) error {
-	pass, review := *b.LastPass, *b.LastReview
-	b.s.Puts(fmt.Sprintf("finishing the commit of the candidate verified in pass %d and approved in review %d, "+
-		"with no builder round, no review and no rerun of its checks", pass.N, review.N))
-	_, _, err := b.commitApproved(ctx, Approved{Pass: pass, Review: review}, false)
-	return err
 }

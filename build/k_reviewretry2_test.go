@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-review/review"
 	"github.com/KogenAI/kogen-verification/verify"
 	looptools "kogen-loop/tools"
@@ -31,7 +30,7 @@ func (f *fakeProvider) reviewBodies() [][]byte {
 	var out [][]byte
 	raw := f.rawRequests()
 	for i, req := range f.requests() {
-		if requestInstructions(req) == agent.Prompt(agent.Reviewer) {
+		if requestInstructions(req) == review.ReviewerInstructions() {
 			out = append(out, raw[i])
 		}
 	}

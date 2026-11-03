@@ -571,7 +571,7 @@ func listedIn(texts []string, needle string) bool {
 }
 
 func decodeApprovalSHA(encoded string) (string, error) {
-	raw, err := core.DecodeBase64(encoded)
+	raw, err := decodeBase64(encoded)
 	if err != nil {
 		return "", err
 	}
