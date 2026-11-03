@@ -44,12 +44,11 @@ func selectExecutor(d Deps, role project.Role) (*externalBuild, error) {
 	if desc.Name != role.Executor {
 		return nil, executor.Fail(executor.ReasonUnavailable, "executor "+role.Executor+" was configured, but the program provided "+desc.Name)
 	}
-	max := role.MaxRounds
-	if max == 0 {
-		max = desc.Capabilities.MaxRounds
-	}
-	return &externalBuild{exec: ex, desc: desc, maxRounds: max}, nil
+	return &externalBuild{exec: ex, desc: desc, maxRounds: desc.Capabilities.MaxRounds}, nil
 }
+
+// defaultExternalRounds is the round cap of an external review whose executor sets none.
+const defaultExternalRounds = 6
 
 // selectReviewer is the reviewer the review role selects. The native role keeps the native
 // reviewer (nil). An external role is served through the Deps.Reviewer seam when one is given,
@@ -80,12 +79,9 @@ func selectReviewer(d Deps, role project.Role) (Reviewer, error) {
 		return nil, executor.Fail(executor.ReasonUnavailable, "executor "+role.Executor+" was configured, but the program provided "+desc.Name)
 	}
 	caps, _ := desc.For(executor.RoleReview)
-	max := role.MaxRounds
+	max := caps.MaxRounds
 	if max == 0 {
-		max = caps.MaxRounds
-	}
-	if max == 0 {
-		max = project.DefaultExternalRounds
+		max = defaultExternalRounds
 	}
 	return reviewExternal{exec: ex, desc: desc, maxRounds: max}, nil
 }
@@ -101,7 +97,7 @@ func (b *Attempt) task(brief executor.Brief) (executor.Task, error) {
 	t := executor.Task{
 		Role: executor.RoleBuild, Root: b.Root, Brief: brief, Protected: b.Baseline, Excluded: b.Excluded,
 		Model: role.Model, Effort: role.Effort, Approval: hashHex(approval), StartTree: b.Start, RunID: b.Run.ID,
-		Home: b.s.Getenv("HOME"), MaxRounds: role.MaxRounds,
+		Home: b.s.Getenv("HOME"),
 	}
 	if b.ext != nil {
 		t.MaxRounds = b.ext.maxRounds

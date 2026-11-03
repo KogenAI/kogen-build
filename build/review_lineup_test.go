@@ -20,13 +20,15 @@ import (
 // lineupExec is a scripted Claude Code (build and review roles, v2 descriptor): no process and
 // no model. Every Start is a fresh session; it records each role's tasks and round inputs.
 type lineupExec struct {
-	t       *testing.T
-	build   func(n int, root string, in executor.Input) (executor.RoundResult, error)
-	review  func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error)
-	mu      sync.Mutex
-	starts  map[string][]executor.Task
-	inputs  map[string][]executor.Input
-	nextSeq int
+	t      *testing.T
+	build  func(n int, root string, in executor.Input) (executor.RoundResult, error)
+	review func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error)
+	// reviewMax is the review role's round cap the executor describes; nil is 6.
+	reviewMax *int
+	mu        sync.Mutex
+	starts    map[string][]executor.Task
+	inputs    map[string][]executor.Input
+	nextSeq   int
 }
 
 func newLineupExec(t *testing.T) *lineupExec {
@@ -40,9 +42,13 @@ func newLineupExec(t *testing.T) *lineupExec {
 func (f *lineupExec) Describe() executor.Descriptor {
 	rc := executor.RoleCapabilities{Resume: executor.ResumeNone, Continuation: true, Usage: executor.UsageHarness,
 		Prevention: []string{executor.PreventPreToolWrite}, MaxRounds: 6}
+	review := rc
+	if f.reviewMax != nil {
+		review.MaxRounds = *f.reviewMax
+	}
 	return executor.Descriptor{Name: executor.ClaudeCode, Contract: executor.Contract, Version: "fake-claude 9.9.9",
 		Capabilities:     executor.Capabilities{Roles: []string{executor.RoleBuild}, Resume: executor.ResumeNone, Continuation: true, Usage: executor.UsageHarness, MaxRounds: 6},
-		RoleCapabilities: map[string]executor.RoleCapabilities{executor.RoleBuild: rc, executor.RoleReview: rc}}
+		RoleCapabilities: map[string]executor.RoleCapabilities{executor.RoleBuild: rc, executor.RoleReview: review}}
 }
 
 func (f *lineupExec) Start(_ context.Context, t executor.Task, emit executor.Sink) (executor.Session, error) {
@@ -524,22 +530,23 @@ func TestClaudeLineupReviewRefusesResume(t *testing.T) {
 	})
 }
 
-// TestClaudeLineupReviewRoundLimit: the cap is per role session (default 6, configured 1 and 2),
-// exhaustion stops candidate/executor_round_limit with the work preserved, and no other role
+// TestClaudeLineupReviewRoundLimit: the cap is per role session (the executor's review cap, 6 when
+// that is 0), exhaustion stops candidate/executor_round_limit with the work preserved, and no other role
 // is restarted.
 func TestClaudeLineupReviewRoundLimit(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name  string
-		extra string
-		max   int
-	}{{"default", "", 6}, {"one", "    max_rounds: 1\n", 1}, {"two", "    max_rounds: 2\n", 2}} {
+		name string
+		caps *int // the executor's review-role MaxRounds; nil leaves the fake's 6
+		max  int
+	}{{"default", nil, 6}, {"one", intp(1), 1}, {"two", intp(2), 2}, {"zero", intp(0), 6}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t)
-			e.useLineup(tc.extra)
+			e.useLineup("")
 			start := e.head()
 			f := newLineupExec(t)
+			f.reviewMax = tc.caps
 			// Every round approves a tree that verification finds red: the reviewer never gets it green.
 			f.review = func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error) {
 				lineupWriteApp(t, root, "red\n")

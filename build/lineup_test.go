@@ -32,7 +32,7 @@ func TestClaudeLineupNativeCompatibility(t *testing.T) {
 	if string(a) != string(b) {
 		t.Fatalf("explicit native serializes differently:\n%s\n%s", a, b)
 	}
-	for _, key := range []string{"Executor", "MaxRounds", "executor", "max_rounds"} {
+	for _, key := range []string{"Executor", "executor"} {
 		if strings.Contains(string(b), key) {
 			t.Fatalf("native role state names %s: %s", key, b)
 		}

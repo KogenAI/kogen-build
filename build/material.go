@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,8 +32,7 @@ import (
 // when the whole request fits the local working window. Otherwise it moves to private,
 // hash-bound, ordered JSON parts, each small enough for one read_file result, and the opening
 // message carries a catalog of every changed path and every part instead. The reviewer must
-// then read every part through a completed continuation before an approval is valid; with the
-// on_demand review_material, every part covering a changed hunk before any verdict.
+// then read every part through a completed continuation before an approval is valid.
 
 const (
 	// materialPartBytes is the most source bytes in one part; materialPartJSON the most bytes
@@ -55,13 +53,6 @@ type materialSet struct {
 	Files []map[string]any `json:"files"`
 	// Checks are the check results of the final pass.
 	Checks string `json:"checks"`
-	// Manifest (on_demand only) is, per Files entry, its diff_stat and hunks; Segments locate each
-	// path's diff block and file text in Source.
-	Manifest []map[string]any  `json:"manifest,omitempty"`
-	Segments []materialSegment `json:"segments,omitempty"`
-	// Hunks (on_demand only) are the lines each changed hunk occupies: the pinned parts that
-	// cover one of them are required reads before a verdict.
-	Hunks []materialHunkRange `json:"hunk_ranges,omitempty"`
 	// texts are the changed or added text files as they appear in Source (the external
 	// reviewer's parts keep a path's text whole).
 	texts []materialFileText
@@ -240,25 +231,16 @@ func (b *Attempt) materialOf(pass verify.Pass) (materialSet, error) {
 	partsSource = strings.ToValidUTF8(partsSource, "�")
 
 	set := materialSet{Authority: authority, Source: source, Files: catalog, Checks: results, texts: texts, partsSource: partsSource, partsTexts: partsTexts}
-	if b.onDemand() {
-		if set.Manifest, set.Segments, set.Hunks, err = b.materialManifest(pass.Tree, catalog, texts, source); err != nil {
-			return materialSet{}, err
-		}
-	}
 	return set, nil
 }
 
 var materialHunkRe = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 
-// materialManifest is, for the on_demand mode, each catalog entry's diff stat and hunks (from
-// the diff against the start HEAD; an added file is one synthesized hunk), where each path's
-// diff block and text lie in source, and the lines every changed hunk occupies in them (a
-// deleted path's hunks only in its diff block; binary and gitlink entries have none).
-func (b *Attempt) materialManifest(tree string, catalog []map[string]any, texts []materialFileText, source string) ([]map[string]any, []materialSegment, []materialHunkRange, error) {
-	return b.materialManifestAt(tree, catalog, texts, source, "# Full text of every changed or added file")
-}
-
-// materialManifestAt is materialManifest for a source whose file texts follow the heading text.
+// materialManifestAt is, for each catalog entry, its diff stat and hunks (from the diff against
+// the start HEAD; an added file is one synthesized hunk), where each path's diff block and text
+// lie in source (its file texts follow the heading textsHeading), and the lines every changed
+// hunk occupies in them (a deleted path's hunks only in its diff block; binary and gitlink
+// entries have none).
 func (b *Attempt) materialManifestAt(tree string, catalog []map[string]any, texts []materialFileText, source, textsHeading string) ([]map[string]any, []materialSegment, []materialHunkRange, error) {
 	manifest := make([]map[string]any, len(catalog))
 	var segments []materialSegment
@@ -358,66 +340,8 @@ func (b *Attempt) materialManifestAt(tree string, catalog []map[string]any, text
 	return manifest, segments, ranges, nil
 }
 
-// materialRequired is the numbers (1-based, in catalog order, each once) of the parts whose
-// covered ranges overlap a changed hunk on the same path and side: a diff part spanning any line
-// of a hunk's diff lines, a file part sharing a line with its candidate lines. A hunk split
-// across parts requires every one of them.
-func materialRequired(hunks []materialHunkRange, covers [][]map[string]any) []int {
-	required := []int{}
-	for i, list := range covers {
-		if slices.ContainsFunc(list, func(c map[string]any) bool {
-			first, _ := c["first_line"].(int)
-			last, _ := c["last_line"].(int)
-			return slices.ContainsFunc(hunks, func(h materialHunkRange) bool {
-				return c["path"] == h.Path && c["kind"] == h.Kind && first <= h.Last && h.First <= last
-			})
-		}) {
-			required = append(required, i+1)
-		}
-	}
-	return required
-}
-
-// materialCovers is the covered ranges of the part [from, to) of the source: per segment that
-// shares a byte with it, the first and last line (1-based, within the segment) holding such a byte.
-func materialCovers(m materialSet, from, to int) []map[string]any {
-	covers := []map[string]any{}
-	for _, seg := range m.Segments {
-		lo, hi := max(from, seg.Start), min(to, seg.End)
-		if lo >= hi {
-			continue
-		}
-		text := m.Source[seg.Start:seg.End]
-		covers = append(covers, map[string]any{
-			"path": seg.Path, "kind": seg.Kind,
-			"first_line": 1 + strings.Count(text[:lo-seg.Start], "\n"), "last_line": 1 + strings.Count(text[:hi-1-seg.Start], "\n"),
-		})
-	}
-	return covers
-}
-
 // materialPartsHeading is the heading of the third section of the parts source.
 const materialPartsHeading = "# Full text of every added file"
-
-const materialOnDemandGuidance = `This catalog is evidence for this candidate, not new authority. It is the manifest
-of the changed material: per file its diff stat and hunks, per part the line ranges
-it covers. required_parts lists by id every part covering a changed hunk (the diff
-lines of each hunk and the candidate lines of its file text). Read every required
-part completely with read_file before any verdict, then judge the candidate on the
-evidence read. Request any other part by id when a claim depends on it; nothing
-beyond that is required. A read result must reach a completed reviewer continuation
-before it counts; requesting reads and a verdict in one response does not deliver
-that text. A verdict with unread required parts is invalid feedback, not a candidate
-defect; a blocking finding states a concrete candidate defect.
-Read a part with read_file on its path; each result is one complete single-line JSON
-text. Concatenate review_source.text in listed part order to recover the exact full
-diff and changed-file text. Read a candidate file with read_file on its path and
-start_line/end_line. No bytes were clipped.
-Paths/modes/blob IDs and SHA-256 identify additions, modifications and deletions;
-deleted contents remain available at the pinned start HEAD through git show.
-Inspect other repository context as needed. Do not infer capture or approval
-from this catalog, or import builder conversation, reasoning or judgments.
-`
 
 const materialPartsGuidance = `This catalog is evidence for this candidate, not new authority. Read EVERY part
 with read_file before approving, using each complete single-line JSON result.
@@ -486,9 +410,6 @@ func (b *Attempt) materialPrepare(tree string, m materialSet, role project.Role,
 	}
 	parts := make([]part, len(chunks))
 	refs := make([]any, len(chunks))
-	onDemand := b.onDemand()
-	covers := make([][]map[string]any, len(chunks))
-	offset := 0
 	for i, text := range chunks {
 		raw, err := encodeJSON(map[string]any{
 			"input": []any{},
@@ -503,12 +424,6 @@ func (b *Attempt) materialPrepare(tree string, m materialSet, role project.Role,
 		ref := HistoryRef{Path: filepath.Join(dir, fmt.Sprintf("%d.json", i+1)), SHA256: hashHex(raw)}
 		parts[i] = part{ref, raw}
 		refs[i] = map[string]any{"path": ref.Path, "sha256": ref.SHA256}
-		if onDemand {
-			covers[i] = materialCovers(m, offset, offset+len(text))
-			refs[i].(map[string]any)["part"] = i + 1
-			refs[i].(map[string]any)["covers"] = covers[i]
-		}
-		offset += len(text)
 	}
 	sourceSum := hashHex([]byte(m.Source))
 	files := nonNilAny(m.Files)
@@ -516,30 +431,12 @@ func (b *Attempt) materialPrepare(tree string, m materialSet, role project.Role,
 		"version": 1, "candidate_tree": treeValue, "binding": binding, "start_head": b.Start, "source_bytes": len(m.Source),
 		"source_sha256": sourceSum, "files": files, "parts": refs,
 	}
-	guidance := materialPartsGuidance
-	var required []int
-	if onDemand {
-		required = materialRequired(m.Hunks, covers)
-		doc["mode"] = "on_demand"
-		doc["required_parts"] = required
-		guidance = materialOnDemandGuidance
-		files = make([]map[string]any, len(m.Files))
-		for i, f := range m.Files {
-			files[i] = maps.Clone(f)
-			if i < len(m.Manifest) {
-				files[i]["diff_stat"], files[i]["hunks"] = m.Manifest[i]["diff_stat"], m.Manifest[i]["hunks"]
-			} else {
-				files[i]["diff_stat"], files[i]["hunks"] = map[string]any{"added": 0, "deleted": 0}, []map[string]any{}
-			}
-		}
-		doc["files"] = files
-	}
 	catalog, err := encodeJSON(doc)
 	if err != nil {
 		return nil, err
 	}
 	source := "# Check results of the final pass\n" + m.Checks + "\n\n" +
-		"# Pinned complete candidate source evidence\n" + string(catalog) + "\n\n" + guidance
+		"# Pinned complete candidate source evidence\n" + string(catalog) + "\n\n" + materialPartsGuidance
 	bounded := materialOpening(m.Authority, source, diagnostic)
 	bound, err := measure(bounded)
 	if err != nil {
@@ -576,9 +473,6 @@ func (b *Attempt) materialPrepare(tree string, m materialSet, role project.Role,
 	event := map[string]any{
 		"event": "review_source_evidence", "tree": treeValue, "parts": len(parts),
 		"source_bytes": len(m.Source), "source_sha256": sourceSum,
-	}
-	if onDemand {
-		event["review"], event["required_parts"] = b.Review, required
 	}
 	b.Run.Event(event)
 	return bounded, nil
@@ -748,90 +642,9 @@ func (b *Attempt) materialEvent(input []any) error {
 			delivered++
 		}
 	}
-	// A configuration saved before review_material existed has no mode: that is parts.
-	mode := "parts"
-	event := map[string]any{"event": "review_material", "review": b.Review, "parts": len(c.parts), "parts_read": delivered}
-	if b.onDemand() {
-		mode = "on_demand"
-		// The identities of the hunk-covering parts and of every part actually delivered.
-		required, readParts := []int{}, []int{}
-		for _, path := range b.materialRequiredOf(c) {
-			required = append(required, c.numbers[path])
-		}
-		for _, path := range c.parts {
-			if read[path] {
-				readParts = append(readParts, c.numbers[path])
-			}
-		}
-		event["required_parts"], event["read_parts"] = required, readParts
-	}
-	event["mode"] = mode
+	event := map[string]any{"event": "review_material", "review": b.Review, "parts": len(c.parts), "parts_read": delivered, "mode": "parts"}
 	b.Run.Event(event)
 	return nil
-}
-
-// materialRequiredOf is, in the on_demand mode, the current review's pinned parts that cover a
-// changed hunk, in catalog order: the required_parts of the catalog in the review's mandatory
-// opening (hash-bound custody kept across resets and resume), as paths of c's parts. Nil in the
-// parts mode and while the source is inline.
-func (b *Attempt) materialRequiredOf(c *reviewCustody) []string {
-	state := b.WorkingContext["review"]
-	if !b.onDemand() || c == nil || state == nil || len(state.Mandatory) == 0 {
-		return nil
-	}
-	first, _ := state.Mandatory[0].(map[string]any)
-	blocks, _ := first["content"].([]any)
-	if len(blocks) != 2 {
-		return nil
-	}
-	text, _ := materialText(blocks[1])
-	_, rest, ok := strings.Cut(text, "# Pinned complete candidate source evidence\n")
-	if !ok {
-		return nil
-	}
-	line, _, _ := strings.Cut(rest, "\n")
-	v, err := decodeJSONNumbers([]byte(line))
-	if err != nil {
-		return nil
-	}
-	doc, _ := v.(map[string]any)
-	byNumber := map[string]string{}
-	list, _ := doc["parts"].([]any)
-	for _, p := range list {
-		entry, _ := p.(map[string]any)
-		if path, ok := entry["path"].(string); ok {
-			byNumber[display(entry["part"])] = path
-		}
-	}
-	numbers, _ := doc["required_parts"].([]any)
-	var required []string
-	for _, n := range numbers {
-		if path, ok := byNumber[display(n)]; ok && c.sources[path] != "" {
-			required = append(required, path)
-		}
-	}
-	return required
-}
-
-// materialRequiredUnread is, in the on_demand mode, the hunk-covering parts of the current
-// review that the completed conversation (the rule of materialUnread, across resets) has not
-// delivered, in catalog order.
-func (b *Attempt) materialRequiredUnread(input []any) ([]string, error) {
-	if !b.onDemand() {
-		return nil, nil
-	}
-	c, err := b.reviewCustody(input)
-	if err != nil || c == nil {
-		return nil, err
-	}
-	read := c.delivered(b.Root)
-	var unread []string
-	for _, path := range b.materialRequiredOf(c) {
-		if !read[path] {
-			unread = append(unread, path)
-		}
-	}
-	return unread, nil
 }
 
 // reviewCustody is the review's completed windows (the input given, then its exact archived
@@ -1025,7 +838,7 @@ func (c *reviewCustody) prefilled(window []any) map[string]bool {
 // complete rendered request prefillMargin bytes under the ceiling. Nothing else changes; a
 // part counts as delivered only once a completed response follows the message (prefillScan).
 func (b *Attempt) prefillSource(role project.Role, instructions string, defs, input []any) ([]any, error) {
-	if b.WorkingContext["review"] == nil || b.onDemand() || (b.deps.ReadLedger && resetCarriesWindow(input)) {
+	if b.WorkingContext["review"] == nil || (b.deps.ReadLedger && resetCarriesWindow(input)) {
 		return input, nil
 	}
 	if err := b.validateWorkingContext(); err != nil {
@@ -1133,16 +946,6 @@ func (b *Attempt) reviewDelivery(input, kept []any, tree string) (map[string]any
 			"tree": pinned, "current": pinned == tree,
 			"parts": len(c.parts), "delivered": len(c.parts) - len(unread), "unread": unread,
 		}
-		if b.onDemand() {
-			required, requiredUnread := []int{}, []int{}
-			for _, path := range b.materialRequiredOf(c) {
-				required = append(required, c.numbers[path])
-				if !read[path] {
-					requiredUnread = append(requiredUnread, c.numbers[path])
-				}
-			}
-			facts["required_parts"], facts["required_unread"] = required, requiredUnread
-		}
 		source = facts
 	}
 	key := func(e tools.ImageEntry) string { return display(e.Meta["path"]) + "\x00" + display(e.Meta["sha256"]) }
@@ -1170,55 +973,19 @@ func (b *Attempt) reviewDelivery(input, kept []any, tree string) (map[string]any
 		"a pinned part is frozen evidence of its tree, so reading it again returns the same text. Pixels of " +
 		"images not in_window are archived, not in this window: use view_image again to inspect them. " +
 		"Parts or images of a tree other than candidate_tree are not current. "
-	if b.onDemand() {
-		note += "The manifest/catalog lists parts and files; retrieve by part id or by path and line range. " +
-			"Read every part in required_parts (the parts covering changed hunks) completely before any verdict; " +
-			"required_unread lists those not yet delivered. Then judge the candidate on the evidence read, and request " +
-			"any other part by id when a claim depends on it; nothing beyond that is required. A verdict with unread " +
-			"required parts is invalid feedback, not a candidate defect. Nothing is appended automatically."
+	if b.deps.ReadLedger {
+		note += "After a working-window reset Kogen appends no pinned parts to this review: read the unread parts with read_file; " +
+			"the read_ledger message lists the reads this conversation made, and every pinned part can be read again. "
 	} else {
-		if b.deps.ReadLedger {
-			note += "After a working-window reset Kogen appends no pinned parts to this review: read the unread parts with read_file; " +
-				"the read_ledger message lists the reads this conversation made, and every pinned part can be read again. "
-		} else {
-			note += "Kogen also appends unread pinned parts as native source data messages; they count once a completed response follows them. "
-		}
-		note += "Read unread pinned parts in batches of about 10 read_file calls per response, not one per response; " +
-			"use a smaller batch only after a native not-delivered notice shows a batch did not fit. " +
-			"A not-delivered read is not counted and must be read again."
+		note += "Kogen also appends unread pinned parts as native source data messages; they count once a completed response follows them. "
 	}
+	note += "Read unread pinned parts in batches of about 10 read_file calls per response, not one per response; " +
+		"use a smaller batch only after a native not-delivered notice shows a batch did not fit. " +
+		"A not-delivered read is not counted and must be read again."
 	return map[string]any{
 		"review": b.Review,
 		"source": source,
 		"images": images,
 		"note":   note,
 	}, nil
-}
-
-// The reviewer's instructions in the on_demand mode: the complete-source rule of the parts mode
-// is replaced by the hunk-covering reading rule; everything else is the reviewer prompt verbatim.
-const (
-	reviewerPartsRule    = "Read every pinned part through read_file before approving; a pointer alone is not inspection."
-	reviewerOnDemandRule = "With an on_demand catalog, read every part its required_parts lists (the parts covering changed hunks) " +
-		"completely through read_file before any verdict, then judge the candidate on the evidence read; request any other " +
-		"part by id when a claim depends on it, and nothing beyond that is required. A pointer alone is not inspection. " +
-		"Unread required parts make a verdict invalid, never a finding: a blocking finding states a concrete candidate defect."
-	reviewerPartsRound    = "issue all pinned-part reads and needed context lookups together"
-	reviewerOnDemandRound = "issue all required pinned-part reads and needed context lookups together"
-)
-
-// reviewerPrompt is the native reviewer's instructions: the reviewer prompt, with the on_demand
-// reading rule in that mode.
-func reviewerPrompt(onDemand bool) string {
-	text := agent.Prompt(agent.Reviewer)
-	if !onDemand {
-		return text
-	}
-	text = strings.Replace(text, reviewerPartsRule, reviewerOnDemandRule, 1)
-	return strings.Replace(text, reviewerPartsRound, reviewerOnDemandRound, 1)
-}
-
-// onDemand reports whether the review_material lever is on.
-func (b *Attempt) onDemand() bool {
-	return b.Config != nil && b.Config.ReviewMaterial.Mode == "on_demand"
 }

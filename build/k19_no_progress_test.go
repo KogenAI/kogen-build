@@ -20,7 +20,7 @@ func countEvents(evs []map[string]any, name string) int {
 func TestExternalNoProgressStopsOnThirdIdenticalRed(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.useExecutor("    max_rounds: 6\n")
+	e.useExecutor("")
 	reviews := 0
 	f := newFakeExecutor(t, externalWritesApp("red\n", harnessUsage(1, 0, 1, 0)))
 	a := e.build(withExecutor(f, &reviews))
@@ -39,7 +39,7 @@ func TestExternalNoProgressStopsOnThirdIdenticalRed(t *testing.T) {
 func TestExternalNoProgressResetsWhenTheTreeChanges(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.useExecutor("    max_rounds: 4\n")
+	e.useExecutor("")
 	reviews := 0
 	f := newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {
 		content := "red\n"
@@ -48,6 +48,7 @@ func TestExternalNoProgressResetsWhenTheTreeChanges(t *testing.T) {
 		}
 		return externalWritesApp(content, harnessUsage(1, 0, 1, 0))(n, ctx, root, in)
 	})
+	f.desc.Capabilities.MaxRounds = 4
 	a := e.build(withExecutor(f, &reviews))
 	if a.exit != 1 {
 		t.Fatalf("exit %d\n%s", a.exit, a.shown())

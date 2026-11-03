@@ -330,29 +330,44 @@ func decodeState(raw json.RawMessage) (*State, bool) {
 	return st, true
 }
 
-// configJSON is the canonical JSON of a configuration, to compare two of them.
+// removedConfigKeys are the top-level configuration keys the Build no longer reads: they never
+// make two configurations differ.
+var removedConfigKeys = []string{"ShapeWorkers", "ShapeAudit", "ShapeDecisionCheck", "ReviewMaterial"}
+
+// configJSON is the canonical JSON of a configuration, to compare two of them, without the
+// options the Build no longer reads (the removed top-level keys and each model's MaxRounds).
 func configJSON(c *project.Config) string {
 	b, err := json.Marshal(c)
 	if err != nil {
 		return ""
 	}
-	return string(b)
+	var doc map[string]any
+	if json.Unmarshal(b, &doc) != nil {
+		return ""
+	}
+	for _, k := range removedConfigKeys {
+		delete(doc, k)
+	}
+	if models, ok := doc["Models"].(map[string]any); ok {
+		for _, role := range models {
+			if r, ok := role.(map[string]any); ok {
+				delete(r, "MaxRounds")
+			}
+		}
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }
 
-// sameConfig reports whether two configurations are equal.
+// sameConfig reports whether two configurations are equal in everything the Build reads.
 func sameConfig(a, b *project.Config) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	// A configuration saved before review_material existed has no mode: that is parts.
-	normal := func(c *project.Config) string {
-		copied := *c
-		if copied.ReviewMaterial.Mode == "" {
-			copied.ReviewMaterial.Mode = "parts"
-		}
-		return configJSON(&copied)
-	}
-	return normal(a) == normal(b)
+	return configJSON(a) == configJSON(b)
 }
 
 // intent rebuilds the Intent from the text the Build was started with.

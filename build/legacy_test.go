@@ -659,10 +659,6 @@ func TestEveryRealCheckpointDecodes(t *testing.T) {
 			eq(t, "acceptance", st.Config.Acceptance.Run+" "+st.Config.Acceptance.StepsDir, "sh accept.sh features/steps")
 			eq(t, "protect", strings.Join(st.Config.Protect, "|"), "accept.sh")
 			eq(t, "build model", st.Config.Models["build"].Model+"/"+st.Config.Models["build"].Effort, "gpt-6.1-sol/medium")
-			eq(t, "no workers", st.Config.ShapeWorkers.Enabled, false)
-			if st.Config.ShapeWorkers.Roles == nil {
-				t.Fatal("workers' roles are nil")
-			}
 			eq(t, "usage", st.Usage, Tokens{count(120), count(40), count(31), count(7)})
 			eq(t, "attempt usage", st.AttemptUsage, st.Usage)
 			eq(t, "round", st.Round, 1)

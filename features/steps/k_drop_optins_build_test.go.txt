@@ -1,0 +1,211 @@
+package build
+
+// Acceptance overlay of k-drop-optins-build (features/steps/k_drop_optins_build_steps.js
+// places it at build/k_drop_optins_build_acceptance_test.go): the Build no longer reads the
+// opt-in options K-DROP-OPTINS removes from the coordinator; it uses today's defaults.
+// The step passes each case's inputs and expected values in KDO_* variables.
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/agent"
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+func kdoInt(t *testing.T, name string) int {
+	t.Helper()
+	n, err := strconv.Atoi(os.Getenv(name))
+	if err != nil {
+		t.Fatalf("%s=%q: %v", name, os.Getenv(name), err)
+	}
+	return n
+}
+
+// kdoReviewCaps is the scripted Claude Code with its own review round cap.
+type kdoReviewCaps struct {
+	*lineupExec
+	max int
+}
+
+func (k kdoReviewCaps) Describe() executor.Descriptor {
+	d := k.lineupExec.Describe()
+	rc := d.RoleCapabilities[executor.RoleReview]
+	rc.MaxRounds = k.max
+	d.RoleCapabilities = map[string]executor.RoleCapabilities{executor.RoleBuild: d.RoleCapabilities[executor.RoleBuild], executor.RoleReview: rc}
+	return d
+}
+
+// TestKDropOptinsBuildRounds: a role that still sets max_rounds (KDO_SET) under an executor
+// whose own cap for the role is KDO_CAP runs KDO_WANT rounds of that role (KDO_ROLE) and stops
+// candidate/executor_round_limit.
+func TestKDropOptinsBuildRounds(t *testing.T) {
+	role, set, capRounds, want := os.Getenv("KDO_ROLE"), kdoInt(t, "KDO_SET"), kdoInt(t, "KDO_CAP"), kdoInt(t, "KDO_WANT")
+	e := newEnv(t)
+	extra := fmt.Sprintf("    max_rounds: %d\n", set)
+	switch role {
+	case "build":
+		e.useExecutor(extra)
+		f := newFakeExecutor(t, externalWritesApp("red\n", harnessUsage(1, 0, 1, 0)))
+		f.desc.Capabilities.MaxRounds = capRounds
+		a := e.build(withExecutor(f, nil))
+		wantStop(t, a, "candidate/executor_round_limit")
+		if got := len(f.seen()); got != want {
+			t.Errorf("build role with max_rounds %d and executor cap %d ran %d build rounds, want %d", set, capRounds, got, want)
+		}
+		if len(f.tasks) != 1 {
+			t.Fatalf("%d build tasks, want 1", len(f.tasks))
+		}
+		if got := f.tasks[0].MaxRounds; got != want {
+			t.Errorf("build task MaxRounds %d, want %d", got, want)
+		}
+	case "review":
+		e.useLineup(extra)
+		f := newLineupExec(t)
+		f.review = func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error) {
+			lineupWriteApp(t, root, "red\n")
+			return executor.RoundResult{Structured: verdictJSON("approve")}, nil
+		}
+		ex := kdoReviewCaps{f, capRounds}
+		a := e.build(func(in *Input) {
+			in.External = func(project.Role) (executor.Executor, error) { return ex, nil }
+			in.Reviewer = nil
+		})
+		wantStop(t, a, "candidate/executor_round_limit")
+		if got := len(f.rounds(executor.RoleReview)); got != want {
+			t.Errorf("review role with max_rounds %d and executor review cap %d ran %d review rounds, want %d", set, capRounds, got, want)
+		}
+		x, _ := e.result(e.onlyRun())["review_executor"].(map[string]any)
+		if x == nil || x["rounds"] != float64(want) {
+			t.Errorf("recorded review_executor %v, want rounds %d", x, want)
+		}
+	default:
+		t.Fatalf("KDO_ROLE=%q, want build or review", role)
+	}
+}
+
+// TestKDropOptinsBuildSameConfig: the configuration comparison of resume and recover between a
+// saved configuration (as a checkpoint's JSON) that differs from the current one in KDO_FIELD
+// is "same" or "changed" (KDO_SAME).
+func TestKDropOptinsBuildSameConfig(t *testing.T) {
+	field, same := os.Getenv("KDO_FIELD"), os.Getenv("KDO_SAME")
+	if same != "same" && same != "changed" {
+		t.Fatalf("KDO_SAME=%q, want same or changed", same)
+	}
+	current := lineupConfig(t, "  shape: {model: s, effort: high}\n  build: {executor: claude-code, model: b, effort: high}\n  review: {executor: claude-code, model: r, effort: high}\n")
+	raw, err := json.Marshal(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	build := doc["Models"].(map[string]any)["build"].(map[string]any)
+	switch field {
+	case "models.build.max_rounds":
+		build["MaxRounds"] = 4
+	case "review_material mode on_demand":
+		doc["ReviewMaterial"] = map[string]any{"Mode": "on_demand"}
+	case "review_material mode empty":
+		doc["ReviewMaterial"] = map[string]any{"Mode": ""}
+	case "shape_workers":
+		doc["ShapeWorkers"] = map[string]any{"Enabled": true, "Roles": map[string]any{"read": map[string]any{"Model": "w", "Effort": "low"}}}
+	case "shape_audit":
+		doc["ShapeAudit"] = map[string]any{"Enabled": true}
+	case "shape_decision_check":
+		doc["ShapeDecisionCheck"] = map[string]any{"Enabled": true}
+	case "checks":
+		doc["Checks"] = []any{map[string]any{"Name": "go-test", "Run": "go test ./..."}}
+	case "models.build.model":
+		build["Model"] = "other"
+	case "protect":
+		doc["Protect"] = []any{"secret.txt"}
+	default:
+		t.Fatalf("unknown KDO_FIELD %q", field)
+	}
+	edited, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved project.Config
+	if err := json.Unmarshal(edited, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := json.Marshal(&saved); string(again) == string(raw) {
+		t.Fatalf("%s: the saved configuration does not differ from the current one: %s", field, again)
+	}
+	want := same == "same"
+	if got := sameConfig(&saved, current); got != want {
+		t.Fatalf("%s: sameConfig(saved, current) = %v, want %v (%s)", field, got, want, same)
+	}
+	if got := sameConfig(current, &saved); got != want {
+		t.Fatalf("%s: sameConfig(current, saved) = %v, want %v (%s)", field, got, want, same)
+	}
+}
+
+// TestKDropOptinsBuildPartsReview: a project whose project.yaml still sets review_material
+// mode on_demand is reviewed with the parts material, the only review material there is.
+func TestKDropOptinsBuildPartsReview(t *testing.T) {
+	e := newEnv(t)
+	e.write(".kogen/project.yaml", e.read(".kogen/project.yaml")+"review_material:\n  mode: on_demand\n")
+	e.run("git", "add", ".kogen/project.yaml")
+	e.run("git", "commit", "-qm", "review material mode")
+	e.approve()
+	f := e.prov
+	f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": bigFile()}, "finish", map[string]any{"summary": "done"}))
+	reader := readThen(f, "approve")
+	for i := 0; i < 30; i++ {
+		f.then(reader)
+	}
+	start := e.head()
+	a := e.reviewed()
+	if a.exit != 0 || e.head() == start {
+		t.Fatalf("not landed: exit %d\n%s", a.exit, a.shown())
+	}
+	var reviews []map[string]any
+	for _, req := range f.requests() {
+		if strings.Contains(requestText(req), "# Pinned complete candidate source evidence") {
+			reviews = append(reviews, req)
+		}
+	}
+	if len(reviews) == 0 {
+		t.Fatal("no review request carries the pinned source catalog")
+	}
+	if got := requestInstructions(reviews[0]); got != agent.Prompt(agent.Reviewer) {
+		t.Errorf("the reviewer's instructions are not the reviewer prompt verbatim:\n%.600s", got)
+	}
+	catalog := reviewCatalog(t, reviews[0])
+	parts := len(catalog["parts"].([]any))
+	for _, key := range []string{"mode", "required_parts"} {
+		if _, ok := catalog[key]; ok {
+			t.Errorf("the parts catalog has %s: %v", key, catalog[key])
+		}
+	}
+	if parts < 2 {
+		t.Fatalf("the source was not pinned in parts: %v", catalog)
+	}
+	events := eventsNamed(e.events(e.onlyRun()), "review_material")
+	if len(events) != 1 {
+		t.Fatalf("review_material events %v, want one", events)
+	}
+	if events[0]["mode"] != "parts" || events[0]["parts"] != float64(parts) || events[0]["parts_read"] != float64(parts) {
+		t.Errorf("review_material event %v, want mode parts and %d of %d parts read", events[0], parts, parts)
+	}
+	for _, key := range []string{"required_parts", "read_parts"} {
+		if _, ok := events[0][key]; ok {
+			t.Errorf("the review_material event has %s: %v", key, events[0][key])
+		}
+	}
+	evidence := eventsNamed(e.events(e.onlyRun()), "review_source_evidence")
+	for _, ev := range evidence {
+		if _, ok := ev["required_parts"]; ok {
+			t.Errorf("the review_source_evidence event has required_parts: %v", ev)
+		}
+	}
+}

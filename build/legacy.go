@@ -697,15 +697,6 @@ func (c *legacyConv) config(t any) *project.Config {
 	for i, k := range models.keys {
 		cfg.Models[c.str(k)] = c.role(models.vals[i])
 	}
-	cfg.ShapeWorkers = project.Workers{Roles: map[string]project.Role{}}
-	workers := c.mp(c.field(m, "shape_workers"))
-	for i, k := range workers.keys {
-		if k == legacyAtom("enabled") {
-			cfg.ShapeWorkers.Enabled = c.boolean(workers.vals[i])
-		} else {
-			cfg.ShapeWorkers.Roles[c.str(k)] = c.role(workers.vals[i])
-		}
-	}
 	return cfg
 }
 

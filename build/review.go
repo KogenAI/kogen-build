@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
@@ -168,7 +166,7 @@ func (reviewIndependent) Review(ctx context.Context, b *Attempt, pass verify.Pas
 	if state := b.WorkingContext["review"]; state != nil {
 		state.Observations = []any{}
 	}
-	input, err := b.materialPrepare(pass.Tree, m, role, reviewerPrompt(b.onDemand()), tools, diagnostic, false)
+	input, err := b.materialPrepare(pass.Tree, m, role, agent.Prompt(agent.Reviewer), tools, diagnostic, false)
 	if err != nil {
 		return Approved{}, err
 	}
@@ -483,10 +481,10 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 			}
 		}
 		resp, active, err := b.Request(ctx, RequestSpec{
-			Owner: "review", Role: r.sess.Role, Instructions: reviewerPrompt(b.onDemand()),
+			Owner: "review", Role: r.sess.Role, Instructions: agent.Prompt(agent.Reviewer),
 			Input: r.sess.Input, Tools: r.tools, Retain: retain, ForceTool: force,
 			Prefill: func(input []any) ([]any, error) {
-				return b.prefillSource(r.sess.Role, reviewerPrompt(b.onDemand()), r.tools, input)
+				return b.prefillSource(r.sess.Role, agent.Prompt(agent.Reviewer), r.tools, input)
 			},
 		})
 		if err != nil {
@@ -641,10 +639,8 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 
 // validate checks a submit_review call (REV-4): a verdict approve or changes with findings
 // {path, line, severity, message}; every path names a file of the checkout or of the start
-// HEAD; changes has a blocking finding, approve none; in the on_demand mode only, no blocking
-// finding asserts that there is no product defect (quoted text ignored); and an approval has read all pinned source parts (in the on_demand mode,
-// any verdict has read every part covering a changed hunk). It returns the verdict, or the
-// problems to send back.
+// HEAD; changes has a blocking finding, approve none; and an approval has read all pinned source
+// parts. It returns the verdict, or the problems to send back.
 func (r *reviewRun) validate(args map[string]any, input []any) (*reviewVerdict, []string, error) {
 	b := r.b
 	verdict, _ := args["verdict"].(string)
@@ -714,27 +710,7 @@ func (r *reviewRun) validate(args map[string]any, input []any) (*reviewVerdict, 
 	case verdict == "approve" && blocking > 0:
 		problems = append(problems, "an approve verdict cannot have blocking findings")
 	}
-	for _, f := range findings {
-		// A blocker at a protected path reports a protected fixture defect (the documented stop),
-		// which may well say that the product is not at fault.
-		path, _ := f["path"].(string)
-		if message, _ := f["message"].(string); f["severity"] == "blocking" && b.onDemand() && reviewNoDefect(message) && !slices.Contains(b.Baseline, path) {
-			problems = append(problems, "a blocking finding that asserts no product defect (such as inspection not completed) is not a verdict on the candidate; "+
-				"complete the reads the review requires, then submit approve, or changes with a concrete candidate defect")
-			break
-		}
-	}
-	if !r.external && b.onDemand() {
-		unread, err := b.materialRequiredUnread(input)
-		if err != nil {
-			return nil, nil, err
-		}
-		if len(unread) > 0 {
-			problems = append(problems, fmt.Sprintf("%d required hunk-covering pinned part(s) unread; read them completely before a verdict; incomplete reading is not a candidate defect; use read_file on %s",
-				len(unread), strings.Join(unread[:min(8, len(unread))], ", ")))
-		}
-	}
-	if verdict == "changes" && !r.external && !b.onDemand() {
+	if verdict == "changes" && !r.external {
 		unread, err := b.materialUnread(input)
 		if err != nil {
 			return nil, nil, err
@@ -744,7 +720,7 @@ func (r *reviewRun) validate(args map[string]any, input []any) (*reviewVerdict, 
 				len(unread), strings.Join(unread[:min(8, len(unread))], ", ")))
 		}
 	}
-	if verdict == "approve" && !r.external && !b.onDemand() {
+	if verdict == "approve" && !r.external {
 		unread, err := b.materialUnread(input)
 		if err != nil {
 			return nil, nil, err
@@ -758,62 +734,6 @@ func (r *reviewRun) validate(args map[string]any, input []any) (*reviewVerdict, 
 		return nil, problems, nil
 	}
 	return &reviewVerdict{Verdict: verdict, Findings: findings}, nil, nil
-}
-
-// reviewNoDefectRe matches a finding message that explicitly asserts no product defect, such as
-// "no product defect is asserted by this finding" or "not a candidate defect". A concrete defect
-// that merely mentions inspection does not match.
-var reviewNoDefectRe = regexp.MustCompile(`(?i)\bno\s+(?:(?:product|candidate|code|implementation)\s+)?defects?\s+(?:(?:is|are|was|were|has\s+been|have\s+been)\s+)?(?:asserted|claimed|alleged|identified|found|reported)\b` +
-	`|\bnot\s+(?:a|an)\s+(?:product|candidate)\s+defect\b` +
-	`|\b(?:does|do|is|are)\s+not\s+(?:assert|claim|allege)(?:ing)?\s+(?:a|any)\s+(?:(?:product|candidate)\s+)?defect` +
-	`|\bwithout\s+(?:asserting|claiming|alleging)\s+(?:a|any)\s+(?:(?:product|candidate)\s+)?defect`)
-
-// reviewNoDefect reports whether a blocking finding's message explicitly asserts no product
-// defect: invalid feedback, never a blocker. Only the on_demand review applies it, and quoted
-// text (see reviewUnquoted) is ignored: a finding that merely quotes such a phrase is judged
-// by its own claim.
-func reviewNoDefect(message string) bool {
-	return reviewNoDefectRe.MatchString(reviewUnquoted(message))
-}
-
-// reviewQuoteClosers maps each paired quote opener to its closer.
-var reviewQuoteClosers = map[rune]rune{'"': '"', '“': '”', '‘': '’', '`': '`'}
-
-// reviewUnquoted is message without its quoted spans: text enclosed by a matching pair of
-// straight or curly double quotes, curly single quotes or backticks, or by straight single
-// quotes. A straight single quote opens only at the start or after a character that is not a
-// letter or digit, and closes at the next one followed by the end or by such a character, so
-// apostrophes neither open nor close. A quote with no closing partner encloses nothing.
-func reviewUnquoted(message string) string {
-	runes := []rune(message)
-	wordy := func(i int) bool {
-		return i >= 0 && i < len(runes) && (unicode.IsLetter(runes[i]) || unicode.IsDigit(runes[i]))
-	}
-	var out strings.Builder
-	for i := 0; i < len(runes); i++ {
-		closer, paired := reviewQuoteClosers[runes[i]]
-		single := runes[i] == '\'' && !wordy(i-1)
-		if !paired && !single {
-			out.WriteRune(runes[i])
-			continue
-		}
-		if single {
-			closer = '\''
-		}
-		end := -1
-		for j := i + 1; j < len(runes); j++ {
-			if runes[j] == closer && (!single || !wordy(j+1)) {
-				end = j
-				break
-			}
-		}
-		if end < 0 {
-			out.WriteRune(runes[i])
-			continue
-		}
-		i = end
-	}
-	return out.String()
 }
 
 // reviewInteger is v when it is a JSON integer (not a float).

@@ -46,7 +46,7 @@ func (e *env) startReviewed() (*attempt, <-chan struct{}) {
 func (f *fakeProvider) reviewRequests() []map[string]any {
 	var out []map[string]any
 	for _, req := range f.requests() {
-		if text := requestInstructions(req); text == agent.Prompt(agent.Reviewer) || text == reviewerPrompt(true) {
+		if text := requestInstructions(req); text == agent.Prompt(agent.Reviewer) {
 			out = append(out, req)
 		}
 	}
@@ -1475,42 +1475,6 @@ func TestChangesAfterEveryPartWasReadStaysBlocked(t *testing.T) {
 	a := e.reviewed()
 	eq(t, "exit", a.exit, 1)
 	contains(t, "stdout", a.out.String(), "review_blocked")
-}
-
-func TestOnDemandReviewReadsEveryHunkPartAndRecordsTheMode(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t)
-	e.write(".kogen/project.yaml", e.read(".kogen/project.yaml")+"review_material:\n  mode: on_demand\n")
-	e.run("git", "add", ".kogen/project.yaml")
-	e.run("git", "commit", "-qm", "review material mode")
-	e.approve()
-	f := e.prov
-	f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": bigFile()}, "finish", map[string]any{"summary": "done"}))
-	// Every line of app.txt (and the added Intent files) changes: every part covers a changed
-	// hunk, so the reviewer reads them all before approving.
-	reader := readThen(f, "approve")
-	for i := 0; i < 30; i++ {
-		f.then(reader)
-	}
-	start := e.head()
-	a := e.reviewed()
-	if a.exit != 0 || e.head() == start {
-		t.Fatalf("not landed: %d %s", a.exit, a.shown())
-	}
-	reqs := f.reviewRequests()
-	catalog := reviewCatalog(t, reqs[0])
-	parts := len(catalog["parts"].([]any))
-	if catalog["mode"] != "on_demand" || parts < 2 || len(catalogRequired(catalog)) != parts {
-		t.Fatalf("catalog %v", catalog)
-	}
-	if strings.Contains(requestText(reqs[0]), "0123456789abcdef-line") {
-		t.Error("the opening carries a part body")
-	}
-	events := eventsNamed(e.events(e.onlyRun()), "review_material")
-	if len(events) != 1 || events[0]["mode"] != "on_demand" || events[0]["parts_read"] != float64(parts) ||
-		events[0]["parts"] != float64(parts) || len(events[0]["read_parts"].([]any)) != parts {
-		t.Fatalf("events %v", events)
-	}
 }
 
 const deliveredHead = "Your verdict was not applied: the candidate changed after its contents were delivered to you, other than through your own Kogen tool calls: app.txt.\n" +

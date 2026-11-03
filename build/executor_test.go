@@ -212,9 +212,10 @@ func TestExternalFinishClaimOnARedTreeGetsFeedbackNotACommit(t *testing.T) {
 func TestExternalTaskAndRunRecords(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.useExecutor("    max_rounds: 3\n")
+	e.useExecutor("")
 	start := e.head()
 	f := newFakeExecutor(t, externalWritesApp("candidate\n", harnessUsage(10, 0, 5, 0.01)))
+	f.desc.Capabilities.MaxRounds = 3
 	a := e.build(withExecutor(f, nil))
 	if a.exit != 0 {
 		t.Fatalf("exit %d %s", a.exit, a.shown())
@@ -278,7 +279,7 @@ func TestExternalTaskAndRunRecords(t *testing.T) {
 	// The role keeps its identity in the checkpoint's configuration.
 	models := state["config"].(map[string]any)["Models"].(map[string]any)
 	build := models["build"].(map[string]any)
-	eq(t, "config build role", build, map[string]any{"Provider": "", "Model": "claude-sonnet-5-5", "Effort": "high", "Executor": "claude-code", "MaxRounds": float64(3)})
+	eq(t, "config build role", build, map[string]any{"Provider": "", "Model": "claude-sonnet-5-5", "Effort": "high", "Executor": "claude-code"})
 }
 
 func contains2(list []string, s string) bool {
@@ -360,10 +361,11 @@ func TestExternalHeadMoveStops(t *testing.T) {
 func TestExternalRoundLimitKeepsTheCandidate(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.useExecutor("    max_rounds: 2\n")
+	e.useExecutor("")
 	start := e.head()
 	reviews := 0
 	f := newFakeExecutor(t, externalWritesApp("red\n", harnessUsage(1, 0, 1, 0.001)))
+	f.desc.Capabilities.MaxRounds = 2
 	a := e.build(withExecutor(f, &reviews))
 	if a.exit != 1 {
 		t.Fatalf("exit %d\n%s", a.exit, a.shown())
@@ -398,8 +400,9 @@ func TestExternalRoundLimitDefaultsToTheExecutorsOwn(t *testing.T) {
 func TestExternalCheckpointRefusesResume(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.useExecutor("    max_rounds: 1\n")
+	e.useExecutor("")
 	f := newFakeExecutor(t, externalWritesApp("red\n", harnessUsage(1, 0, 1, 0)))
+	f.desc.Capabilities.MaxRounds = 1
 	a := e.build(withExecutor(f, nil))
 	if a.exit != 1 {
 		t.Fatalf("exit %d\n%s", a.exit, a.shown())

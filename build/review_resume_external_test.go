@@ -34,8 +34,9 @@ func TestExternalReviewCheckpointsRecordTheGreenBase(t *testing.T) {
 	t.Run("an external review keeps its base through failed repairs", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t)
-		e.useLineup("    max_rounds: 2\n")
+		e.useLineup("")
 		f := newLineupExec(t)
+		f.reviewMax = intp(2)
 		f.review = redReviewer(t)
 		wantStop(t, e.build(withLineup(f)), "candidate/executor_round_limit")
 		c := cpContinuation(e, e.onlyRun())
@@ -68,9 +69,10 @@ func TestExternalReviewCheckpointsRecordTheGreenBase(t *testing.T) {
 func TestExternalReviewResumeStartsOneFreshReviewOfTheBase(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.useLineup("    max_rounds: 2\n")
+	e.useLineup("")
 	start := e.head()
 	f := newLineupExec(t)
+	f.reviewMax = intp(2)
 	f.review = redReviewer(t)
 	wantStop(t, e.build(withLineup(f)), "candidate/executor_round_limit")
 	id := e.onlyRun()
@@ -123,8 +125,9 @@ func TestExternalReviewResumeRefusals(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				e := newEnv(t)
-				e.useLineup("    max_rounds: 2\n")
+				e.useLineup("")
 				f := newLineupExec(t)
+				f.reviewMax = intp(2)
 				f.review = redReviewer(t)
 				wantStop(t, e.build(withLineup(f)), "candidate/executor_round_limit")
 				id := e.onlyRun()

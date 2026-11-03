@@ -349,7 +349,7 @@ func reviewBody(t *testing.T, e *env) string {
 	t.Helper()
 	reqs, bodies := e.prov.requests(), e.prov.rawRequests()
 	for i, req := range reqs {
-		if text := requestInstructions(req); text == agent.Prompt(agent.Reviewer) || text == reviewerPrompt(true) {
+		if text := requestInstructions(req); text == agent.Prompt(agent.Reviewer) {
 			return string(bodies[i])
 		}
 	}
