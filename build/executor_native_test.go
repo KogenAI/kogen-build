@@ -29,8 +29,11 @@ func TestNativeOpeningInputEqualsTheOpeningMessage(t *testing.T) {
 	t.Parallel()
 	// The native conversation opens with the brief as a user message of two input_text blocks,
 	// byte for byte what the builder always opened with. The expected bytes come from the
-	// reference data (testdata/context-golden.json, written from the Elixir implementation),
-	// not from the code under test.
+	// reference data (testdata/context-golden.json, written from the Elixir implementation and
+	// rewritten from the current output by `go test ./... -update`), not from the code under test.
+	// With -update, TestOpeningMessageEqualsTheElixirReference rewrites that golden in this very
+	// run, so the expectation here is the brief the code under test computed: the golden may not
+	// have been rewritten yet when it is read.
 	raw, err := os.ReadFile("testdata/context-golden.json")
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +85,9 @@ func TestNativeOpeningInputEqualsTheOpeningMessage(t *testing.T) {
 			brief, err := b.brief()
 			if err != nil {
 				t.Fatal(err)
+			}
+			if *update {
+				c.Stable, c.Dynamic = brief.Stable, brief.Dynamic
 			}
 			eq(t, "brief", brief, executor.Brief{Stable: c.Stable, Dynamic: c.Dynamic})
 			sess, err := nativeExecutor{b: b}.Start(context.Background(), executor.Task{Brief: brief}, nil)

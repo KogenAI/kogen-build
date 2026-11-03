@@ -245,7 +245,9 @@ func TestSourceIsSplitInOrderWithoutLosingAByteOrBreakingAnEncoding(t *testing.T
 }
 
 // materialGolden is testdata/review/material-golden.json, written by testdata/gen/review.exs
-// from the Elixir Kogen's `Review.material/2` and `ReviewMaterial.prepare/7`.
+// from the Elixir Kogen's `Review.material/2` and `ReviewMaterial.prepare/7`; `go test ./... -update`
+// rewrites the values TestTheMaterialEqualsTheElixirReference compares from the current Go
+// code's output.
 type materialGolden struct {
 	Start     string           `json:"start"`
 	Tree      string           `json:"tree"`
@@ -264,6 +266,10 @@ type materialGolden struct {
 	} `json:"prepared"`
 }
 
+// TestTheMaterialEqualsTheElixirReference compares the review material of a fixture candidate
+// (authority, source, check results, files) and the prepared opening input, parts and part
+// folder of an oversize source with testdata/review/material-golden.json. With -update those
+// values are rewritten in the golden and the rest of the file (for example `start`) stays.
 func TestTheMaterialEqualsTheElixirReference(t *testing.T) {
 	t.Parallel()
 	// ExUnit: lib/kogen/review.ex material/2 and lib/kogen/review_material.ex prepare/7, replayed through the reference code (testdata/gen/review.exs)
@@ -309,7 +315,10 @@ func TestTheMaterialEqualsTheElixirReference(t *testing.T) {
 	write("tool.sh", "#!/bin/sh\necho tool\n", 0o755)
 	git(root, "init", "-q", "sub")
 	git(filepath.Join(root, "sub"), "commit", "--allow-empty", "-qm", "Nested fixture")
-	eq(t, "gitlink commit", git(filepath.Join(root, "sub"), "rev-parse", "HEAD"), golden.Gitlink)
+	gitlink := git(filepath.Join(root, "sub"), "rev-parse", "HEAD")
+	if !*update {
+		eq(t, "gitlink commit", gitlink, golden.Gitlink)
+	}
 	write(".kogen/intents/fixture/acceptance.feature", "Feature: Gen\n  Scenario: One\n    Then it holds\n", 0o644)
 	write(".kogen/intents/fixture/model.qnt", "module m { val x = 1 }\n", 0o644)
 
@@ -322,7 +331,9 @@ func TestTheMaterialEqualsTheElixirReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eq(t, "candidate tree", tree, golden.Tree)
+	if !*update {
+		eq(t, "candidate tree", tree, golden.Tree)
+	}
 	b := &Attempt{
 		State: State{
 			Root: root, Slug: "fixture", Start: start, Excluded: []string{}, Run: run, Review: 1,
@@ -347,9 +358,11 @@ func TestTheMaterialEqualsTheElixirReference(t *testing.T) {
 		text = strings.ReplaceAll(text, start, "<START>")
 		return strings.ReplaceAll(text, short(start), "<START8>")
 	}
-	eq(t, "authority", m.Authority, golden.Authority)
-	eq(t, "source", mask(m.Source), golden.Source)
-	eq(t, "checks", m.Checks, golden.Checks)
+	if !*update {
+		eq(t, "authority", m.Authority, golden.Authority)
+		eq(t, "source", mask(m.Source), golden.Source)
+		eq(t, "checks", m.Checks, golden.Checks)
+	}
 	canon := func(v any) string {
 		t.Helper()
 		b, err := encodeJSON(v)
@@ -363,7 +376,9 @@ func TestTheMaterialEqualsTheElixirReference(t *testing.T) {
 		out, _ := encodeJSON(back)
 		return string(out)
 	}
-	eq(t, "files", canon(m.Files), canon(golden.Files))
+	if !*update {
+		eq(t, "files", canon(m.Files), canon(golden.Files))
+	}
 
 	// The same oversize source as the reference's: the catalog, the parts and their bytes.
 	source := strings.Repeat("literal Δ🙂\r\n\t\"\\\u0001é€", 24_000) + strings.Repeat("\u0001", 12_000)
@@ -373,8 +388,47 @@ func TestTheMaterialEqualsTheElixirReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eq(t, "opening input", mask(canon(input)), canon(golden.Prepared.Input))
 	refs := b.WorkingContext["review"].History
+	if *update {
+		if len(refs) == 0 {
+			t.Fatal("no parts")
+		}
+		partBytes := func(path string) string {
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return string(got)
+		}
+		first, last := partBytes(refs[0].Path), partBytes(refs[len(refs)-1].Path)
+		updateGoldenAfter(t, func() {
+			updateGoldenJSON(t, "testdata/review/material-golden.json", compactGolden, func(doc any) any {
+				g := goldenObject(t, doc)
+				g["gitlink"], g["tree"] = gitlink, tree
+				g["authority"], g["source"], g["checks"] = m.Authority, mask(m.Source), m.Checks
+				g["files"] = asJSONValue(t, m.Files)
+				p := goldenObject(t, g["prepared"])
+				p["input"] = decodeNumbers(t, []byte(mask(canon(input))))
+				p["dir"] = mask(filepath.Dir(refs[0].Path))
+				old := goldenList(t, p["parts"])
+				parts := make([]any, len(refs))
+				for i, ref := range refs {
+					part := map[string]any{}
+					if i < len(old) {
+						part = goldenObject(t, old[i])
+					}
+					part["sha256"] = ref.SHA256
+					parts[i] = part
+				}
+				p["parts"] = parts
+				p["first_part"], p["last_part"] = first, last
+				p["source_sha256"] = hashHex([]byte(source))
+				return g
+			})
+		})
+		return
+	}
+	eq(t, "opening input", mask(canon(input)), canon(golden.Prepared.Input))
 	if len(refs) != len(golden.Prepared.Parts) {
 		t.Fatalf("%d parts, reference %d", len(refs), len(golden.Prepared.Parts))
 	}

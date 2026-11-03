@@ -191,28 +191,43 @@ func compatCapture(t *testing.T) (map[string]any, string) {
 	return normalized, strings.ReplaceAll(feedback, red.aux, "<aux>")
 }
 
+// TestNamedFeedbackCompatibility compares the ordinary assertion feedback and the first request
+// of a passing Build with testdata/named-feedback-compat.json, which holds what they were before
+// named-test feedback existed. It is a frozen golden that must not change without deliberate
+// intent; `go test ./... -update` rewrites it from the current output (a Git diff to review like
+// any other change).
 func TestNamedFeedbackCompatibility(t *testing.T) {
 	t.Parallel()
 	// Ordinary assertion feedback and the requests of a passing Build are exactly what they
 	// were before named-test feedback existed: testdata/named-feedback-compat.json holds them,
 	// the request without the pinned loop's generic tool definitions and envelope fields.
 	request, feedback := compatCapture(t)
-	raw, err := os.ReadFile("testdata/named-feedback-compat.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var want struct {
-		Feedback string         `json:"feedback"`
-		Request  map[string]any `json:"request"`
-	}
-	if err := json.Unmarshal(raw, &want); err != nil {
-		t.Fatal(err)
-	}
-	eq(t, "ordinary assertion feedback", feedback, want.Feedback)
-	got, _ := json.Marshal(request)
-	exp, _ := json.Marshal(want.Request)
-	if string(got) != string(exp) {
-		t.Fatalf("the passing Build's first request changed:\n got %s\nwant %s", got, exp)
+	if *update {
+		updateGoldenAfter(t, func() {
+			updateGoldenJSON(t, "testdata/named-feedback-compat.json", indent1Golden, func(doc any) any {
+				g := goldenObject(t, doc)
+				g["feedback"], g["request"] = feedback, asJSONValue(t, request)
+				return g
+			})
+		})
+	} else {
+		raw, err := os.ReadFile("testdata/named-feedback-compat.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var want struct {
+			Feedback string         `json:"feedback"`
+			Request  map[string]any `json:"request"`
+		}
+		if err := json.Unmarshal(raw, &want); err != nil {
+			t.Fatal(err)
+		}
+		eq(t, "ordinary assertion feedback", feedback, want.Feedback)
+		got, _ := json.Marshal(request)
+		exp, _ := json.Marshal(want.Request)
+		if string(got) != string(exp) {
+			t.Fatalf("the passing Build's first request changed:\n got %s\nwant %s", got, exp)
+		}
 	}
 
 	// Verdicts are unchanged: a wrongly named test keeps the pass red until the right one

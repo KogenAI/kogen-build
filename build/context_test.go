@@ -127,6 +127,12 @@ func TestAnArchivedWindowThatChangedIsRefused(t *testing.T) {
 	eq(t, "requests", f.count(), requests)
 }
 
+// TestTheLocalResetEqualsTheElixirReference compares the local working-context reset with
+// testdata/reset-golden.json: the reduced input (folders and tree masked), the archive bytes and
+// their SHA-256, and the observations. The golden was written by testdata/gen/reset.exs from the
+// Elixir implementation; `go test ./... -update` rewrites those values from the current Go code's
+// output and keeps the rest of the file (the archived input is read from it, and its recorded
+// history path and tree stay).
 func TestTheLocalResetEqualsTheElixirReference(t *testing.T) {
 	t.Parallel()
 	// ExUnit: lib/kogen/working_context.ex prepare/6, replayed through the reference code (reduced input, archive bytes, history, observations)
@@ -183,17 +189,31 @@ func TestTheLocalResetEqualsTheElixirReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	gotText = strings.ReplaceAll(gotText, tree, golden.Tree)
-	if gotText != string(want) {
+	if !*update && gotText != string(want) {
 		t.Fatalf("reduced input differs\n got: %.600s\nwant: %.600s", gotText, want)
 	}
 	state := b.WorkingContext["build"]
 	if len(state.History) != 1 {
 		t.Fatalf("history %v", state.History)
 	}
-	eq(t, "archive sha256", state.History[0].SHA256, golden.History[0].SHA256)
 	data, _ := os.ReadFile(state.History[0].Path)
-	eq(t, "archive bytes", string(data), golden.Archive)
 	gotObs, _ := encodeJSON(state.Observations)
+	if *update {
+		sum := state.History[0].SHA256
+		updateGoldenAfter(t, func() {
+			updateGoldenJSON(t, "testdata/reset-golden.json", compactGolden, func(doc any) any {
+				g := goldenObject(t, doc)
+				g["reduced"] = decodeNumbers(t, []byte(gotText))
+				goldenObject(t, goldenList(t, g["history"])[0])["sha256"] = sum
+				g["archive"] = string(data)
+				g["observations"] = decodeNumbers(t, gotObs)
+				return g
+			})
+		})
+		return
+	}
+	eq(t, "archive sha256", state.History[0].SHA256, golden.History[0].SHA256)
+	eq(t, "archive bytes", string(data), golden.Archive)
 	wantObs, _ := encodeJSON(golden.Observations)
 	eq(t, "observations", string(gotObs), string(wantObs))
 }

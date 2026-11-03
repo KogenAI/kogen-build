@@ -31,18 +31,30 @@ func (e *env) firstReviewWire(start string) string {
 	return ""
 }
 
-func wireFixture(t *testing.T, name string) string {
+// sameWireFixture compares the request (reduced by kogenOwnedRequest) with the golden
+// testdata/reviewretry/<name>, which holds exactly that string. With -update the golden is
+// instead rewritten with it once the test has passed.
+func sameWireFixture(t *testing.T, name, got string) {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata", "reviewretry", name))
+	path := filepath.Join("testdata", "reviewretry", name)
+	if *update {
+		updateGoldenAfter(t, func() { writeGoldenFile(t, path, []byte(got)) })
+		return
+	}
+	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(b)
+	eq(t, name+" request bytes", got, string(b))
 }
 
 // TestKReviewRetryUnchangedValidRequests: a review whose first verdict is valid sends exactly
 // the requests it always sent (baseline wire fixtures recorded before the retry/forcing change)
 // and ends as it always ended, with no retry, no reminder and no forcing field.
+// testdata/reviewretry/approve.wire.json and changes.wire.json hold the first review request of
+// each subtest as kogenOwnedRequest reduces it; they are frozen goldens that must not change
+// without deliberate intent. `go test ./... -update` rewrites them from the current output (a Git
+// diff to review like any other change).
 func TestKReviewRetryUnchangedValidRequests(t *testing.T) {
 	t.Parallel()
 	t.Run("approve lands", func(t *testing.T) {
@@ -59,7 +71,7 @@ func TestKReviewRetryUnchangedValidRequests(t *testing.T) {
 		eq(t, "review requests", len(f.reviewRequests()), 1)
 		eq(t, "reviews", e.result(id)["reviews"], any(float64(1)))
 		wire := e.firstReviewWire(start)
-		eq(t, "approve request bytes", kogenOwnedRequest(t, wire), wireFixture(t, "approve.wire.json"))
+		sameWireFixture(t, "approve.wire.json", kogenOwnedRequest(t, wire))
 		lacks(t, "wire", wire, `"name":"submit_review"}`)
 		contains(t, "wire", wire, `"tool_choice":"auto"`)
 		// Independence, material and validation are the original ones.
@@ -90,7 +102,7 @@ func TestKReviewRetryUnchangedValidRequests(t *testing.T) {
 		id := e.onlyRun()
 		eq(t, "review requests", len(f.reviewRequests()), 1)
 		eq(t, "outcome", e.result(id)["outcome"], any("review_blocked"))
-		eq(t, "request bytes", kogenOwnedRequest(t, e.firstReviewWire(start)), wireFixture(t, "changes.wire.json"))
+		sameWireFixture(t, "changes.wire.json", kogenOwnedRequest(t, e.firstReviewWire(start)))
 		for _, name := range []string{"review_retry", "review_only", "review_tool_choice", "review_allowance"} {
 			eq(t, name+" events", len(eventsNamed(e.events(id), name)), 0)
 		}

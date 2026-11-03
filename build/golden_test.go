@@ -13,7 +13,12 @@ import (
 
 // Reference data written by testdata/gen/*.exs from the Elixir implementation (run with
 // `mise exec -- mix run --no-start cli/build/testdata/gen/<script>.exs` in the repository root).
+// `go test ./... -update` rewrites it from the current Go code's output.
 
+// TestOpeningMessageEqualsTheElixirReference compares the builder's opening message (the stable
+// and the dynamic block) of each case of testdata/context-golden.json with the golden's recorded
+// blocks. The golden holds the case inputs and the two blocks the Elixir implementation produced;
+// with -update the blocks are rewritten from the current output and the case inputs stay.
 func TestOpeningMessageEqualsTheElixirReference(t *testing.T) {
 	t.Parallel()
 	// ExUnit: lib/kogen/build.ex context/1 (the builder's opening message, LOOP-2), replayed
@@ -41,7 +46,25 @@ func TestOpeningMessageEqualsTheElixirReference(t *testing.T) {
 	if len(cases) == 0 {
 		t.Fatal("no cases")
 	}
-	for _, c := range cases {
+	type blocksOf struct{ stable, dynamic string }
+	actual := make([]*blocksOf, len(cases))
+	if *update {
+		updateGoldenAfter(t, func() {
+			updateGoldenJSON(t, "testdata/context-golden.json", compactGolden, func(doc any) any {
+				list := goldenList(t, doc)
+				for i, got := range actual {
+					if got == nil {
+						// A case that did not run (a -run filter) keeps its recorded blocks.
+						continue
+					}
+					c := goldenObject(t, list[i])
+					c["stable"], c["dynamic"] = got.stable, got.dynamic
+				}
+				return list
+			})
+		})
+	}
+	for i, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
 			t.Parallel()
 			dir := physical(t, t.TempDir())
@@ -82,6 +105,10 @@ func TestOpeningMessageEqualsTheElixirReference(t *testing.T) {
 			}
 			stable := blocks[0].(map[string]any)["text"].(string)
 			dynamic := blocks[1].(map[string]any)["text"].(string)
+			if *update {
+				actual[i] = &blocksOf{stable, dynamic}
+				return
+			}
 			if stable != c.Stable {
 				t.Fatalf("stable block differs\n got: %q\nwant: %q", stable, c.Stable)
 			}

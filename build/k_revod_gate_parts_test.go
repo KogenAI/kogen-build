@@ -19,8 +19,10 @@ import (
 // the gate sent. testdata/k-revod-gate/parts-requests.json holds the byte count and SHA-256 of
 // each request reduced by kogenOwnedRequest to what Kogen owns: the generic tool definitions
 // and the envelope fields the pinned loop renders are not part of it (the loop's definitions
-// are read from the pin by that reduction). It was written by this scenario run
-// (KOGEN_REVOD_GATE_GOLDEN=write), not recomputed from the current production code.
+// are read from the pin by that reduction). It is a frozen golden that must not change without
+// deliberate intent: it was first written by this scenario run, and `go test ./... -update`
+// rewrites it from the current code's output (a Git diff to review like any other change).
+// Without -update it is only compared with.
 
 const revodGateGolden = "testdata/k-revod-gate/parts-requests.json"
 
@@ -131,26 +133,28 @@ func TestKRevodGatePartsUnchanged(t *testing.T) {
 	t.Parallel()
 	bodies := revodGatePartsRequests(t)
 	got := revodGateDescribe(t, bodies)
-	if os.Getenv("KOGEN_REVOD_GATE_GOLDEN") == "write" {
-		raw, err := json.MarshalIndent(got, "", "  ")
+	var want []revodGateRequest
+	if *update {
+		// The golden is rewritten from this run's requests once the test has passed.
+		want = got
+		updateGoldenAfter(t, func() {
+			raw, err := json.MarshalIndent(got, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(revodGateGolden), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeGoldenFile(t, revodGateGolden, append(raw, '\n'))
+		})
+	} else {
+		raw, err := os.ReadFile(revodGateGolden)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.MkdirAll(filepath.Dir(revodGateGolden), 0o755); err != nil {
+		if err := json.Unmarshal(raw, &want); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(revodGateGolden, append(raw, '\n'), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		t.Skip("golden written")
-	}
-	raw, err := os.ReadFile(revodGateGolden)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var want []revodGateRequest
-	if err := json.Unmarshal(raw, &want); err != nil {
-		t.Fatal(err)
 	}
 	// The scenario must have exercised what the comparison is about.
 	prefill, reset := false, false

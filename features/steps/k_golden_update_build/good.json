@@ -1,0 +1,69 @@
+{
+  "expected": {
+    "tests": [
+      "TestContextExternalNativeBytes",
+      "TestOpeningMessageEqualsTheElixirReference",
+      "TestNativeOpeningInputEqualsTheOpeningMessage",
+      "TestKRevodGatePartsUnchanged",
+      "TestTheLocalResetEqualsTheElixirReference",
+      "TestTheMaterialEqualsTheElixirReference",
+      "TestKReviewRetryUnchangedValidRequests",
+      "TestNamedFeedbackCompatibility"
+    ],
+    "digests": {
+      "build/testdata/context-external-golden.json": "435b5e9bc9f430dfd037ba1258466590e7ac5b98cc41aabb0315d3e7ef9eceb9",
+      "build/testdata/context-golden.json": "2f002dfa8ed655d0136c8c149ee47387542298d429155fd029593ed7e06110f7",
+      "build/testdata/k-revod-gate/parts-requests.json": "1050f0ab89bea443963f3cacf9b7a1caa27f76c3f1d304b2605d13a8256c0b92",
+      "build/testdata/reset-golden.json": "8c63eaf99abca3370b451d46749f5e66105195295d2f8cf4bf141f8c57b00870",
+      "build/testdata/review/material-golden.json": "caf0623631f774d90cf91b2d5939e9c1a94c3c8b20b84dc7a766bd5753e2bc01",
+      "build/testdata/reviewretry/approve.wire.json": "9c93283cd1f444e6d1c0a5be031b2057f3963e6dca45439179bd6a01732967ab",
+      "build/testdata/reviewretry/changes.wire.json": "9c93283cd1f444e6d1c0a5be031b2057f3963e6dca45439179bd6a01732967ab",
+      "build/testdata/named-feedback-compat.json": "64370533651781d66eb37ba93c669b70a303437f65ed34a8077f01d6754d26e5"
+    }
+  },
+  "drifted": {
+    "command": "go test ./... -count=1 -v -run <golden-tests>",
+    "exit": 1,
+    "output": "--- FAIL: TestTheLocalResetEqualsTheElixirReference (0.36s)\n--- FAIL: TestTheMaterialEqualsTheElixirReference (0.41s)\n--- FAIL: TestNativeOpeningInputEqualsTheOpeningMessage (0.00s)\n    --- FAIL: TestNativeOpeningInputEqualsTheOpeningMessage/no_model (0.03s)\n    --- PASS: TestNativeOpeningInputEqualsTheOpeningMessage/model_and_commands (0.02s)\n--- FAIL: TestOpeningMessageEqualsTheElixirReference (0.00s)\n    --- FAIL: TestOpeningMessageEqualsTheElixirReference/no_model (0.02s)\n    --- PASS: TestOpeningMessageEqualsTheElixirReference/model_and_commands (0.02s)\n--- FAIL: TestKReviewRetryUnchangedValidRequests (0.00s)\n    --- FAIL: TestKReviewRetryUnchangedValidRequests/approve_lands (2.85s)\n    --- FAIL: TestKReviewRetryUnchangedValidRequests/changes_is_a_substantive_blocker,_not_an_invalid_review (3.11s)\n--- FAIL: TestNamedFeedbackCompatibility (5.94s)\n--- FAIL: TestKRevodGatePartsUnchanged (6.27s)\n    --- PASS: TestKRevodGatePartsUnchanged/empty-source_controls (3.74s)\n--- FAIL: TestContextExternalNativeBytes (0.00s)\n    --- PASS: TestContextExternalNativeBytes/native/native_without_context (3.40s)\n    --- PASS: TestContextExternalNativeBytes/external/native_without_context (3.55s)\n    --- FAIL: TestContextExternalNativeBytes/external/external_with_context (2.34s)\n    --- PASS: TestContextExternalNativeBytes/external/native_with_context (2.56s)\n    --- FAIL: TestContextExternalNativeBytes/external/external_without_context (2.50s)\n    --- PASS: TestContextExternalNativeBytes/native/external_without_context (2.95s)\n    --- PASS: TestContextExternalNativeBytes/native/external_with_context (3.07s)\n    --- PASS: TestContextExternalNativeBytes/native/native_with_context (3.00s)\nFAIL\nFAIL\tgithub.com/KogenAI/kogen-build/build\t12.470s\nFAIL\n",
+    "before": {
+      "build/testdata/context-external-golden.json": "3070dca835edf9f4b117beb1800f616b19287ed541a33daae6be4e8569006122",
+      "build/testdata/context-golden.json": "9b8dc25aa344124fc9b1aef661d7956019c2f916b6d010ca110bc3bfe6ab7043",
+      "build/testdata/k-revod-gate/parts-requests.json": "e9684cdd34bbd2c3144017c251b8e004a476bf683f9eda75f798318a27c64fed",
+      "build/testdata/reset-golden.json": "866c643e255731d4bd7fce52b4b01fb120ef6a108c7cda300ff5369fd277975e",
+      "build/testdata/review/material-golden.json": "b4c600f8808f01537e73bf7b92d88f0cbececaceaf869ad8225ece6edbf1f76f",
+      "build/testdata/reviewretry/approve.wire.json": "3cd5a9da3cb88a73fce1d5a9b12c717a4cac7bf3b7c46c018428b0c108de8e34",
+      "build/testdata/reviewretry/changes.wire.json": "3cd5a9da3cb88a73fce1d5a9b12c717a4cac7bf3b7c46c018428b0c108de8e34",
+      "build/testdata/named-feedback-compat.json": "b044dc9b467805aec550ce45f9c9632b5efb53a0cd79c9d9790f6731a2d76a7a"
+    },
+    "after": {
+      "build/testdata/context-external-golden.json": "3070dca835edf9f4b117beb1800f616b19287ed541a33daae6be4e8569006122",
+      "build/testdata/context-golden.json": "9b8dc25aa344124fc9b1aef661d7956019c2f916b6d010ca110bc3bfe6ab7043",
+      "build/testdata/k-revod-gate/parts-requests.json": "e9684cdd34bbd2c3144017c251b8e004a476bf683f9eda75f798318a27c64fed",
+      "build/testdata/reset-golden.json": "866c643e255731d4bd7fce52b4b01fb120ef6a108c7cda300ff5369fd277975e",
+      "build/testdata/review/material-golden.json": "b4c600f8808f01537e73bf7b92d88f0cbececaceaf869ad8225ece6edbf1f76f",
+      "build/testdata/reviewretry/approve.wire.json": "3cd5a9da3cb88a73fce1d5a9b12c717a4cac7bf3b7c46c018428b0c108de8e34",
+      "build/testdata/reviewretry/changes.wire.json": "3cd5a9da3cb88a73fce1d5a9b12c717a4cac7bf3b7c46c018428b0c108de8e34",
+      "build/testdata/named-feedback-compat.json": "b044dc9b467805aec550ce45f9c9632b5efb53a0cd79c9d9790f6731a2d76a7a"
+    }
+  },
+  "updated": {
+    "command": "go test -overlay <control> ./... -update -count=1 -v -run <golden-tests>",
+    "exit": 0,
+    "output": "--- PASS: TestTheLocalResetEqualsTheElixirReference (0.37s)\n--- PASS: TestTheMaterialEqualsTheElixirReference (0.46s)\n--- PASS: TestKReviewRetryUnchangedValidRequests (0.00s)\n    --- PASS: TestKReviewRetryUnchangedValidRequests/approve_lands (2.17s)\n    --- PASS: TestKReviewRetryUnchangedValidRequests/changes_is_a_substantive_blocker,_not_an_invalid_review (2.42s)\n--- PASS: TestKRevodGatePartsUnchanged (6.37s)\n    --- PASS: TestKRevodGatePartsUnchanged/empty-source_controls (3.45s)\n--- PASS: TestNamedFeedbackCompatibility (9.41s)\n--- PASS: TestNativeOpeningInputEqualsTheOpeningMessage (0.00s)\n    --- PASS: TestNativeOpeningInputEqualsTheOpeningMessage/no_model (0.02s)\n    --- PASS: TestNativeOpeningInputEqualsTheOpeningMessage/model_and_commands (0.02s)\n--- PASS: TestOpeningMessageEqualsTheElixirReference (0.00s)\n    --- PASS: TestOpeningMessageEqualsTheElixirReference/no_model (0.02s)\n    --- PASS: TestOpeningMessageEqualsTheElixirReference/model_and_commands (0.02s)\n--- PASS: TestContextExternalNativeBytes (0.00s)\n    --- PASS: TestContextExternalNativeBytes/native/native_without_context (2.97s)\n    --- PASS: TestContextExternalNativeBytes/external/native_without_context (3.02s)\n    --- PASS: TestContextExternalNativeBytes/native/external_with_context (2.32s)\n    --- PASS: TestContextExternalNativeBytes/native/external_without_context (3.21s)\n    --- PASS: TestContextExternalNativeBytes/native/native_with_context (4.69s)\n    --- PASS: TestContextExternalNativeBytes/external/external_with_context (4.58s)\n    --- PASS: TestContextExternalNativeBytes/external/external_without_context (3.70s)\n    --- PASS: TestContextExternalNativeBytes/external/native_with_context (3.93s)\nPASS\nok  \tgithub.com/KogenAI/kogen-build/build\t13.877s\n",
+    "after": {
+      "build/testdata/context-external-golden.json": "435b5e9bc9f430dfd037ba1258466590e7ac5b98cc41aabb0315d3e7ef9eceb9",
+      "build/testdata/context-golden.json": "2f002dfa8ed655d0136c8c149ee47387542298d429155fd029593ed7e06110f7",
+      "build/testdata/k-revod-gate/parts-requests.json": "1050f0ab89bea443963f3cacf9b7a1caa27f76c3f1d304b2605d13a8256c0b92",
+      "build/testdata/reset-golden.json": "8c63eaf99abca3370b451d46749f5e66105195295d2f8cf4bf141f8c57b00870",
+      "build/testdata/review/material-golden.json": "caf0623631f774d90cf91b2d5939e9c1a94c3c8b20b84dc7a766bd5753e2bc01",
+      "build/testdata/reviewretry/approve.wire.json": "9c93283cd1f444e6d1c0a5be031b2057f3963e6dca45439179bd6a01732967ab",
+      "build/testdata/reviewretry/changes.wire.json": "9c93283cd1f444e6d1c0a5be031b2057f3963e6dca45439179bd6a01732967ab",
+      "build/testdata/named-feedback-compat.json": "64370533651781d66eb37ba93c669b70a303437f65ed34a8077f01d6754d26e5"
+    }
+  },
+  "plain": {
+    "command": "go test ./... -count=1 -v -run <golden-tests>",
+    "exit": 0,
+    "output": "--- PASS: TestTheLocalResetEqualsTheElixirReference (0.50s)\n--- PASS: TestTheMaterialEqualsTheElixirReference (0.58s)\n--- PASS: TestNativeOpeningInputEqualsTheOpeningMessage (0.00s)\n    --- PASS: TestNativeOpeningInputEqualsTheOpeningMessage/no_model (0.02s)\n    --- PASS: TestNativeOpeningInputEqualsTheOpeningMessage/model_and_commands (0.02s)\n--- PASS: TestKReviewRetryUnchangedValidRequests (0.00s)\n    --- PASS: TestKReviewRetryUnchangedValidRequests/approve_lands (1.89s)\n    --- PASS: TestKReviewRetryUnchangedValidRequests/changes_is_a_substantive_blocker,_not_an_invalid_review (2.14s)\n--- PASS: TestKRevodGatePartsUnchanged (4.87s)\n    --- PASS: TestKRevodGatePartsUnchanged/empty-source_controls (2.39s)\n--- PASS: TestNamedFeedbackCompatibility (7.49s)\n--- PASS: TestOpeningMessageEqualsTheElixirReference (0.00s)\n    --- PASS: TestOpeningMessageEqualsTheElixirReference/no_model (0.02s)\n    --- PASS: TestOpeningMessageEqualsTheElixirReference/model_and_commands (0.02s)\n--- PASS: TestContextExternalNativeBytes (0.00s)\n    --- PASS: TestContextExternalNativeBytes/native/native_without_context (1.56s)\n    --- PASS: TestContextExternalNativeBytes/external/native_without_context (1.73s)\n    --- PASS: TestContextExternalNativeBytes/external/external_with_context (1.89s)\n    --- PASS: TestContextExternalNativeBytes/external/native_with_context (2.36s)\n    --- PASS: TestContextExternalNativeBytes/external/external_without_context (2.29s)\n    --- PASS: TestContextExternalNativeBytes/native/external_without_context (2.61s)\n    --- PASS: TestContextExternalNativeBytes/native/external_with_context (2.07s)\n    --- PASS: TestContextExternalNativeBytes/native/native_with_context (2.70s)\nPASS\nok  \tgithub.com/KogenAI/kogen-build/build\t10.541s\n"
+  }
+}

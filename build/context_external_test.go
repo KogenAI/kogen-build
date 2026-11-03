@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -429,6 +430,10 @@ func sameBytes(t *testing.T, name, got, want string) {
 // what they were before the diagnostic reached external roles (testdata/context-external-golden.json,
 // recorded from the unfixed Build); only the folders, run, conversation and Git object names are normalized,
 // and a native request is compared without the pinned loop's generic tool definitions and envelope fields.
+// The golden holds those normalized parts per pairing and context; it is frozen and must not
+// change without deliberate intent. `go test ./... -update` rewrites it from the current output
+// (a Git diff to review like any other change); the external builder's "with context" subtests,
+// whose expectation derives from stored entries, then derive it from this run's own output.
 func TestContextExternalNativeBytes(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile("testdata/context-external-golden.json")
@@ -440,27 +445,45 @@ func TestContextExternalNativeBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := diagnosticOf()
+	// With -update, each subtest that owns a golden entry records its output under the entry's
+	// key, and the entries are written once all subtests have finished.
+	var recorded sync.Map
+	if *update {
+		updateGoldenAfter(t, func() {
+			updateGoldenJSON(t, "testdata/context-external-golden.json", indent2Golden, func(doc any) any {
+				entries := goldenObject(t, doc)
+				recorded.Range(func(key, parts any) bool {
+					entries[key.(string)] = asJSONValue(t, parts)
+					return true
+				})
+				return entries
+			})
+		})
+	}
+	// check compares the parts of one subtest with the golden entry, or records them.
+	check := func(t *testing.T, key string, got map[string]string) {
+		t.Helper()
+		if *update {
+			recorded.Store(key, got)
+			return
+		}
+		want := golden[key]
+		eq(t, "parts", len(got), len(want))
+		for part, text := range got {
+			sameBytes(t, part, text, want[part])
+		}
+	}
 	for _, c := range extCombos {
 		t.Run(c.name+" without context", func(t *testing.T) {
 			t.Parallel()
-			want := golden[c.name+" without context"]
-			got := openings(t, c, nil)
-			eq(t, "parts", len(got), len(want))
-			for part, text := range got {
-				sameBytes(t, part, text, want[part])
-			}
+			check(t, c.name+" without context", openings(t, c, nil))
 		})
 		if c.extBuild {
 			continue
 		}
 		t.Run(c.name+" with context", func(t *testing.T) {
 			t.Parallel()
-			want := golden[c.name+" with context"]
-			got := openings(t, c, d)
-			eq(t, "parts", len(got), len(want))
-			for part, text := range got {
-				sameBytes(t, part, text, want[part])
-			}
+			check(t, c.name+" with context", openings(t, c, d))
 		})
 	}
 	// An external builder gets exactly the omitted-context brief plus the diagnostic message,
@@ -472,12 +495,18 @@ func TestContextExternalNativeBytes(t *testing.T) {
 		t.Run(c.name+" with context", func(t *testing.T) {
 			t.Parallel()
 			plain, got := golden[c.name+" without context"], openings(t, c, d)
+			nativeReviewer := golden["native/native with context"]["reviewer"]
+			if *update {
+				// The golden may not be rewritten yet: derive the expectation from the output.
+				plain = openings(t, c, nil)
+				nativeReviewer = openings(t, extCombos[0], d)["reviewer"]
+			}
 			sameBytes(t, "builder.stable", got["builder.stable"], plain["builder.stable"]+d.message()["content"].(string))
 			sameBytes(t, "builder.dynamic", got["builder.dynamic"], plain["builder.dynamic"])
 			if c.extReview {
 				return
 			}
-			sameBytes(t, "reviewer", got["reviewer"], golden["native/native with context"]["reviewer"])
+			sameBytes(t, "reviewer", got["reviewer"], nativeReviewer)
 		})
 	}
 }
