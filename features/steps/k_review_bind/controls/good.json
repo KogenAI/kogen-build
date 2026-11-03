@@ -1,0 +1,94 @@
+{
+ "native-outside-then-changes": {
+  "case": "native-outside-then-changes",
+  "checkout_app": "changed outside\n",
+  "commits": "0",
+  "committed_app": "",
+  "exit": 1,
+  "outcome": "review_blocked",
+  "review_progress": "kogen: review 1: approve, 0 blocking\nkogen: review 1: the candidate changed after its contents were delivered; returning the changes to the reviewer\nkogen: review 1: changes, 1 blocking",
+  "reviewer_requests": 2,
+  "second_request_feedback": "Your verdict was not applied: the candidate changed after its contents were delivered to you, other than through your own Kogen tool calls: app.txt.\nThe exact diff of these changes against the contents delivered to you:\n\ndiff --git a/app.txt b/app.txt\nindex 02e8acd..045fffb 100644\n--- a/app.txt\n+++ b/app.txt\n@@ -1 +1 @@\n-candidate\n+changed outside\n\nThe new tree passed checks but has not been reviewed. Inspect these changes and submit_review for the current contents; do not restart the whole critique."
+ },
+ "native-outside-then-approve": {
+  "case": "native-outside-then-approve",
+  "checkout_app": "changed outside\n",
+  "commits": "1",
+  "committed_app": "changed outside",
+  "exit": 0,
+  "outcome": "landed",
+  "review_progress": "kogen: review 1: approve, 0 blocking\nkogen: review 1: the candidate changed after its contents were delivered; returning the changes to the reviewer\nkogen: review 1: approve, 0 blocking",
+  "reviewer_requests": 2,
+  "second_request_feedback": "Your verdict was not applied: the candidate changed after its contents were delivered to you, other than through your own Kogen tool calls: app.txt.\nThe exact diff of these changes against the contents delivered to you:\n\ndiff --git a/app.txt b/app.txt\nindex 02e8acd..045fffb 100644\n--- a/app.txt\n+++ b/app.txt\n@@ -1 +1 @@\n-candidate\n+changed outside\n\nThe new tree passed checks but has not been reviewed. Inspect these changes and submit_review for the current contents; do not restart the whole critique."
+ },
+ "native-write-repair": {
+  "case": "native-write-repair",
+  "checkout_app": "reviewer repair\n",
+  "commits": "1",
+  "committed_app": "reviewer repair",
+  "exit": 0,
+  "outcome": "landed",
+  "review_progress": "kogen: review 1: approve, 0 blocking",
+  "reviewer_requests": 1
+ },
+ "native-shell-repair": {
+  "case": "native-shell-repair",
+  "checkout_app": "reviewer shell repair\n",
+  "commits": "1",
+  "committed_app": "reviewer shell repair",
+  "exit": 0,
+  "outcome": "landed",
+  "review_progress": "kogen: review 1: approve, 0 blocking",
+  "reviewer_requests": 1
+ },
+ "native-readme": {
+  "authority_found": true,
+  "authority_has_injected_text": false,
+  "authority_readme_is_start_readme": true,
+  "case": "native-readme",
+  "checkout_app": "candidate\n",
+  "commits": "1",
+  "committed_app": "candidate",
+  "exit": 0,
+  "outcome": "landed",
+  "review_progress": "kogen: review 1: approve, 0 blocking",
+  "reviewer_requests": 1,
+  "source_has_injected_diff_line": true
+ },
+ "external-edit-then-changes": {
+  "case": "external-edit-then-changes",
+  "checkout_app": "changed outside\n",
+  "commits": "0",
+  "committed_app": "",
+  "exit": 1,
+  "outcome": "review_blocked",
+  "review_progress": "kogen: review 1: approve, 0 blocking\nkogen: review 1: the candidate changed after its contents were delivered; returning the changes to the reviewer\nkogen: review 1: changes, 1 blocking",
+  "review_rounds": 2,
+  "second_round_feedback": "Your verdict was not applied: the candidate changed after its contents were delivered to you, other than through your own Kogen tool calls: app.txt.\nThe exact diff of these changes against the contents delivered to you:\n\ndiff --git a/app.txt b/app.txt\nindex 02e8acd..045fffb 100644\n--- a/app.txt\n+++ b/app.txt\n@@ -1 +1 @@\n-candidate\n+changed outside\n\nThe new tree passed checks but has not been reviewed. Inspect these changes and submit_review for the current contents; do not restart the whole critique."
+ },
+ "external-edit-then-approve": {
+  "case": "external-edit-then-approve",
+  "checkout_app": "changed outside\n",
+  "commits": "1",
+  "committed_app": "changed outside",
+  "exit": 0,
+  "outcome": "landed",
+  "review_progress": "kogen: review 1: approve, 0 blocking\nkogen: review 1: the candidate changed after its contents were delivered; returning the changes to the reviewer\nkogen: review 1: approve, 0 blocking",
+  "review_rounds": 2,
+  "second_round_feedback": "Your verdict was not applied: the candidate changed after its contents were delivered to you, other than through your own Kogen tool calls: app.txt.\nThe exact diff of these changes against the contents delivered to you:\n\ndiff --git a/app.txt b/app.txt\nindex 02e8acd..045fffb 100644\n--- a/app.txt\n+++ b/app.txt\n@@ -1 +1 @@\n-candidate\n+changed outside\n\nThe new tree passed checks but has not been reviewed. Inspect these changes and submit_review for the current contents; do not restart the whole critique."
+ },
+ "external-readme": {
+  "authority_found": true,
+  "authority_has_injected_text": false,
+  "authority_readme_is_start_readme": true,
+  "case": "external-readme",
+  "checkout_app": "candidate\n",
+  "commits": "1",
+  "committed_app": "candidate",
+  "exit": 0,
+  "outcome": "landed",
+  "review_progress": "kogen: review 1: approve, 0 blocking",
+  "review_rounds": 1,
+  "source_has_injected_diff_line": true
+ }
+}

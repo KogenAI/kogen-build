@@ -67,6 +67,9 @@ type reviewSession struct {
 	Attempts []reviewAttempt `json:"attempts"`
 	Verdict  *reviewVerdict  `json:"verdict,omitempty"`
 	Tree     string          `json:"tree,omitempty"`
+	// Seen is the seen tree: the tree whose bytes the reviewer holds. An approval binds only
+	// it. Empty (a session saved without one): the tree of the checkpoint's pass.
+	Seen string `json:"seen_tree,omitempty"`
 	// Tools are the tool definitions the reviewer conversation was given; a continued
 	// conversation keeps them (empty: the current reviewer tools).
 	Tools []any `json:"tools,omitempty"`
@@ -170,7 +173,7 @@ func (reviewIndependent) Review(ctx context.Context, b *Attempt, pass verify.Pas
 		return Approved{}, err
 	}
 	base := pass
-	r := &reviewRun{b: b, pass: pass, base: &base, tools: tools, nativeTools: nativeTools, sess: reviewSession{Role: role, Input: input, Usage: zeroTokens()}}
+	r := &reviewRun{b: b, pass: pass, base: &base, tools: tools, nativeTools: nativeTools, sess: reviewSession{Role: role, Input: input, Usage: zeroTokens(), Seen: pass.Tree}}
 	return r.loop(ctx, nil, "")
 }
 
@@ -305,12 +308,44 @@ func (r *reviewRun) retry(ctx context.Context) (Approved, error) {
 		"Use the actual results, including failures and unrun items. Do not infer an operator\n" +
 		"explanation. Submit changes if unresolved, or explicitly approve after resolving it;\n" +
 		"edits still require ordinary external exact verification before commit.\n"
+	delivery, err := b.deliverySection(r.seenTree(), pass.Tree)
+	if err != nil {
+		return Approved{}, err
+	}
+	feedback = delivery + feedback
 	r.pass = pass
 	r.sess = reviewSession{
-		Role: r.sess.Role, Usage: r.sess.Usage, Attempts: attempts, Reopened: true, Repaired: r.sess.Repaired,
+		Role: r.sess.Role, Usage: r.sess.Usage, Attempts: attempts, Reopened: true, Repaired: r.sess.Repaired, Seen: pass.Tree,
 		Input: slices.Concat(r.sess.Input, []any{map[string]any{"role": "user", "content": feedback}}),
 	}
 	return r.loop(ctx, nil, "")
+}
+
+// seenTree is the tree whose bytes the reviewer holds.
+func (r *reviewRun) seenTree() string {
+	if r.sess.Seen != "" {
+		return r.sess.Seen
+	}
+	return r.pass.Tree
+}
+
+// deliverySection tells the reviewer that the candidate changed after its contents were
+// delivered, with the exact diff against the seen tree. It is empty when the trees are equal.
+func (b *Attempt) deliverySection(seen, now string) (string, error) {
+	if seen == now {
+		return "", nil
+	}
+	paths, err := b.repo.Changed(seen, now)
+	if err != nil {
+		return "", err
+	}
+	diff, err := b.repo.Diff(seen, now, paths)
+	if err != nil {
+		return "", err
+	}
+	return "Your verdict was not applied: the candidate changed after its contents were delivered to you, other than through your own Kogen tool calls: " +
+		strings.Join(paths, ", ") + ".\nThe exact diff of these changes against the contents delivered to you:\n\n" +
+		strings.ToValidUTF8(diff, "\uFFFD") + "\n", nil
 }
 
 // evaluate judges a valid verdict on the candidate tree. A blocked review ends the Build.
@@ -363,6 +398,9 @@ func (r *reviewRun) evaluate(ctx context.Context, verdict reviewVerdict, tree st
 		return Approved{}, false, e
 	}
 
+	// An approval binds the seen tree: only an approval of the contents whose bytes reached the
+	// reviewer can commit.
+	seen := r.seenTree()
 	final := r.pass
 	if !(r.pass.Green && tree == r.pass.Tree) {
 		pending := review
@@ -375,7 +413,7 @@ func (r *reviewRun) evaluate(ctx context.Context, verdict reviewVerdict, tree st
 			return Approved{}, false, err
 		}
 	}
-	if final.Green && final.Tree == tree {
+	if tree == seen && final.Green && final.Tree == tree {
 		approved := review
 		b.LastReview = &approved
 		if err := b.Track(); err != nil {
@@ -384,18 +422,18 @@ func (r *reviewRun) evaluate(ctx context.Context, verdict reviewVerdict, tree st
 		return Approved{Pass: final, Review: approved}, false, nil
 	}
 
-	var feedback string
+	feedback, err := b.deliverySection(seen, final.Tree)
+	if err != nil {
+		return Approved{}, false, err
+	}
+	if feedback != "" {
+		b.s.Progress(fmt.Sprintf("kogen: review %d: the candidate changed after its contents were delivered; returning the changes to the reviewer", n))
+	}
 	if final.Green {
-		paths, err := b.repo.Changed(tree, final.Tree)
-		if err != nil {
-			return Approved{}, false, err
-		}
-		b.s.Progress(fmt.Sprintf("kogen: review %d: candidate changed after approval; inspecting changed paths", n))
-		feedback = "Candidate contents changed after your approval: " + strings.Join(paths, ", ") +
-			". The new tree passed checks but has not been reviewed. Inspect these changes and submit_review for the current contents; do not restart the whole critique."
+		feedback += "The new tree passed checks but has not been reviewed. Inspect these changes and submit_review for the current contents; do not restart the whole critique."
 	} else {
 		b.s.Progress(fmt.Sprintf("kogen: review %d: final verification failed; continuing targeted repairs", n))
-		feedback = "Final verification of your repairs failed. Fix these failures and regressions from your edits; do not restart a whole-change critique. If observed evidence demonstrates a protected fixture defect, use submit_review changes with a blocking finding at that protected path instead of a production workaround, including a test-facing hidden comment.\n" +
+		feedback += "Final verification of your repairs failed. Fix these failures and regressions from your edits; do not restart a whole-change critique. If observed evidence demonstrates a protected fixture defect, use submit_review changes with a blocking finding at that protected path instead of a production workaround, including a test-facing hidden comment.\n" +
 			b.PassFeedback(final, "submit_review")
 	}
 	b.Repairs++
@@ -404,7 +442,7 @@ func (r *reviewRun) evaluate(ctx context.Context, verdict reviewVerdict, tree st
 	}
 	r.pass = final
 	r.sess = reviewSession{
-		Role: r.sess.Role, Usage: r.sess.Usage, Attempts: attempts, Reopened: r.sess.Reopened, Repaired: true,
+		Role: r.sess.Role, Usage: r.sess.Usage, Attempts: attempts, Reopened: r.sess.Reopened, Repaired: true, Seen: final.Tree,
 		Input: slices.Concat(r.sess.Input, []any{map[string]any{"role": "user", "content": feedback}}),
 	}
 	return Approved{}, true, nil
@@ -500,9 +538,27 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 					outs = append(outs, call.Output("accepted"))
 				}
 			default:
+				// The reviewer's own edits advance the seen tree: only write_file and shell, and
+				// only when the tree before the call was the seen tree.
+				edits := call.Name == "write_file" || call.Name == "shell"
+				before := ""
+				if edits {
+					if before, err = b.repo.Tree(b.Start, b.Excluded); err != nil {
+						return reviewVerdict{}, err
+					}
+				}
 				out, err := tl.Call(call)
 				if err != nil {
 					return reviewVerdict{}, err
+				}
+				if edits {
+					after, err := b.repo.Tree(b.Start, b.Excluded)
+					if err != nil {
+						return reviewVerdict{}, err
+					}
+					if before == r.seenTree() {
+						r.sess.Seen = after
+					}
 				}
 				result := out.Cut()
 				if event := tools.ReadEvent(call, result, "review"); event != nil {

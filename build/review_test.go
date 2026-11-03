@@ -1512,3 +1512,204 @@ func TestOnDemandReviewReadsEveryHunkPartAndRecordsTheMode(t *testing.T) {
 		t.Fatalf("events %v", events)
 	}
 }
+
+const deliveredHead = "Your verdict was not applied: the candidate changed after its contents were delivered to you, other than through your own Kogen tool calls: app.txt.\n" +
+	"The exact diff of these changes against the contents delivered to you:\n\n" +
+	"diff --git a/app.txt b/app.txt\n"
+
+const deliveredGreen = "The new tree passed checks but has not been reviewed. Inspect these changes and submit_review for the current contents; do not restart the whole critique."
+
+// lastUserText is the last user message with text content in a native reviewer request.
+func lastUserText(req map[string]any) string {
+	input := requestInput(req)
+	for i := len(input) - 1; i >= 0; i-- {
+		m, _ := input[i].(map[string]any)
+		if s, ok := m["content"].(string); m["role"] == "user" && ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// outsideThenApprove is a reviewer reply that approves while another writer changes app.txt.
+func outsideThenApprove(e *env, f *fakeProvider, content string) handler {
+	approve := submit(f, "approve")
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeFile(e.t, filepath.Join(e.root, "app.txt"), content, 0o644)
+		approve(w, r)
+	}
+}
+
+func TestANativeApprovalOfContentsChangedWhileItsRequestWasInFlightIsNotApplied(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	f := e.prov
+	f.then(landScript(f)...)
+	f.then(outsideThenApprove(e, f, "changed outside\n"))
+	f.then(submit(f, "changes", finding("blocking", "app.txt now says changed outside")))
+	start := e.head()
+	a := e.reviewed()
+	wantStop(t, a, "candidate/review_blocked")
+	eq(t, "HEAD", e.head(), start)
+	eq(t, "commits", e.commitsSince(start), "0")
+	reqs := f.reviewRequests()
+	eq(t, "review requests", len(reqs), 2)
+	feedback := lastUserText(reqs[1])
+	if !strings.HasPrefix(feedback, deliveredHead) || !strings.HasSuffix(feedback, "@@ -1 +1 @@\n-candidate\n+changed outside\n\n"+deliveredGreen) {
+		t.Fatalf("feedback %q", feedback)
+	}
+	contains(t, "progress", a.errs.String(), "kogen: review 1: the candidate changed after its contents were delivered; returning the changes to the reviewer\n")
+	lacks(t, "progress", a.errs.String(), "candidate changed after approval")
+}
+
+func TestANativeReviewersFreshApprovalCommitsTheDeliveredContents(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	f := e.prov
+	f.then(landScript(f)...)
+	f.then(outsideThenApprove(e, f, "changed outside\n"))
+	f.then(submit(f, "approve"))
+	start := e.head()
+	a := e.reviewed()
+	if a.exit != 0 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	eq(t, "commits", e.commitsSince(start), "1")
+	eq(t, "committed", e.gitOut("show", "HEAD:app.txt"), "changed outside")
+	eq(t, "review requests", len(f.reviewRequests()), 2)
+	eq(t, "repairs", e.result(e.onlyRun())["repairs"], any(float64(1)))
+}
+
+func TestANativeReviewersOwnShellRepairIsBoundAndLandsInOneRequest(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	f := e.prov
+	f.then(landScript(f)...)
+	f.then(f.calls("shell", map[string]any{"command": "printf 'reviewer shell repair\\n' > app.txt"},
+		"submit_review", map[string]any{"verdict": "approve", "findings": []any{}}))
+	start := e.head()
+	a := e.reviewed()
+	if a.exit != 0 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	eq(t, "commits", e.commitsSince(start), "1")
+	eq(t, "committed", e.gitOut("show", "HEAD:app.txt"), "reviewer shell repair")
+	eq(t, "review requests", len(f.reviewRequests()), 1)
+}
+
+// A change by another writer after the reviewer's own edit is not the reviewer's: the seen tree
+// follows only the edit.
+func TestAnOutsideChangeAfterTheReviewersOwnEditIsNotApproved(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	f := e.prov
+	f.then(landScript(f)...)
+	approve := submit(f, "approve")
+	f.then(f.calls(writeApp("reviewer repair\n")...))
+	f.then(func(w http.ResponseWriter, r *http.Request) {
+		writeFile(t, filepath.Join(e.root, "app.txt"), "changed outside\n", 0o644)
+		approve(w, r)
+	})
+	f.then(submit(f, "changes", finding("blocking", "stop")))
+	start := e.head()
+	a := e.reviewed()
+	wantStop(t, a, "candidate/review_blocked")
+	eq(t, "HEAD", e.head(), start)
+	reqs := f.reviewRequests()
+	eq(t, "review requests", len(reqs), 3)
+	if feedback := lastUserText(reqs[2]); !strings.HasPrefix(feedback, deliveredHead) || !strings.Contains(feedback, "@@ -1 +1 @@\n-reviewer repair\n+changed outside\n") {
+		t.Fatalf("feedback %q", feedback)
+	}
+}
+
+// An explicit retry of a blocked native review delivers the changes of the checkout since the
+// reviewer's contents, and the verified tree is then the seen one.
+func TestARetryOfABlockedReviewDeliversCheckoutChangesAndBindsTheVerifiedTree(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	f := e.prov
+	f.then(landScript(f)...)
+	f.then(submit(f, "changes", finding("blocking", "Original unresolved requirement")))
+	start := e.head()
+	a := e.reviewed()
+	eq(t, "exit", a.exit, 1)
+	id := e.onlyRun()
+	e.write("app.txt", "changed after the block\n")
+	doc, _ := e.checkpoint(id)
+	tree, err := e.gitRepo().Tree(start, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc["candidate"] = tree
+	e.writeCheckpoint(id, doc)
+	f.then(submit(f, "approve"))
+	r := e.resumeReviewed(id)
+	if r.exit != 0 {
+		t.Fatalf("exit %d\n%s\n%s", r.exit, r.shown(), r.errs.String())
+	}
+	// Approved in the one request: the verified tree is the seen one.
+	eq(t, "committed", e.gitOut("show", "HEAD:app.txt"), "changed after the block")
+	reqs := f.reviewRequests()
+	eq(t, "review requests", len(reqs), 2)
+	feedback := lastUserText(reqs[1])
+	if !strings.HasPrefix(feedback, deliveredHead) || !strings.Contains(feedback, "@@ -1 +1 @@\n-candidate\n+changed after the block\n") ||
+		!strings.Contains(feedback, "\nThe caller explicitly resumed this blocked Build.") {
+		t.Fatalf("feedback %q", feedback)
+	}
+}
+
+// A review resumed at the stage review keeps its saved seen tree: the reviewer's own edit stays
+// bound, and a change made outside before the resume is not approved.
+func TestAResumedNativeReviewKeepsItsSeenTree(t *testing.T) {
+	t.Parallel()
+	interrupted := func(t *testing.T) (*env, *fakeProvider, string, string) {
+		e := newEnv(t)
+		f := e.prov
+		f.then(landScript(f)...)
+		f.then(f.calls(writeApp("reviewer repair\n")...))
+		f.then(refused())
+		start := e.head()
+		a := e.reviewed()
+		eq(t, "exit", a.exit, 4)
+		id := e.onlyRun()
+		cont, session := sessionOfRun(t, e, id)
+		eq(t, "stage", cont["stage"], any("review"))
+		if session["seen_tree"] == nil || session["seen_tree"] == "" {
+			t.Fatalf("the saved session has no seen tree: %v", session)
+		}
+		return e, f, id, start
+	}
+
+	t.Run("an own edit stays bound", func(t *testing.T) {
+		t.Parallel()
+		e, f, id, start := interrupted(t)
+		f.then(submit(f, "approve"))
+		if r := e.resumeReviewed(id); r.exit != 0 {
+			t.Fatalf("exit %d\n%s\n%s", r.exit, r.shown(), r.errs.String())
+		}
+		eq(t, "commits", e.commitsSince(start), "1")
+		eq(t, "committed", e.gitOut("show", "HEAD:app.txt"), "reviewer repair")
+		eq(t, "review requests", len(f.reviewRequests()), 3)
+	})
+
+	t.Run("an outside change before the resume is not approved", func(t *testing.T) {
+		t.Parallel()
+		e, f, id, start := interrupted(t)
+		e.write("app.txt", "changed outside\n")
+		doc, _ := e.checkpoint(id)
+		tree, err := e.gitRepo().Tree(start, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc["candidate"] = tree
+		e.writeCheckpoint(id, doc)
+		f.then(submit(f, "approve"), submit(f, "changes", finding("blocking", "stop")))
+		wantStop(t, e.resumeReviewed(id), "candidate/review_blocked")
+		eq(t, "commits", e.commitsSince(start), "0")
+		reqs := f.reviewRequests()
+		eq(t, "review requests", len(reqs), 4)
+		if feedback := lastUserText(reqs[3]); !strings.HasPrefix(feedback, deliveredHead) || !strings.Contains(feedback, "-reviewer repair\n+changed outside\n") {
+			t.Fatalf("feedback %q", feedback)
+		}
+	})
+}

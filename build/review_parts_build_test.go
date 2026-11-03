@@ -206,8 +206,11 @@ func TestReviewInPartsRepairIsVerifiedBeforeTheNextPart(t *testing.T) {
 	eq(t, "committed app.txt", e.gitOut("show", "HEAD:app.txt"), "fixed by the first part's reviewer")
 	eq(t, "the second part's reviewer saw the verified repair", seen, "fixed by the first part's reviewer\n")
 	eq(t, "review sessions", len(f.starts[executor.RoleReview]), 2)
+	// The part's red result returns to its own session, then the confirming round of the
+	// unchanged repair, then part 2.
 	rounds := f.rounds(executor.RoleReview)
-	if len(rounds) != 3 || !strings.Contains(rounds[1].Feedback, "is not green") {
+	if len(rounds) != 4 || !strings.Contains(rounds[1].Feedback, "is not green") ||
+		!strings.HasPrefix(rounds[2].Feedback, "Your verdict was not applied:") || !strings.Contains(rounds[2].Feedback, "+fixed by the first part's reviewer\n") {
 		t.Fatalf("review inputs %+v: red results return to the part's own session", rounds)
 	}
 	ev := readMaterial(t, e, e.onlyRun(), 1)
@@ -283,11 +286,16 @@ func TestReviewInPartsMandatoryMaterialStopsBeforeSending(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	e.useLineup("")
+	// The README of the Build's start is the project instructions: an oversized one is in the
+	// start revision, as a builder's edit of it is no longer authority.
+	e.write("README.md", strings.Repeat("a README line that every review prompt carries\n", 12000))
+	e.run("git", "add", "README.md")
+	e.run("git", "commit", "-qm", "large README")
+	e.approve()
 	start := e.head()
 	f := newLineupExec(t)
 	f.build = func(n int, root string, in executor.Input) (executor.RoundResult, error) {
 		lineupWriteApp(t, root, "candidate\n")
-		writeFile(t, filepath.Join(root, "README.md"), strings.Repeat("a README line that every review prompt carries\n", 12000), 0o644)
 		return executor.RoundResult{Claim: "done"}, nil
 	}
 	f.review = func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error) {

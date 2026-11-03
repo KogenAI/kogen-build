@@ -207,8 +207,14 @@ func TestClaudeLineupReviewExactTree(t *testing.T) {
 		}
 		eq(t, "commits", e.commitsSince(start), "1")
 		eq(t, "committed app.txt", e.gitOut("show", "HEAD:app.txt"), "repaired")
-		if len(f.rounds(executor.RoleReview)) != 1 {
-			t.Fatal("a green repair should not need another round")
+		// The edit is not applied on its first approval: round 2 receives its own diff and
+		// approves the unchanged delivered tree.
+		review := f.rounds(executor.RoleReview)
+		if len(review) != 2 || review[0].Feedback != "" ||
+			!strings.HasPrefix(review[1].Feedback, "Your verdict was not applied: the candidate changed after its contents were delivered to you, other than through your own Kogen tool calls: app.txt.\n") ||
+			!strings.Contains(review[1].Feedback, "@@ -1 +1 @@\n-candidate\n+repaired\n") ||
+			!strings.Contains(review[1].Feedback, "The new tree passed checks but has not been reviewed.") {
+			t.Fatalf("review inputs %+v", review)
 		}
 	})
 
@@ -233,7 +239,11 @@ func TestClaudeLineupReviewExactTree(t *testing.T) {
 		eq(t, "commits", e.commitsSince(start), "1")
 		eq(t, "committed app.txt", e.gitOut("show", "HEAD:app.txt"), "fixed by the reviewer")
 		review := f.rounds(executor.RoleReview)
-		if len(review) != 2 || review[0].Feedback != "" || !strings.Contains(review[1].Feedback, "is not green") || !strings.Contains(review[1].Feedback, "acceptance") {
+		if len(review) != 3 || review[0].Feedback != "" ||
+			!strings.HasPrefix(review[1].Feedback, "Your verdict was not applied:") || !strings.Contains(review[1].Feedback, "+red\n") ||
+			!strings.Contains(review[1].Feedback, "is not green") || !strings.Contains(review[1].Feedback, "acceptance") ||
+			!strings.HasPrefix(review[2].Feedback, "Your verdict was not applied:") || !strings.Contains(review[2].Feedback, "-red\n+fixed by the reviewer\n") ||
+			!strings.Contains(review[2].Feedback, "The new tree passed checks but has not been reviewed.") {
 			t.Fatalf("review inputs %+v", review)
 		}
 		if len(f.starts[executor.RoleReview]) != 1 || len(f.starts[executor.RoleBuild]) != 1 || len(f.rounds(executor.RoleBuild)) != 1 {

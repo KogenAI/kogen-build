@@ -280,7 +280,7 @@ func (x reviewExternal) session(ctx context.Context, b *Attempt, role project.Ro
 	}
 
 	base := s.base
-	r := &reviewRun{b: b, pass: s.pass, external: true, base: &base, sess: reviewSession{Role: role, Usage: zeroTokens()}}
+	r := &reviewRun{b: b, pass: s.pass, external: true, base: &base, sess: reviewSession{Role: role, Usage: zeroTokens(), Seen: s.pass.Tree}}
 	feedback, invalid := "", 0
 	for round := 1; ; round++ {
 		if round > x.maxRounds {

@@ -193,8 +193,15 @@ func (b *Attempt) materialOf(pass verify.Pass) (materialSet, error) {
 		return materialSet{}, err
 	}
 	readme := "(no README.md)"
-	if t, err := readFile(b.Root, "README.md"); err == nil {
-		readme = string(t)
+	// The project instructions are the README of the Build's start: a builder's edit of it is
+	// candidate data. A README of the approved baseline is the one exception: its checkout
+	// bytes are the approved ones.
+	if slices.Contains(b.Baseline, "README.md") {
+		if t, err := readFile(b.Root, "README.md"); err == nil {
+			readme = string(t)
+		}
+	} else if t, ok := b.repo.Show(b.Start, "README.md"); ok {
+		readme = t
 	}
 	var checks []string
 	for _, c := range b.Config.Checks {
