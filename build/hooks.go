@@ -20,6 +20,11 @@ type Deps struct {
 	// count are kept in the checkpoint: a resume takes them from there, not from this field.
 	BuildRequestBudget int
 
+	// BuildBriefMaxFiles and BuildBriefMaxReadmeBytes cap optional native context.
+	// Nonpositive values leave the corresponding context uncapped.
+	BuildBriefMaxFiles       int
+	BuildBriefMaxReadmeBytes int
+
 	// Client sends the model requests; its prompt-cache is not used, the Build keeps its own
 	// (restored from a checkpoint).
 	Client *provider.Client
