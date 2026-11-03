@@ -69,7 +69,7 @@ func TestPartsSourceOmitsChangedFileTexts(t *testing.T) {
 		intent: &project.Intent{Text: "# Gen intent\n"},
 	}
 	pass := verify.Pass{Tree: tree, Model: verify.ModelNone, Acceptance: &verify.Acceptance{Scenarios: make([]verify.ScenarioResult, 1)}}
-	m, err := b.materialOf(pass)
+	m, err := materialOf(b, pass)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,8 +12,9 @@ import (
 	"github.com/KogenAI/kogen-verification/verify"
 )
 
-// What build shares with kogen-review lives in kogen-executor's core: the token totals, the
-// review record, an external executor's state and the review material. build re-exports them
+// What build shares with kogen-review lives in kogen-executor's core (the token totals, the
+// review record, an external executor's state) and in kogen-review (the review material, which
+// the review makes and the Build keeps in the review's working window). build re-exports them
 // under its own names.
 type (
 	Tokens        = core.Tokens
@@ -21,10 +22,7 @@ type (
 	ExecutorState = core.ExecutorState
 	ExecutorUsage = core.ExecutorUsage
 
-	materialSet       = core.MaterialSet
-	materialSegment   = core.MaterialSegment
-	materialHunkRange = core.MaterialHunkRange
-	materialFileText  = core.MaterialFileText
+	materialSet = review.MaterialSet
 
 	// invalidReview is a review that ended without a valid verdict, as kogen-review returns it.
 	invalidReview = review.Invalid

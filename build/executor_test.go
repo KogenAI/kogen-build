@@ -223,6 +223,8 @@ func TestExternalTaskAndRunRecords(t *testing.T) {
 	eq(t, "max rounds", task.MaxRounds, 3)
 	eq(t, "home", task.Home, e.home)
 	eq(t, "dir", task.Dir, e.runPath(id, "executor"))
+	// The builder's structured submission is the Build's own, handed over with the task.
+	eq(t, "schema", string(task.Schema), SubmissionSchema)
 	if st, err := os.Stat(task.Dir); err != nil || st.Mode().Perm() != 0o700 {
 		t.Fatalf("task dir %v %v", st, err)
 	}

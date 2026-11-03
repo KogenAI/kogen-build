@@ -2,6 +2,7 @@ package build
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -88,8 +89,9 @@ func selectReviewer(d Deps, role project.Role) (Reviewer, error) {
 	return delegate{review.NewExternal(ex, desc, max)}, nil
 }
 
-// task is the Build's task for an executor: the brief and the constraints Kogen keeps (the
-// protected baseline, the excluded paths), never Kogen's own builder prompt.
+// task is the Build's task for an executor: the brief, the constraints Kogen keeps (the
+// protected baseline, the excluded paths) and the builder's structured submission
+// (SubmissionSchema), never Kogen's own builder prompt.
 func (b *Attempt) task(brief executor.Brief) (executor.Task, error) {
 	role := b.Config.Models["build"]
 	approval, err := decodeBase64(b.ApprovalBytes)
@@ -99,7 +101,7 @@ func (b *Attempt) task(brief executor.Brief) (executor.Task, error) {
 	t := executor.Task{
 		Role: executor.RoleBuild, Root: b.Root, Brief: brief, Protected: b.Baseline, Excluded: b.Excluded,
 		Model: role.Model, Effort: role.Effort, Approval: core.HashHex(approval), StartTree: b.Start, RunID: b.Run.ID,
-		Home: b.s.Getenv("HOME"),
+		Home: b.s.Getenv("HOME"), Schema: json.RawMessage(SubmissionSchema),
 	}
 	if b.ext != nil {
 		t.MaxRounds = b.ext.maxRounds
