@@ -90,7 +90,7 @@ func (h host) BaselineFailing() bool         { return len(h.b.baselineFailures()
 func (h host) ComparisonLines() []string     { return h.b.comparisonLines() }
 func (h host) ValidateWorkingContext() error { return h.b.validateWorkingContext() }
 
-func (h host) OnDemand() bool { return h.b.onDemand() }
+func (h host) OnDemand() bool { return false } // the on_demand review mode was removed on main (dfa857f)
 func (h host) Material(pass verify.Pass) (core.MaterialSet, error) {
 	return h.b.materialOf(pass)
 }
@@ -102,7 +102,7 @@ func (h host) MaterialPrepare(tree string, m core.MaterialSet, role project.Role
 }
 func (h host) MaterialUnread(input []any) ([]string, error) { return h.b.materialUnread(input) }
 func (h host) MaterialRequiredUnread(input []any) ([]string, error) {
-	return h.b.materialRequiredUnread(input)
+	return nil, nil // nothing is required unread without the on_demand mode (removed on main, dfa857f)
 }
 func (h host) MaterialEvent(input []any) error { return h.b.materialEvent(input) }
 func (h host) PrefillSource(role project.Role, instructions string, defs, input []any) ([]any, error) {
