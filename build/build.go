@@ -641,7 +641,7 @@ func (b *Attempt) Verify(ctx context.Context) (verify.Pass, error) {
 	}
 	in := b.verifyInput(b.Pass)
 	in.MaintainedModels = models
-	pass, err := verify.Verify(ctx, b.s, in)
+	pass, err := b.verifyReusing(ctx, in)
 	if err != nil {
 		return verify.Pass{}, err
 	}

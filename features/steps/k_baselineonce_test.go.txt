@@ -1,0 +1,214 @@
+package build
+
+// The K-BASELINEONCE acceptance harness. features/steps/k_baselineonce_steps.js overlays this file
+// into ./build as build/k_baselineonce_acceptance_test.go, builds the package's test binary once
+// (go test -c -vet=off -overlay) and runs TestKBaselineOnceAcceptance once per mode (KBO_MODE).
+// Each mode runs whole Builds (and resumes) through Build and Resume against the package's
+// scripted provider and stub reviewer, in a temporary repository whose checks append their names
+// to an execution log outside the repository. The test fails only when its fixture cannot run;
+// it prints one observation line, "KBO <json>", which the step file compares with the feature.
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+)
+
+var kboHex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+type kboFixture struct {
+	e                *env
+	log, open, tools string
+}
+
+// kboNew is the fixture repository with the given checks. The checks see KBO_LOG (the execution
+// log), KBO_OPEN (a file whose presence opens the gate check) and a PATH of the fixture's tool
+// folder (kbo-lint), the folder of the git this test runs, /usr/bin and /bin.
+func kboNew(t *testing.T, checks []project.Check) *kboFixture {
+	aux := physical(t, t.TempDir())
+	f := &kboFixture{log: filepath.Join(aux, "executions.log"), open: filepath.Join(aux, "gate-open"), tools: filepath.Join(aux, "bin")}
+	writeFile(t, filepath.Join(f.tools, "kbo-lint"), "#!/bin/sh\necho lint >> \"$KBO_LOG\"\n", 0o755)
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := strings.Join([]string{f.tools, filepath.Dir(git), "/usr/bin", "/bin"}, string(os.PathListSeparator))
+	f.e = newEnv(t, func(c *project.Config) { c.Checks = checks })
+	f.e.extraEnv = []string{"KBO_LOG=" + f.log, "KBO_OPEN=" + f.open, "PATH=" + path}
+	return f
+}
+
+func (f *kboFixture) executions(t *testing.T) []string {
+	b, err := os.ReadFile(f.log)
+	if os.IsNotExist(err) {
+		return []string{}
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := []string{}
+	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func (f *kboFixture) write(content string) handler {
+	return f.e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": content}, "finish", map[string]any{"summary": "done"})
+}
+
+func (f *kboFixture) finish() handler {
+	return f.e.prov.calls("finish", map[string]any{"summary": "done"})
+}
+
+// kboRun is what one run recorded: its outcome, its within-Build reuse records and the last pass
+// its checkpoint holds.
+func (f *kboFixture) kboRun(t *testing.T, id string) map[string]any {
+	evs := f.e.events(id)
+	reused := []string{}
+	recordsOK := true
+	for _, ev := range eventsNamed(evs, "check_reuse") {
+		name, _ := ev["name"].(string)
+		key, _ := ev["key"].(string)
+		reused = append(reused, name)
+		if !kboHex.MatchString(key) || ev["message"] != "baseline reused: "+name+" "+key {
+			recordsOK = false
+		}
+	}
+	_, state := f.e.checkpoint(id)
+	var last any
+	if p, ok := state["last_pass"].(map[string]any); ok {
+		checks := []any{}
+		for _, c := range p["checks"].([]any) {
+			m := c.(map[string]any)
+			checks = append(checks, []any{m["name"], m["status"]})
+		}
+		last = map[string]any{"n": p["n"], "green": p["green"], "failing": p["failing"], "not_run": p["not_run"], "checks": checks}
+	}
+	return map[string]any{"outcome": f.e.result(id)["outcome"], "reused": reused, "reuse_records_well_formed": recordsOK, "last_pass": last}
+}
+
+func (f *kboFixture) other(id string) string {
+	for _, r := range f.e.runIDs() {
+		if r != id {
+			return r
+		}
+	}
+	return ""
+}
+
+func TestKBaselineOnceAcceptance(t *testing.T) {
+	mode := os.Getenv("KBO_MODE")
+	lint := project.Check{Name: "lint", Run: `echo lint >> "$KBO_LOG"`}
+	obs := map[string]any{"mode": mode}
+	var f *kboFixture
+	var runs []string
+	switch mode {
+	case "unchanged", "tree":
+		f = kboNew(t, []project.Check{lint})
+		if mode == "unchanged" {
+			f.e.prov.then(f.finish())
+		} else {
+			f.e.prov.then(f.write("candidate\n"))
+		}
+		start := f.e.head()
+		f.e.build()
+		runs = []string{f.e.onlyRun()}
+		obs["commits"] = strings.TrimSpace(f.e.gitOut("rev-list", "--count", start+"..HEAD"))
+	case "fix-loop":
+		f = kboNew(t, []project.Check{
+			{Name: "first", Run: `echo first >> "$KBO_LOG"`},
+			{Name: "second", Run: `echo second >> "$KBO_LOG"; grep -qx fixed app.txt`},
+		})
+		f.e.prov.then(f.write("half\n"), f.write("fixed\n"))
+		start := f.e.head()
+		f.e.build()
+		runs = []string{f.e.onlyRun()}
+		obs["commits"] = strings.TrimSpace(f.e.gitOut("rev-list", "--count", start+"..HEAD"))
+	case "final-fails":
+		f = kboNew(t, []project.Check{
+			{Name: "first", Run: `echo first >> "$KBO_LOG"; ! grep -qx broken app.txt`},
+			{Name: "second", Run: `echo second >> "$KBO_LOG"; grep -qx broken app.txt`},
+		})
+		f.e.prov.then(f.write("half\n"), f.write("broken\n"))
+		start := f.e.head()
+		f.e.build()
+		runs = []string{f.e.onlyRun()}
+		obs["commits"] = strings.TrimSpace(f.e.gitOut("rev-list", "--count", start+"..HEAD"))
+	case "resume", "toolchain", "command":
+		f = kboNew(t, []project.Check{
+			{Name: "lint", Run: "kbo-lint"},
+			{Name: "gate", Run: `echo gate >> "$KBO_LOG"; test -f "$KBO_OPEN"`},
+		})
+		start := f.e.head()
+		id, _ := f.e.interruptedAtRequest(f.write("candidate\n"))
+		writeFile(t, f.open, "open\n", 0o644)
+		switch mode {
+		case "toolchain":
+			writeFile(t, filepath.Join(f.tools, "kbo-lint"), "#!/bin/sh\n# version 2 of the fixture's lint tool\necho lint >> \"$KBO_LOG\"\n", 0o755)
+		case "command":
+			doc, state := f.e.checkpoint(id)
+			records, _ := state["check_results"].([]any)
+			for _, r := range records {
+				if m, ok := r.(map[string]any); ok && m["name"] == "lint" {
+					m["command"] = "kbo-lint --previous"
+				}
+			}
+			f.e.writeCheckpoint(id, doc)
+		}
+		f.e.prov.replace(f.finish())
+		f.e.resume(id)
+		runs = []string{id, f.other(id)}
+		obs["commits"] = strings.TrimSpace(f.e.gitOut("rev-list", "--count", start+"..HEAD"))
+	case "per-base":
+		f = kboNew(t, []project.Check{{Name: "closed", Run: ":"}, lint})
+		// The provider refuses the first Build's first request, so that Build stops after its
+		// baseline on the unchanged base; the second Build's builder finishes without an edit.
+		f.e.prov.then(refused(), f.finish())
+		start := f.e.head()
+		f.e.build()
+		first := f.e.onlyRun()
+		f.e.build()
+		second := f.other(first)
+		runs = []string{first, second}
+		obs["commits"] = strings.TrimSpace(f.e.gitOut("rev-list", "--count", start+"..HEAD"))
+		evs := f.e.events(second)
+		hits := eventsNamed(evs, "baseline_reuse")
+		perBase := []any{}
+		for _, h := range hits {
+			identity, _ := h["identity"].(string)
+			perBase = append(perBase, map[string]any{"name": h["name"], "evidence_is_first_builds_log": h["evidence"] == f.e.runPath(first, "log.jsonl"),
+				"identity_well_formed": kboHex.MatchString(identity)})
+		}
+		obs["second_build_baseline_reuse"] = perBase
+		before := 0
+		for _, ev := range eventsNamed(evs, "command") {
+			if ev["name"] == "closed" && ev["before_change"] == true {
+				before++
+			}
+		}
+		obs["second_build_closed_runs_before_change"] = before
+	default:
+		t.Fatalf("KBO_MODE %q, want unchanged, tree, fix-loop, final-fails, resume, toolchain, command or per-base", mode)
+	}
+	obs["executions"] = f.executions(t)
+	var observed []any
+	for _, id := range runs {
+		observed = append(observed, f.kboRun(t, id))
+	}
+	obs["runs"] = observed
+	b, err := json.Marshal(obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("KBO " + string(b))
+}

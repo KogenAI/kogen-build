@@ -158,6 +158,10 @@ type State struct {
 	// unchanged tree before the builder edited anything (AUT-5): diagnostic evidence kept
 	// through every checkpoint, never a waiver. Absent for a Build that collected none.
 	CheckBaseline []verify.CommandResult `json:"check_baseline,omitempty"`
+	// CheckResults is the Build's ledger of passed checks, keyed by the check, the tree and the
+	// environment (checkreuse.go): a whole-Intent pass on the same key reuses the record. At most
+	// one record per configured check; absent until a check passed.
+	CheckResults []checkResult `json:"check_results,omitempty"`
 }
 
 // RequestBudget is a Build's total builder request limit and its cumulative attempt count.

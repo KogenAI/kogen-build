@@ -84,6 +84,17 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 	b.CheckBaseline = nil
 	began := time.Now()
 	timings := []any{}
+	// The tree and environment of the baseline's checks, before the first and after the last, and
+	// the checks that executed (not reused through the per-base evidence) and exited 0. They
+	// enter the ledger only when nothing moved while the checks ran.
+	var before checkPoint
+	pointKnown := false
+	if len(b.Config.Checks) > 0 {
+		if p, err := b.checkPoint(); err == nil {
+			before, pointKnown = p, true
+		}
+	}
+	var executed []verify.CommandResult
 	for i, c := range b.Config.Checks {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -111,7 +122,7 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 			if c.Run == ":" {
 				return sys.Result{}, nil
 			}
-			return b.s.Run(c.Run, b.Root, sys.Options{KillGroupOnExit: true})
+			return b.s.Run(c.Run, b.Root, sys.Options{Env: toolEnv(b.deps.Tools), KillGroupOnExit: true})
 		})
 		if err != nil {
 			return err
@@ -122,12 +133,19 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 		b.Run.Event(map[string]any{"event": "command_result", "name": c.Name, "status": r.Status, "output": Cap(r.Output),
 			"started_at": isoTime(started), "ended_at": isoTime(ended), "wall_ms": wall})
 		timings = append(timings, map[string]any{"name": c.Name, "started_at": isoTime(started), "ended_at": isoTime(ended), "wall_ms": wall})
-		b.CheckBaseline = append(b.CheckBaseline, verify.CommandResult{Name: c.Name, Command: c.Run, Status: r.Status, Output: verify.Cap(r.Output)})
+		result := verify.CommandResult{Name: c.Name, Command: c.Run, Status: r.Status, Output: verify.Cap(r.Output)}
+		b.CheckBaseline = append(b.CheckBaseline, result)
+		executed = append(executed, result)
 		if c.Run == ":" && digest != "" && ctx.Err() == nil && b.Run != nil && b.Run.LogErr() == nil {
 			if after, _, err := baselineIdentity(b.Root, b.Config.Checks); err == nil && after == digest {
 				status, output := 0, ""
 				publishBaselineEvidence(dir, baselineEvidence{Version: 2, Complete: true, Command: c.Run, Status: &status, Output: &output, Position: &i, Identity: digest, Index: i, Name: c.Name, Reference: b.Run.LogPath})
 			}
+		}
+	}
+	if pointKnown {
+		if after, err := b.checkPoint(); err == nil && after.equal(before) {
+			b.recordPassed(before, executed)
 		}
 	}
 	if len(b.CheckBaseline) == 0 {
@@ -179,12 +197,26 @@ func (b *Attempt) comparison() []checkComparison {
 		if i < len(b.CheckBaseline) && b.CheckBaseline[i].Name == c.Name {
 			row.Before = stateOf(b.CheckBaseline[i])
 		}
-		if p := b.LastPass; p != nil && i < len(p.Checks) && p.Checks[i].Name == c.Name {
-			row.After = stateOf(p.Checks[i])
+		if r, ok := passCheck(b.LastPass, c.Name); ok {
+			row.After = stateOf(r)
 		}
 		out = append(out, row)
 	}
 	return out
+}
+
+// passCheck is the result of the check called name in a pass, found by name: a pass lists only
+// the checks it has a result for.
+func passCheck(p *verify.Pass, name string) (verify.CommandResult, bool) {
+	if p == nil {
+		return verify.CommandResult{}, false
+	}
+	for _, r := range p.Checks {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return verify.CommandResult{}, false
 }
 
 func (s checkState) String() string {
@@ -272,8 +304,8 @@ func (b *Attempt) reviewBaselineMessage(pass verify.Pass) []any {
 		"Every configured check must pass for the Build to land. Check by check, in configured order:"}
 	for i, r := range b.CheckBaseline {
 		final := checkState{State: checkNotRun}
-		if i < len(pass.Checks) && pass.Checks[i].Name == r.Name {
-			final = stateOf(pass.Checks[i])
+		if fr, ok := passCheck(&pass, r.Name); ok {
+			final = stateOf(fr)
 		}
 		lines = append(lines, fmt.Sprintf("%d. %s (%s): baseline %s → final %s", i+1, r.Name, r.Command, stateOf(r), final))
 		if st := stateOf(r); st.State == checkFailed {
