@@ -4,13 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/KogenAI/kogen-review/review"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"github.com/KogenAI/kogen-executor/agent"
 )
 
 // The default parts mode is unchanged by the on_demand hunk gate (k-revod-gate): every
@@ -82,7 +82,7 @@ func revodGatePartsRequests(t *testing.T) []string {
 	var bodies []string
 	for i, raw := range f.rawRequests() {
 		req := f.requests()[i]
-		if requestInstructions(req) != agent.Prompt(agent.Reviewer) {
+		if requestInstructions(req) != review.ReviewerInstructions() {
 			continue
 		}
 		text := string(raw)

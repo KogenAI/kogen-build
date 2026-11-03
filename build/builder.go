@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-coordinator/route"
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/executor"
@@ -356,35 +357,11 @@ func withNotice(notice, feedback string) string {
 	return notice + "\n\n" + feedback
 }
 
-// verifyAndReview is the whole-Intent pass, review and commit. A builder pass (after a builder
-// round) is also checked for a repeated host or base failure; a pass that only restarts
-// verification after a drifted review is not.
+// verifyAndReview is the whole-Intent pass, review and commit, routed by kogen-coordinator's
+// route (steps). A builder pass (after a builder round) is also checked for a repeated host or
+// base failure; a pass that only restarts verification after a drifted review is not.
 func (b *Attempt) verifyAndReview(ctx context.Context, builderPass bool) (string, bool, error) {
-	pass, err := b.Verify(ctx)
-	if err != nil {
-		return "", false, err
-	}
-	if builderPass {
-		if err := b.hostOrBaseStop(pass); err != nil {
-			return "", false, err
-		}
-	}
-	notice, err := b.stalled("", pass)
-	if err != nil {
-		return "", false, err
-	}
-	if !pass.Green {
-		b.Repairs++
-		return withNotice(notice, b.PassFeedback(pass, "finish")), false, nil
-	}
-	approved, err := b.reviewWithRetry(ctx, func() (Approved, error) { return b.deps.reviewer().Review(ctx, b, pass) })
-	if err != nil {
-		return "", false, err
-	}
-	if err := b.Track(); err != nil {
-		return "", false, err
-	}
-	return b.commit(ctx, approved)
+	return route.Cycle(ctx, steps{b}, builderPass)
 }
 
 // ---- resume of a conversation stage ----
@@ -402,7 +379,8 @@ func (b *Attempt) builderResumeRefusal() string {
 }
 
 // resumeStage continues the Build from its checkpointed stage: the native builder's
-// conversation or a review, never an external executor's builder session.
+// conversation, or a routed step (kogen-coordinator's route.Resume), never an external
+// executor's builder session.
 func (b *Attempt) resumeStage(ctx context.Context) error {
 	if why := b.builderResumeRefusal(); why != "" {
 		return core.ResumeRefused(why)
@@ -434,25 +412,7 @@ func (b *Attempt) resumeStage(ctx context.Context) error {
 			return err
 		}
 		return b.drive(ctx, sess, executor.Input{Feedback: feedback}, true)
-	case StageReviewOnly:
-		return b.reviewOnlyResume(ctx)
-	case StageCommitFailed:
-		return b.commitFailedResume(ctx)
-	default: // the review stages
-		if b.externalReviewStage() {
-			return b.resumeExternalReview(ctx)
-		}
-		approved, err := b.reviewWithRetry(ctx, func() (Approved, error) { return b.deps.reviewer().Resume(ctx, b) })
-		if err != nil {
-			return err
-		}
-		feedback, landed, err := b.commit(ctx, approved)
-		if err != nil {
-			return err
-		}
-		if !landed {
-			return fmt.Errorf("candidate changed after review in a resumed commit: %s", feedback)
-		}
-		return nil
+	default: // the routed steps: review_only, commit_failed and the review stages
+		return route.Resume(ctx, steps{b}, c.Stage)
 	}
 }

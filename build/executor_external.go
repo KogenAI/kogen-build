@@ -92,7 +92,7 @@ func selectReviewer(d Deps, role project.Role) (Reviewer, error) {
 // protected baseline, the excluded paths), never Kogen's own builder prompt.
 func (b *Attempt) task(brief executor.Brief) (executor.Task, error) {
 	role := b.Config.Models["build"]
-	approval, err := core.DecodeBase64(b.ApprovalBytes)
+	approval, err := decodeBase64(b.ApprovalBytes)
 	if err != nil {
 		return executor.Task{}, err
 	}

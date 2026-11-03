@@ -48,7 +48,7 @@ func resumeRun(ctx context.Context, s *sys.Session, in ResumeInput, out **Attemp
 // one. why is the reason a resume is refused.
 func decodeCheckpoint(raw []byte, legacy LegacyDecoder) (loaded *Loaded, why string) {
 	const malformed = "malformed required checkpoint fields"
-	v, err := core.DecodeJSONNumbers(raw)
+	v, err := decodeJSONNumbers(raw)
 	m, ok := v.(map[string]any)
 	if err != nil || !ok {
 		return nil, malformed
@@ -89,7 +89,7 @@ func decodeCheckpoint(raw []byte, legacy LegacyDecoder) (loaded *Loaded, why str
 		return nil, malformed
 	}
 	for _, field := range []string{loaded.Doc.Index, loaded.Doc.Approval} {
-		if _, err := core.DecodeBase64(field); err != nil {
+		if _, err := decodeBase64(field); err != nil {
 			return nil, malformed
 		}
 	}
@@ -189,7 +189,7 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 		return refuse(id, why, "")
 	}
 	approval, err := os.ReadFile(project.ApprovalPath(root, b.Slug))
-	saved, derr := core.DecodeBase64(doc.Approval)
+	saved, derr := decodeBase64(doc.Approval)
 	if err != nil || derr != nil || !bytes.Equal(approval, saved) {
 		return refuse(id, "approval changed", "")
 	}
@@ -220,7 +220,7 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	}
 	// The user's index must record exactly what it recorded at the checkpoint. A plain `git
 	// status` may since have refreshed its stat cache: that alone is not a change.
-	savedIndex, _ := core.DecodeBase64(doc.Index)
+	savedIndex, _ := decodeBase64(doc.Index)
 	currentIndex, err := os.ReadFile(b.GitIndex)
 	if err != nil {
 		return refuse(id, "index/staged custody changed", "")

@@ -1,0 +1,49 @@
+{
+  "finish": {
+    "description": "Say the implementation is complete. Kogen then runs the fixers and every check, and a reviewer reviews the code; failures come back to you.",
+    "name": "finish",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "type": "object"
+    },
+    "strict": false,
+    "type": "function"
+  },
+  "report_blocker": {
+    "description": "Stop with a BUILDER-REPORTED protected-baseline contradiction. Supply concrete current protected file paths, the contradiction, and observed command/step/error evidence. Ordinary implementation failures or expected missing-feature red require repair, not a blocker. This never authorizes protected writes or skips a successful gate.",
+    "name": "report_blocker",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "paths",
+        "reason",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "strict": false,
+    "type": "function"
+  }
+}

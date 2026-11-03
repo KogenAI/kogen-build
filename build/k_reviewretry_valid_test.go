@@ -1,13 +1,12 @@
 package build
 
 import (
+	"github.com/KogenAI/kogen-review/review"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/KogenAI/kogen-executor/agent"
 )
 
 // firstReviewWire is the first independent-review request of a run exactly as the provider
@@ -18,7 +17,7 @@ func (e *env) firstReviewWire(start string) string {
 	e.t.Helper()
 	reqs, raw := e.prov.requests(), e.prov.rawRequests()
 	for i, req := range reqs {
-		if requestInstructions(req) != agent.Prompt(agent.Reviewer) {
+		if requestInstructions(req) != review.ReviewerInstructions() {
 			continue
 		}
 		text := string(raw[i])

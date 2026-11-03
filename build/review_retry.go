@@ -215,7 +215,7 @@ func (b *Attempt) discardReviewEdits(inv *invalidReview, current string) ([]stri
 // approvalIntact is the exact approval record the Build started from.
 func (b *Attempt) approvalIntact() error {
 	current, err := os.ReadFile(project.ApprovalPath(b.Root, b.Slug))
-	saved, derr := core.DecodeBase64(b.ApprovalBytes)
+	saved, derr := decodeBase64(b.ApprovalBytes)
 	if err != nil || derr != nil || !bytes.Equal(current, saved) {
 		return fmt.Errorf("the approval changed")
 	}
@@ -263,22 +263,22 @@ func (b *Attempt) reviewOnlyRefusal() (string, error) {
 	return "the candidate is not the green tree of the saved review-only pass: " + b.treeDrift(tree, green), nil
 }
 
-// reviewOnlyResume is the explicit resume of a review-only checkpoint: after the ordinary
+// reviewOnlyFresh prepares the explicit resume of a review-only checkpoint: after the ordinary
 // custody checks of Resume (and a saved pass that is the green tree of the retry record), the
-// stopped reviewer's uncommitted edits are discarded and logged, then one fresh review of the
-// saved green pass starts, with no builder round and no verification rerun. The automatic retry
-// of this tree is recorded as spent, so a resume never grants another one.
-func (b *Attempt) reviewOnlyResume(ctx context.Context) error {
+// stopped reviewer's uncommitted edits are discarded and logged; the routing then starts one fresh
+// review of the saved green pass, with no builder round and no verification rerun. The automatic
+// retry of this tree is recorded as spent, so a resume never grants another one.
+func (b *Attempt) reviewOnlyFresh() (verify.Pass, error) {
 	c := b.Continuation
 	pass := *c.Pass
 	tree, err := b.repo.Tree(b.Start, b.Excluded)
 	if err != nil {
-		return err
+		return verify.Pass{}, err
 	}
 	if tree != pass.Tree {
 		paths, err := b.discardReviewEdits(&invalidReview{Review: b.Review, Pass: pass}, tree)
 		if err != nil {
-			return core.ResumeRefused("review " + fmt.Sprint(b.Review) + "'s uncommitted edits could not be discarded: " + err.Error())
+			return verify.Pass{}, core.ResumeRefused("review " + fmt.Sprint(b.Review) + "'s uncommitted edits could not be discarded: " + err.Error())
 		}
 		b.s.Puts(fmt.Sprintf("discarded review %d's uncommitted edits, which are not part of that green candidate: %s", b.Review, strings.Join(paths, ", ")))
 	}
@@ -286,7 +286,7 @@ func (b *Attempt) reviewOnlyResume(ctx context.Context) error {
 	// green pass; the checkpoint's last pass may be a later one of the stopped review's repairs.
 	b.LastPass = &pass
 	if err := b.Track(); err != nil {
-		return err
+		return verify.Pass{}, err
 	}
 	rr := b.reviewRetryOf(pass.Tree)
 	rr.Automatic = true
@@ -305,23 +305,9 @@ func (b *Attempt) reviewOnlyResume(ctx context.Context) error {
 		"parent": nonNilString(b.Parent), "invalid_reviews": core.NonNil(invalid),
 	})
 	if err := b.Save(c); err != nil {
-		return err
+		return verify.Pass{}, err
 	}
-	approved, err := b.reviewWithRetry(ctx, func() (Approved, error) { return b.deps.reviewer().Review(ctx, b, pass) })
-	if err != nil {
-		return err
-	}
-	if err := b.Track(); err != nil {
-		return err
-	}
-	feedback, landed, err := b.commit(ctx, approved)
-	if err != nil {
-		return err
-	}
-	if !landed {
-		return fmt.Errorf("candidate changed after review in a resumed commit: %s", feedback)
-	}
-	return nil
+	return pass, nil
 }
 
 func nonNilString(s *string) any {
@@ -373,42 +359,28 @@ func (b *Attempt) externalReviewRefusal() string {
 	return ""
 }
 
-// resumeExternalReview starts the one fresh review of the saved green base, with no builder
-// round and no verification rerun, and commits what that review approves.
-func (b *Attempt) resumeExternalReview(ctx context.Context) error {
+// externalReviewFresh prepares the one fresh review of the saved green base, with no builder
+// round and no verification rerun; the routing commits what that review approves.
+func (b *Attempt) externalReviewFresh() (verify.Pass, error) {
 	base := *b.Continuation.Base
 	n, x := b.Review, b.Config.Models["review"].Executor
 	b.s.Puts(fmt.Sprintf("review %d by executor %s cannot be continued (resume capability: none); starting fresh review %d of the green candidate verified in pass %d, with no builder round and no rerun of its checks",
 		n, x, n+1, base.N))
 	tree, err := b.repo.Tree(b.Start, b.Excluded)
 	if err != nil {
-		return err
+		return verify.Pass{}, err
 	}
 	if tree != base.Tree {
 		paths, err := b.discardReviewEdits(&invalidReview{Review: n, Pass: base}, tree)
 		if err != nil {
-			return core.ResumeRefused("review " + fmt.Sprint(n) + "'s uncommitted edits could not be discarded: " + err.Error())
+			return verify.Pass{}, core.ResumeRefused("review " + fmt.Sprint(n) + "'s uncommitted edits could not be discarded: " + err.Error())
 		}
 		b.s.Puts(fmt.Sprintf("discarded review %d's uncommitted edits, which are not part of that green candidate: %s", n, strings.Join(paths, ", ")))
 	}
 	// The fresh review judges the base, as an ordinary Build's review follows its green pass.
 	b.LastPass = &base
 	if err := b.Track(); err != nil {
-		return err
+		return verify.Pass{}, err
 	}
-	approved, err := b.reviewWithRetry(ctx, func() (Approved, error) { return b.deps.reviewer().Review(ctx, b, base) })
-	if err != nil {
-		return err
-	}
-	if err := b.Track(); err != nil {
-		return err
-	}
-	feedback, landed, err := b.commit(ctx, approved)
-	if err != nil {
-		return err
-	}
-	if !landed {
-		return fmt.Errorf("candidate changed after review in a resumed commit: %s", feedback)
-	}
-	return nil
+	return base, nil
 }

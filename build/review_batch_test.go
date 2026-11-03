@@ -262,7 +262,7 @@ func TestReviewBatchResumeReplaysTheSavedInputAndRecoversTheSameWay(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := core.DecodeJSONNumbers(raw)
+	v, err := decodeJSONNumbers(raw)
 	if err != nil {
 		t.Fatal(err)
 	}

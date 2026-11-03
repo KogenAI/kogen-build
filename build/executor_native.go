@@ -23,6 +23,12 @@ var (
 	builderDefs  = []string{"shell", "read_file", "view_image", "write_file", "finish", "report_blocker"}
 )
 
+// builderDefinitions are the builder's tool definitions, the shell's with the executing tool's
+// own policy: the generic tools of builderTools, then finish and report_blocker.
+func builderDefinitions(tl *tools.Tools) []any {
+	return slices.Concat(core.ShellDefinitions(tl, builderTools), agent.AsAny(BuilderToolDefinitions(FinishTool, ReportBlockerTool)))
+}
+
 // nativeExecutor is the default build executor (docs/executor-contract.md): Kogen's own
 // builder round, run by kogen-loop's engine with hooks that keep every checkpoint, run-log
 // event and custody check of the Build in the order the builder always had them. It works on
@@ -119,10 +125,10 @@ func (n *nativeSession) Round(ctx context.Context, in executor.Input) (executor.
 	role := b.Config.Models["build"]
 	tl := &tools.Tools{Root: b.Root, Session: b.s, Repo: agent.Git(b.repo), Enabled: builderTools, Protected: b.Baseline, Excluded: b.Excluded}
 	rd := loop.Round{
-		Owner: "build", Role: core.ProviderRole(role), Instructions: agent.Prompt(agent.Builder),
-		Definitions: core.ShellDefinitions(tl, builderDefs),
+		Owner: "build", Role: core.ProviderRole(role), Instructions: BuilderInstructions(),
+		Definitions: builderDefinitions(tl),
 		Tools:       tl,
-		Terminal:    []string{agent.FinishTool},
+		Terminal:    []string{FinishTool},
 	}
 	var base []any // the round's input after replay, as the stage validation sees it
 	var usages []api.Usage
@@ -157,7 +163,7 @@ func (n *nativeSession) Round(ctx context.Context, in executor.Input) (executor.
 			return b.Save(Continuation{Stage: StageTool, Owner: "build", Input: input})
 		},
 		HandleCall: func(ctx context.Context, call tools.Call) (loop.Handled, error) {
-			if call.Name != agent.ReportBlockerTool {
+			if call.Name != ReportBlockerTool {
 				return loop.Handled{}, nil
 			}
 			text, err := b.reportBlocker(call.Args(), call)

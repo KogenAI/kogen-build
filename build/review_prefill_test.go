@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/core"
-	"github.com/KogenAI/kogen-review/review"
 	agent "kogen-loop/tools"
 )
 
@@ -128,7 +127,7 @@ func prefillSaved(t *testing.T, input []any) []any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := core.DecodeJSONNumbers(raw)
+	v, err := decodeJSONNumbers(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +203,7 @@ func TestReviewPrefillIsNotCountedWhilePendingAndCountsOnceAModelOutputFollows(t
 	eq(t, "delivered while pending", source["delivered"], any(0))
 	// The approval check agrees.
 	approve := map[string]any{"verdict": "approve", "findings": []any{}}
-	_, problems, err := review.Validate(b.reviewing(), approve, pending)
+	_, problems, err := validateReview(b, approve, pending)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +238,7 @@ func TestReviewPrefillIsNotCountedWhilePendingAndCountsOnceAModelOutputFollows(t
 	}
 
 	// The approval check lists exactly the parts that are still unread.
-	_, problems, err = review.Validate(b.reviewing(), approve, slices.Concat(pending, prefillModel("m")))
+	_, problems, err = validateReview(b, approve, slices.Concat(pending, prefillModel("m")))
 	if err != nil {
 		t.Fatal(err)
 	}
