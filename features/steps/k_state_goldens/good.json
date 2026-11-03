@@ -1,0 +1,82 @@
+{
+  "expected": {
+    "goldens": [
+      "build/testdata/state/fresh/checkpoint.json",
+      "build/testdata/state/attempts/checkpoint.json",
+      "build/testdata/state/review-approve/checkpoint.json",
+      "build/testdata/state/review-approve/review-1.json",
+      "build/testdata/state/review-changes/checkpoint.json",
+      "build/testdata/state/review-changes/review-1.json",
+      "build/testdata/state/resumed/checkpoint.json"
+    ],
+    "digests": {
+      "build/testdata/state/fresh/checkpoint.json": "3ef0b12d57a0211c2ffe3c17c77d0145aa32b3f00de10d1d79335adf74960ded",
+      "build/testdata/state/attempts/checkpoint.json": "412f95a69f4383adb2a550358aeb2deeb4be22f4af558226dfa1ec0fb9da99ad",
+      "build/testdata/state/review-approve/checkpoint.json": "8f4c0068a2e650ccc40bcdde31c628d5d1df8c9cdb43252f76c2692f95080b68",
+      "build/testdata/state/review-approve/review-1.json": "fab76326e9b7b9fef1425fcd7d05f80a216e088af052f0f5cfbec4c9bd90132e",
+      "build/testdata/state/review-changes/checkpoint.json": "5ed24de78160ac319ad690f72029bef943eb033f5f2c3ab42953a028117daefe",
+      "build/testdata/state/review-changes/review-1.json": "aa8bdc7ebcb371665560abbc462903ae2e1721975ced5842e99a38038fe0511c",
+      "build/testdata/state/resumed/checkpoint.json": "2d806fc55315178daf756d13dcb7ab68f1d3d420332a90a3c80a5b7e72e55ed0"
+    }
+  },
+  "drifted": {
+    "command": "go test ./build -count=1 -v -skip <existing-tests.txt>",
+    "exit": 1,
+    "output": "=== RUN   TestPersistedStateCheckpoints\n=== RUN   TestPersistedStateCheckpoints/fresh\n    state_golden_test.go:91: testdata/state/fresh/checkpoint.json differs\n    state_golden_test.go:95: testdata/state/attempts/checkpoint.json differs\n=== RUN   TestPersistedStateCheckpoints/resumed\n    state_golden_test.go:104: testdata/state/resumed/checkpoint.json differs\n=== RUN   TestPersistedStateCheckpoints/approve\n    state_golden_test.go:124: testdata/state/review-approve/checkpoint.json differs\n=== RUN   TestPersistedStateCheckpoints/changes\n    state_golden_test.go:124: testdata/state/review-changes/checkpoint.json differs\n--- FAIL: TestPersistedStateCheckpoints (0.01s)\n    --- FAIL: TestPersistedStateCheckpoints/fresh (0.00s)\n    --- FAIL: TestPersistedStateCheckpoints/resumed (0.00s)\n    --- FAIL: TestPersistedStateCheckpoints/approve (0.00s)\n    --- FAIL: TestPersistedStateCheckpoints/changes (0.00s)\n=== RUN   TestPersistedReviewRecords\n=== RUN   TestPersistedReviewRecords/approve\n=== RUN   TestPersistedReviewRecords/changes\n    state_golden_test.go:143: testdata/state/review-changes/review-1.json differs\n    state_golden_test.go:143: testdata/state/review-approve/review-1.json differs\n--- FAIL: TestPersistedReviewRecords (0.00s)\n    --- FAIL: TestPersistedReviewRecords/changes (1.24s)\n    --- FAIL: TestPersistedReviewRecords/approve (1.32s)\nFAIL\nFAIL\tgithub.com/KogenAI/kogen-build/build\t1.876s\nFAIL\n",
+    "before": {
+      "build/testdata/state/fresh/checkpoint.json": "cec364008bdceb8dd377115758bb1cbb0ba3d75c09af2bc83dc73a39ec9d45c8",
+      "build/testdata/state/attempts/checkpoint.json": "95e5e2557614b2dc5f226b473ddf79e90b3688d871024f43ee73e6613dfb9193",
+      "build/testdata/state/review-approve/checkpoint.json": "dabc2a4ad4d691cd8e3e7db7bba7b4d19b86fb886b30e3bf2cbc5c0bde1f956c",
+      "build/testdata/state/review-approve/review-1.json": "a854517f42a744179ef0fb0e544a3957c3db3c5c74245f5ffada88b836c89193",
+      "build/testdata/state/review-changes/checkpoint.json": "b93572dff875566ee6cea1e1be6090693ae7e7a4534e09fcab9ffeada6a03ff5",
+      "build/testdata/state/review-changes/review-1.json": "45c7a18b48fe6b7ad839ae783d480f87e18fcbd9d8682c469c52afc3f40cb9a0",
+      "build/testdata/state/resumed/checkpoint.json": "ad73fd26e80ff3c7a5ec8717b8f028eb69f9f26cec7235cca61f7573dba6e19b"
+    },
+    "after": {
+      "build/testdata/state/fresh/checkpoint.json": "cec364008bdceb8dd377115758bb1cbb0ba3d75c09af2bc83dc73a39ec9d45c8",
+      "build/testdata/state/attempts/checkpoint.json": "95e5e2557614b2dc5f226b473ddf79e90b3688d871024f43ee73e6613dfb9193",
+      "build/testdata/state/review-approve/checkpoint.json": "dabc2a4ad4d691cd8e3e7db7bba7b4d19b86fb886b30e3bf2cbc5c0bde1f956c",
+      "build/testdata/state/review-approve/review-1.json": "a854517f42a744179ef0fb0e544a3957c3db3c5c74245f5ffada88b836c89193",
+      "build/testdata/state/review-changes/checkpoint.json": "b93572dff875566ee6cea1e1be6090693ae7e7a4534e09fcab9ffeada6a03ff5",
+      "build/testdata/state/review-changes/review-1.json": "45c7a18b48fe6b7ad839ae783d480f87e18fcbd9d8682c469c52afc3f40cb9a0",
+      "build/testdata/state/resumed/checkpoint.json": "ad73fd26e80ff3c7a5ec8717b8f028eb69f9f26cec7235cca61f7573dba6e19b"
+    }
+  },
+  "updated": {
+    "command": "go test ./build -count=1 -v -update -skip <existing-tests.txt>",
+    "exit": 0,
+    "output": "=== RUN   TestPersistedStateCheckpoints\n=== RUN   TestPersistedStateCheckpoints/fresh\n=== RUN   TestPersistedStateCheckpoints/resumed\n=== RUN   TestPersistedStateCheckpoints/approve\n=== RUN   TestPersistedStateCheckpoints/changes\n--- PASS: TestPersistedStateCheckpoints (0.00s)\n    --- PASS: TestPersistedStateCheckpoints/fresh (0.00s)\n    --- PASS: TestPersistedStateCheckpoints/resumed (0.00s)\n    --- PASS: TestPersistedStateCheckpoints/approve (0.00s)\n    --- PASS: TestPersistedStateCheckpoints/changes (0.00s)\n=== RUN   TestPersistedReviewRecords\n=== RUN   TestPersistedReviewRecords/approve\n=== RUN   TestPersistedReviewRecords/changes\n--- PASS: TestPersistedReviewRecords (0.00s)\n    --- PASS: TestPersistedReviewRecords/changes (1.27s)\n    --- PASS: TestPersistedReviewRecords/approve (1.37s)\nPASS\nok  \tgithub.com/KogenAI/kogen-build/build\t1.658s\n",
+    "after": {
+      "build/testdata/state/fresh/checkpoint.json": "3ef0b12d57a0211c2ffe3c17c77d0145aa32b3f00de10d1d79335adf74960ded",
+      "build/testdata/state/attempts/checkpoint.json": "412f95a69f4383adb2a550358aeb2deeb4be22f4af558226dfa1ec0fb9da99ad",
+      "build/testdata/state/review-approve/checkpoint.json": "8f4c0068a2e650ccc40bcdde31c628d5d1df8c9cdb43252f76c2692f95080b68",
+      "build/testdata/state/review-approve/review-1.json": "fab76326e9b7b9fef1425fcd7d05f80a216e088af052f0f5cfbec4c9bd90132e",
+      "build/testdata/state/review-changes/checkpoint.json": "5ed24de78160ac319ad690f72029bef943eb033f5f2c3ab42953a028117daefe",
+      "build/testdata/state/review-changes/review-1.json": "aa8bdc7ebcb371665560abbc462903ae2e1721975ced5842e99a38038fe0511c",
+      "build/testdata/state/resumed/checkpoint.json": "2d806fc55315178daf756d13dcb7ab68f1d3d420332a90a3c80a5b7e72e55ed0"
+    }
+  },
+  "format": {
+    "command": "go test ./build -count=1 -v -skip <existing-tests.txt>",
+    "exit": 1,
+    "output": "=== RUN   TestPersistedStateCheckpoints\n=== RUN   TestPersistedStateCheckpoints/fresh\n    state_golden_test.go:91: testdata/state/fresh/checkpoint.json differs\n    state_golden_test.go:95: testdata/state/attempts/checkpoint.json differs\n=== RUN   TestPersistedStateCheckpoints/resumed\n    state_golden_test.go:99: testdata/state/resumed/checkpoint.json: the attempts checkpoint does not decode: malformed required checkpoint fields\n=== RUN   TestPersistedStateCheckpoints/approve\n    state_golden_test.go:124: testdata/state/review-approve/checkpoint.json differs\n=== RUN   TestPersistedStateCheckpoints/changes\n    state_golden_test.go:124: testdata/state/review-changes/checkpoint.json differs\n--- FAIL: TestPersistedStateCheckpoints (0.01s)\n    --- FAIL: TestPersistedStateCheckpoints/fresh (0.00s)\n    --- FAIL: TestPersistedStateCheckpoints/resumed (0.00s)\n    --- FAIL: TestPersistedStateCheckpoints/approve (0.00s)\n    --- FAIL: TestPersistedStateCheckpoints/changes (0.00s)\n=== RUN   TestPersistedReviewRecords\n=== RUN   TestPersistedReviewRecords/approve\n=== RUN   TestPersistedReviewRecords/changes\n--- PASS: TestPersistedReviewRecords (0.00s)\n    --- PASS: TestPersistedReviewRecords/changes (1.19s)\n    --- PASS: TestPersistedReviewRecords/approve (1.27s)\nFAIL\nFAIL\tgithub.com/KogenAI/kogen-build/build\t1.831s\nFAIL\n",
+    "goldens": [
+      "build/testdata/state/fresh/checkpoint.json",
+      "build/testdata/state/attempts/checkpoint.json",
+      "build/testdata/state/review-approve/checkpoint.json",
+      "build/testdata/state/review-changes/checkpoint.json",
+      "build/testdata/state/resumed/checkpoint.json"
+    ]
+  },
+  "review": {
+    "command": "go test ./build -count=1 -v -skip <existing-tests.txt>",
+    "exit": 1,
+    "output": "=== RUN   TestPersistedStateCheckpoints\n=== RUN   TestPersistedStateCheckpoints/fresh\n=== RUN   TestPersistedStateCheckpoints/resumed\n=== RUN   TestPersistedStateCheckpoints/approve\n    state_golden_test.go:124: testdata/state/review-approve/checkpoint.json differs\n=== RUN   TestPersistedStateCheckpoints/changes\n    state_golden_test.go:124: testdata/state/review-changes/checkpoint.json differs\n--- FAIL: TestPersistedStateCheckpoints (0.00s)\n    --- PASS: TestPersistedStateCheckpoints/fresh (0.00s)\n    --- PASS: TestPersistedStateCheckpoints/resumed (0.00s)\n    --- FAIL: TestPersistedStateCheckpoints/approve (0.00s)\n    --- FAIL: TestPersistedStateCheckpoints/changes (0.00s)\n=== RUN   TestPersistedReviewRecords\n=== RUN   TestPersistedReviewRecords/approve\n=== RUN   TestPersistedReviewRecords/changes\n    state_golden_test.go:143: testdata/state/review-changes/review-1.json differs\n    state_golden_test.go:143: testdata/state/review-approve/review-1.json differs\n--- FAIL: TestPersistedReviewRecords (0.00s)\n    --- FAIL: TestPersistedReviewRecords/changes (1.65s)\n    --- FAIL: TestPersistedReviewRecords/approve (1.73s)\nFAIL\nFAIL\tgithub.com/KogenAI/kogen-build/build\t2.267s\nFAIL\n",
+    "goldens": [
+      "build/testdata/state/review-approve/checkpoint.json",
+      "build/testdata/state/review-approve/review-1.json",
+      "build/testdata/state/review-changes/checkpoint.json",
+      "build/testdata/state/review-changes/review-1.json"
+    ]
+  }
+}

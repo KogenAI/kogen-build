@@ -1,0 +1,73 @@
+# Pin persisted Build state bytes with golden tests
+
+Slug: k-state-goldens
+Model: not applicable — a test-only change: new tests compare fixed golden files with the bytes the existing persistence code writes; no stored state or interacting rules are added
+Acceptance:
+- .kogen/intents/k-state-goldens/acceptance.feature
+- features/steps/k_state_goldens_steps.js
+- features/steps/k_state_goldens/harness.js
+- features/steps/k_state_goldens/existing-tests.txt
+- features/steps/k_state_goldens/good.json
+- features/steps/k_state_goldens/bad.json
+
+K-STATE-GOLDENS for kogen-build (filed by kogen-delivery on main's order, 3 Nov 2026; owner: finish the kogen-review split). kogen-build's review code will move to its own package and later its own repository, and nothing pins the exact bytes a Build writes to disk, so the move could silently change the persisted format that existing runs and resumes read. This change adds golden tests, and only tests (change_type: test, behaviour-preserving), that pin the exact bytes of persisted Build state (state, attempts, review records, checkpoints) for representative synthetic runs: a fresh run, a run with several attempts, runs with review records (approve and changes) and a run resumed from a checkpoint. The goldens are regenerated only with the package's existing test flag `-update` (`go test ./... -update`, declared in `build/golden_update_test.go`).
+
+Boundaries: no production code or format change (no non-test Go file, `go.mod` or `go.sum` changes), no new CLI command, flag, setting or environment variable, no model runs, no network, deterministic fixtures, and the new tests run in the repository's ordinary fast gate (`go build ./... && go vet ./... && go test -race -count=1 ./...`). The existing goldens, their tests and README.md stay as they are. Nothing is replaced or removed.
+
+## The goldens
+
+Seven new files, exactly these paths (the test names each by its path relative to the `build` package, `testdata/state/...`):
+
+| Golden | What it holds |
+| --- | --- |
+| `build/testdata/state/fresh/checkpoint.json` | the checkpoint of a fresh run at its first builder request |
+| `build/testdata/state/attempts/checkpoint.json` | the checkpoint of a run after several builder rounds and verification passes |
+| `build/testdata/state/review-approve/checkpoint.json` | the checkpoint of a run whose independent review approved |
+| `build/testdata/state/review-approve/review-1.json` | the review record the real reviewer writes for an approval |
+| `build/testdata/state/review-changes/checkpoint.json` | the checkpoint of a run whose independent review asked for changes |
+| `build/testdata/state/review-changes/review-1.json` | the review record the real reviewer writes for a changes verdict |
+| `build/testdata/state/resumed/checkpoint.json` | the checkpoint of the attempts run resumed as a new run |
+
+"Attempts" are the builder rounds and verification passes of a run (`round`, `pass`, `last_pass`, `usage`, `attempt_usage`, `unknown_requests` in the state) and the reviewer's verdict attempts (`attempts` of a review record and of the reviewer session saved in a checkpoint).
+
+## Rules
+
+1. **Checkpoint goldens are what `Save` writes.** Each `checkpoint.json` golden is exactly the bytes `(*Run).PublishCheckpoint` writes for a `Checkpoint` envelope with `Version: 4` and `State` = `encodeJSON(&state)` (what `(*Attempt).Save` publishes: one line of JSON without HTML escaping, then a newline), written into a temporary run folder and read back. The `State` is a synthetic value built in the test with fixed values only: a fixed checkout root that is not a real folder (for example `/kogen-golden/checkout`), fixed 8-hex run ids with `Run.Dir`/`Run.LogPath` under that root, fixed 40-hex start, tree and commit ids, a fixed `T0` and `ModelActiveMS`, fixed identity, index and approval strings in the envelope, an Intent text and a `project.Config`. Nothing in a golden comes from `time.Now`, `crypto/rand`, a temporary path or the environment. No fixture has a stage plan or a blocker, so every checkpoint golden's top-level keys are exactly `version, identity, candidate, index, approval, state, recovery_raw` (`recovery_raw` null) and its state starts with the 31 required keys of `requiredStateKeys`, in that order.
+2. **The fixtures.** (acceptance checks these values)
+   - fresh: `phase` "building", `round` 1, `pass` 0, `review` 0, `last_pass`, `last_review`, `parent` and `root_run` null, `continuation.stage` "builder" (with the builder's opening input).
+   - attempts: `phase` "building", `round` 3, `pass` 2, `last_pass` a valid red pass (`n` 2, `green` false, e.g. a failed acceptance scenario), `unknown_requests` 1 with `usage.reasoning` null (an unknown count), `parent` and `root_run` null, `continuation.stage` "builder".
+   - review-approve and review-changes: `review` 1, `last_pass` a green pass, `last_review` the `ReviewRecord` `{n: 1, verdict, findings, tree}` of the verdict ("approve"; "changes" with a first finding of severity "blocking"), `continuation.stage` "review_verify" with `pass` (and `base`) that green pass and `review` the bytes of `reviewSession.encode()` (the reviewer's own session encoder, not a hand-written map) of a session whose `verdict` is that verdict, whose `tree` is the pass's tree and whose `attempts` hold exactly one `reviewAttempt` of that verdict on that tree. The last pass, the last review, the session and its attempt name the same tree.
+   - resumed: the attempts checkpoint bytes produced in the same test run (not the golden file, so a drifted or rewritten attempts golden does not change it) are decoded with `decodeCheckpoint(raw, nil)`, which must accept them; then the decoded state gets what a resume gives it (`resumeLocked`): a new fixed run (different id), `Parent` and `RootRun` the attempts run's id (it is a first run, so its root is itself), a new fixed `T0` and `AttemptUsage` `zeroTokens()`; it is published as in rule 1 with the decoded envelope unchanged. Its envelope therefore equals the attempts golden's, and its state differs only in `run`, `parent`, `root_run`, `t0` and `attempt_usage`.
+3. **Review record goldens come from the real reviewer.** Each `review-1.json` golden is exactly the `review-1.json` file that the real independent reviewer (`Deps.Reviewer` nil, as `useRealReviewer` sets it) writes in a reviewed Build of the existing scripted-provider fixture of `helper_test.go`/`review_test.go` (`newEnv`, `fakeProvider`, `landScript`, `submit`, `finding`): for approve, a submitted "approve" verdict and a Build that lands (exit 0); for changes, a "changes" verdict with one "blocking" finding and a Build that stops with `candidate/review_blocked` (exit 1). The file has the keys `attempts, effort, findings, model, tree, usage, verdict` and one attempt naming the same 40-hex tree as `tree`. The scripted provider is the package's in-process `httptest` server: no model runs and no connection leaves the test process. Observed in a scratch copy: with `newEnv`'s acceptance command (a temporary path) in `.kogen/project.yaml`, the candidate tree id, and so `review-1.json`, changes on every run; with that command set to `sh "$KOGEN_GOLDEN_ACCEPT"` (through `newEnv`'s config mutator) and `env.extraEnv` setting `KOGEN_GOLDEN_ACCEPT` to the fixture's `accept.sh`, four runs wrote byte-identical records (approve 426 bytes, changes 434 bytes). The test may use that or any other way that keeps temporary paths out of the recorded bytes; it does not mask or rewrite any byte of the record.
+4. **Comparison without `-update`.** Each golden test reads its golden and compares the produced bytes with it exactly (`bytes.Equal`, no JSON decoding or normalization); a whitespace-only difference is a failure. On a difference or a missing golden it fails with a message containing the golden's path relative to the package (`testdata/state/fresh/checkpoint.json`, ...); any other failure while producing a golden's bytes (for example the attempts checkpoint not decoding for the resumed golden) also names that golden's path. It writes no file.
+5. **`-update` rewrites from the current code.** With the existing `-update` flag (the `update` variable of `build/golden_update_test.go`; no new flag, environment variable or other switch) each golden test writes the bytes it produced into its golden with the existing `writeGoldenFile` (creating the folder when missing) and does not fail on drift; a follow-up run without the flag passes. Because every golden byte is fixed, the rewrite is location- and time-independent: in any checkout it reproduces the committed bytes exactly.
+6. **Ordinary tests.** The new tests are new top-level `Test...` functions in new `_test.go` file(s) of package `build` (for example `build/state_golden_test.go`), with names that are not in `features/steps/k_state_goldens/existing-tests.txt` (the 291 top-level tests and fuzz targets of c088534, listed by `go test -list '.*' ./build`); they are not subtests of an existing test. They need no build tag, no flag besides the optional `-update`, no `-short` skip and no environment variable, and run in a few seconds (the scratch prototype took about 2 s, the two reviewed Builds about 1.3 s each). Their comments name the goldens, say what each holds, that they pin the persisted format and must not change without deliberate intent, and that `go test ./... -update` rewrites them.
+7. **Unchanged.** No production Go file, `go.mod`, `go.sum`, existing golden or existing test changes.
+
+## Decisions
+- The goldens pin the exact bytes, byte for byte, of persisted state, attempts, review records and checkpoints for a fresh run, a run with several attempts, review approve and changes runs and a resumed run (source: request)
+- Goldens are regenerated only with the package's existing `-update` flag (source: request)
+- Synthetic fixtures only, no model runs, no network, deterministic with fixed clocks and IDs (source: request)
+- No production code or format change, no new CLI commands or flags, the tests run in the ordinary fast gate (source: request)
+
+## Source comparison
+- addressed: "Golden tests that pin the exact bytes of persisted Build state (state, attempts, review records, checkpoints)" → rules 1-4; scenario 1 (content and encoding of the seven goldens) and scenario 2 (a whitespace-only drift fails, so the comparison is byte-exact).
+- addressed: "representative synthetic runs: a fresh run, a run with several attempts, a run with review records (approve and changes), and a resumed run from a checkpoint" → the golden table and rule 2; scenario 1's value table and its review-tree and resume checks.
+- addressed: "a move could silently change the persisted format that existing runs and resumes read" → rule 1 (the `State`/`Checkpoint` encoding Save uses), rule 2 (the reviewer session through `reviewSession.encode`, the resumed checkpoint through `decodeCheckpoint`) and rule 3 (the real reviewer's record writer); scenario 3 changes a `State` JSON tag in `build/state.go` and scenario 4 changes the review record's `effort` key and the reviewer session's `attempts` tag in `build/review.go`, and each run must fail naming the goldens that change.
+- addressed: "Goldens are regenerated only with the package's existing -update flag" → rule 5; scenario 2 (no write without the flag, exact restoration with it).
+- addressed: "Synthetic fixtures only; no model runs; no network; deterministic (fixed clocks and IDs)" → rules 1-3; the scripted in-process provider is the existing test fixture, not a model or a network service; scenario 2's `-update` run in a copy at another path reproduces the committed bytes.
+- addressed: "No production code or format change; no new CLI commands or flags; runs in the repo's ordinary fast gate" → rules 5-7; scenario 5 (no production Go file, `go.mod` or `go.sum` change) and scenarios 2-4 run the new tests with plain `go test ./build -count=1 -v`.
+- interpreted: "attempts" means the builder rounds and verification passes of a run and the reviewer's verdict attempts (see "The goldens").
+- omitted: `result.json`, `log.jsonl` and the local facts files are run records, not state a resume reads; the run log carries wall-clock times. The request does not name them.
+- not in this repository: moving the review code to its own package or repository is later work; this change only pins the bytes before it.
+
+## Tests
+- Each golden holds the exact persisted bytes of its representative run in the production encoding: new golden tests in package `build` (integration) and scenario 1 (scenario)
+- The comparison is byte-exact, a failure names the golden, nothing is written without `-update`, and `-update` restores the exact committed bytes: scenario 2 (scenario)
+- A change to the persisted `State` format fails every checkpoint golden: scenario 3 (scenario)
+- A change to the review code's persisted format fails the review record and review checkpoint goldens: scenario 4 (scenario)
+- No production code changes: scenario 5 (scenario)
+- Existing behaviour and goldens are unchanged: the existing tests pass unchanged (existing)
+
+## Feasibility
+- evidence: {"id":"state-golden-judges","kind":"observer","inputs":["features/steps/k_state_goldens/good.json","features/steps/k_state_goldens/bad.json"],"observers":["features/steps/k_state_goldens/harness.js"],"checks":[{"name":"good","command":"\"$KOGEN_NODE\" features/steps/k_state_goldens/harness.js judge features/steps/k_state_goldens/good.json","exit":0,"output":"ok: 7 state goldens, 4 runs\n"},{"name":"bad","command":"\"$KOGEN_NODE\" features/steps/k_state_goldens/harness.js judge features/steps/k_state_goldens/bad.json","exit":1,"output":"FAILED: drifted (go test ./build -count=1 -v -skip <existing-tests.txt>): exit 0, want nonzero; no top-level test reported FAIL; the output does not name testdata/state/fresh/checkpoint.json; the output does not name testdata/state/attempts/checkpoint.json; the output does not name testdata/state/review-approve/checkpoint.json; the output does not name testdata/state/review-approve/review-1.json; the output does not name testdata/state/review-changes/checkpoint.json; the output does not name testdata/state/review-changes/review-1.json; the output does not name testdata/state/resumed/checkpoint.json; review (go test ./build -count=1 -v -skip <existing-tests.txt>): exit 0, want nonzero; no top-level test reported FAIL; the output does not name testdata/state/review-approve/checkpoint.json; the output does not name testdata/state/review-approve/review-1.json; the output does not name testdata/state/review-changes/checkpoint.json; the output does not name testdata/state/review-changes/review-1.json\n"}]}
