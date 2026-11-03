@@ -55,7 +55,8 @@ type Attempt struct {
 	// ext is the external build executor of a fresh Build (nil: the native builder).
 	ext *externalBuild
 	// watch is the no-progress evidence of the native builder's rounds (noprogress.go).
-	watch progressWatch
+	watch   progressWatch
+	unmoved unmovedWatch
 	// env is the previous builder pass's environment failures (envfailure.go).
 	env envMemory
 	// invalid is the review that just ended without a valid verdict (review_retry.go).

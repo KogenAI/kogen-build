@@ -296,12 +296,13 @@ func (b *Attempt) stageGate(ctx context.Context) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
+	editedNotice := b.unmovedNotice(stage.ID, pass)
 	if !pass.Green {
 		b.Repairs++
 		if err := b.Track(); err != nil {
 			return "", false, err
 		}
-		return withNotice(notice, "Stage "+stage.ID+" failed; remain at this stage.\n"+b.PassFeedback(pass, "finish")), false, nil
+		return withNotice(editedNotice, withNotice(notice, "Stage "+stage.ID+" failed; remain at this stage.\n"+b.PassFeedback(pass, "finish"))), false, nil
 	}
 	p.Completed = append(p.Completed, stage.ID)
 	p.Active, p.Phase = nil, phaseFinal

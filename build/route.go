@@ -36,9 +36,10 @@ func (s steps) Verify(ctx context.Context, builderPass bool) (verify.Pass, bool,
 	if err != nil {
 		return verify.Pass{}, false, "", err
 	}
+	editedNotice := b.unmovedNotice("", pass)
 	if !pass.Green {
 		b.Repairs++
-		return pass, false, withNotice(notice, b.PassFeedback(pass, "finish")), nil
+		return pass, false, withNotice(editedNotice, withNotice(notice, b.PassFeedback(pass, "finish"))), nil
 	}
 	return pass, true, "", nil
 }
