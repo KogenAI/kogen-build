@@ -72,7 +72,6 @@ Boundaries:
 - Acceptance, "all configured checks pass": the configured checks `format`, `compile`, `vet` and `go-test`.
 - Landing attempt 3 Nov 07:41Z (Build 894bd9fb; the second Build ran the baseline again and logged no `baseline_reuse`): addressed by rule 11 and scenario 7. The scenario observes exactly one `baseline_reuse` that names the first Build's log and has a 64-hex identity, and no `closed` command before the change. The earlier candidate diff is not used.
 - Earlier attempt (Build 7d18c4e0 kept its ledger on a type that moved, so `b.CheckLedger` did not compile after the rebase): addressed by rule 1. The ledger is a field of `State` in `build/core_state.go`, the type that now holds the Build's durable state. It is reached as `b.CheckResults` through the embedded `State` of `Attempt` in `build/build.go`.
-- Depends on K-CHECKTIME landing: a sequencing note for the coordinator. This contract does not depend on it.
 - Host safety (shared host; stop only pids you started; no synthetic CPU load; temp dirs only): the harness and the new tests use temporary directories, the in-process scripted provider and short shell checks. The resume fixture interrupts only its own session (`Interrupt("SIGINT")` on the Build it started).
 - Repository split (built in kogen-build; other repositories get follow-up items): this contract changes only kogen-build. `verify.Verify` is used unchanged through a copy of the configuration.
 

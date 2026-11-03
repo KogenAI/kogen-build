@@ -19,7 +19,6 @@ The operator diagnostic must contain `provider ignored forced submit_review`, th
 - Addressed: request Need and answer 1 by the operator diagnostic and unchanged bounded retry above, exercised by acceptance.feature through a real Build with a local scripted provider.
 - Addressed: request Constraints by no new commands/flags, timeouts or paid model tests.
 - Addressed: reported 3ca3098a and 89beb048 (kogen-verification, K-GOLDEN-UPDATE-VERIFICATION, 573d023, terra/medium), and c139c0da (kogen-coordinator, K-GOLDEN-UPDATE-COORDINATOR, 3 Nov 01:10Z), whose forced no-tool turns follow source reads: the acceptance fixture supplies prose then ignored forced turns in both reviews, observes two faults and exactly one automatic retry. Existing source/reset regressions must remain passing.
-- Omitted from executable fixture: inaccessible historical Mac Studio paths `/Users/kogen-runner/work.noindex/src/k-golden-update-verification/.kogen/local/runs/3ca3098a` and `89beb048`, and laptop `~lanes/work.noindex/src/k-golden-update-coordinator/.kogen/local/runs/c139c0da`, are evidence locations, not runtime dependencies. The 1235 parts, 7.4 MB and roughly 170k-token request are historical scale, not a new size requirement. K-REVIEW-VERDICT-STRAND (33bbe2e) remains preserved, not superseded. No live reproduction is required.
 
 ## Tests
 - Forced submit_review ignored in both reviews: synthetic real-Build regression asserting operator diagnostic, route/model, affected review and resumable candidate, unchanged HEAD and bounded requests (regression)

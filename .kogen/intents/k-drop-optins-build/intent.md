@@ -7,7 +7,7 @@ Acceptance:
 - features/steps/k_drop_optins_build_steps.js
 - features/steps/k_drop_optins_build_test.go.txt
 
-This is the consumer step of K-DROP-OPTINS (change_type: removal), filed by kogen-delivery on 3 Nov 2026. The parent request is build-notes/delivery/k-drop-optins/INTENT-REQUEST.md, under the simpler-is-better rule: every option becomes a constant at today's value, or is deleted. Defaults stay byte-identical unless a finding names a different winner.
+This is the consumer step of K-DROP-OPTINS (change_type: removal), under the simpler-is-better rule: every option becomes a constant at today's value, or is deleted. Defaults stay byte-identical unless a finding names a different winner.
 
 K-DROP-OPTINS is kogen-coordinator candidate 1645f34ca82e432ff31f2694947a51e996d8f700, "Remove the opt-in configuration options". It removes the opt-in options from `project.Config`. kogen-build still reads them, so its landing consumer check fails to compile. The parent's order rule applies: the consumer removes a reader while the option still exists, and only then does the producer drop it.
 

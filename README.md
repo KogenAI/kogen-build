@@ -6,6 +6,13 @@ It is a component of [Kogen](https://github.com/KogenAI/kogen), which pins an ex
 
 ## Standalone developer Build command
 
+Clone the repository and enter it:
+
+```sh
+git clone https://github.com/KogenAI/kogen-build.git
+cd kogen-build
+```
+
 Build the entry point from this module, without an assembled `kogen` executable:
 
 ```sh
@@ -35,11 +42,11 @@ object, also on refusal or stop:
 
 `build` owns the builder's model-facing policy: its instructions (`build/prompts/builder.md`, `BuilderInstructions`) and its terminal tools (`finish`, `report_blocker`, `BuilderToolDefinitions`), recorded in `build/testdata/prompts_golden.json` and `defs_golden.json`.
 
-The independent review and repair itself (the native and the external-executor reviewer: review, resume, the review loop, verdict evaluation and the review tool conversation) is the `review` package of [kogen-review](https://github.com/KogenAI/kogen-review), with a narrow contract: `build` adapts its state to the review's input (the saved candidate, the exact approved Intent, the verification evidence, the permitted tools and the review checkpoint) and serves the review's `Env`; the review makes its own material from that input and returns its verdict, findings and repairs (`build/host.go`). The outer routing (verify → review → repair → commit, and the resume across those steps) is the `route` package of [kogen-coordinator](https://github.com/KogenAI/kogen-coordinator), which drives the Build's phases through `route.Steps` (`build/route.go`); `build` keeps its implementation loop and feedback policy. The persisted Build state and the run record are `build`'s own; what `build` and the review share is the `core` package of [kogen-executor](https://github.com/KogenAI/kogen-executor) (token totals, the review record, an executor's state) and kogen-review's review material, which `build` keeps in the review's working window; `build` re-exports them under its own names. An external builder's structured submission (`SubmissionSchema`, `build/policy.go`) is the Build's own and reaches its executor as the task's schema.
+The independent review and repair itself (the native and the external-executor reviewer: review, resume, the review loop, verdict evaluation and the review tool conversation) is the `review` package of kogen-review, with a narrow contract: `build` adapts its state to the review's input (the saved candidate, the exact approved Intent, the verification evidence, the permitted tools and the review checkpoint) and serves the review's `Env`; the review makes its own material from that input and returns its verdict, findings and repairs (`build/host.go`). The outer routing (verify → review → repair → commit, and the resume across those steps) is the `route` package of kogen-coordinator, which drives the Build's phases through `route.Steps` (`build/route.go`); `build` keeps its implementation loop and feedback policy. The persisted Build state and the run record are `build`'s own; what `build` and the review share is the `core` package of kogen-executor (token totals, the review record, an executor's state) and kogen-review's review material, which `build` keeps in the review's working window; `build` re-exports them under its own names. An external builder's structured submission (`SubmissionSchema`, `build/policy.go`) is the Build's own and reaches its executor as the task's schema.
 
 ## Testing
 
-Some tests run the real Cucumber. Install them once:
+Use Go 1.27.2 (as specified in `go.mod`) and Node.js 24 with npm. From a public clone, install the real Cucumber tools used by some tests:
 
 ```sh
 npm ci --prefix testdata/tools/cucumber
@@ -51,7 +58,9 @@ Then run:
 go build ./... && go vet ./... && go test -race -count=1 ./...
 ```
 
-The module depends on private KogenAI modules: set `GOPRIVATE=github.com/KogenAI/*`.
+For inquiries, contact contact@kogen.dev.
+
+The [history audit](docs/public-history-audit.md) lists historical findings for an owner to review; it does not change Git history.
 
 ### Golden files
 

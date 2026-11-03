@@ -14,7 +14,7 @@ Add the developer entry point cmd/kogen-build, compiled using this module with `
 - Report results on success and phase refusal/stops alike. Preserve the ordinary phase exit and effects. No evaluator-only bypass of approval or independent review, synthetic successful mode, extra timeout or provider dependency is allowed. Document usage and result schema in README.md. (source: request)
 
 ## Source comparison
-- addressed: K-BUILD-CMD-ENTRY (kogen-delivery, main ruling, 3 Nov 2026, F14) requests independent execution and scoring in repository kogen-build; Decisions define cmd/kogen-build and its typed candidate/check result, Tests require successful and stopped real phase wiring.
+- addressed: K-BUILD-CMD-ENTRY (3 Nov 2026) requests independent execution and scoring in repository kogen-build; Decisions define cmd/kogen-build and its typed candidate/check result, Tests require successful and stopped real phase wiring.
 - addressed: given checkout and this repository's own go.mod; command arguments and build command above retain those boundaries. Existing build.Build/build.Resume remain the authority for phase behavior.
 - addressed: no change to Kogen CLI, no timeout raised, no new dependency on kogen; outcome prose and Decisions preserve all three constraints. Existing kogen-loop module is not removed by interpreting the dependency constraint retroactively.
 - omitted: no requested behavior. The filing metadata is provenance, not a new CLI surface. Recovery is unchanged and does not gain another command.

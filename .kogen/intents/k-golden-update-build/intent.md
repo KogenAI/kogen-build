@@ -53,7 +53,6 @@ After this change:
 - addressed: the 3 Nov inventory of seven goldens → all seven in the table and in scenario 1.
 - added to the inventory: `build/testdata/named-feedback-compat.json`, compared byte for byte by `TestNamedFeedbackCompatibility` ("exactly what they were before named-test feedback existed"), is a golden of the same kind that the 3 Nov list omits; "all golden tests" covers it.
 - superseded: the test-only `KOGEN_REVOD_GATE_GOLDEN=write` switch of `TestKRevodGatePartsUnchanged` → removed in favour of the one shared flag (rule 2); scenario 1's first run sets it and expects no write.
-- not in this repository: Delivery's conflict resolution that will regenerate goldens with this flag, the shaping goldens (`shape/testdata/force_ordinary_golden.json`, `TestShapeForceWireCompatibility`) and the 2-3 Nov landing evidence (K-SHAPE-DECIDE-NON-UX, K-MODELS-FILE, kogen-shaping 13ff132) are motivation and other components' work; nothing here changes for them.
 
 ## Tests
 - Without `-update` every golden test compares as today, fails on drift and writes nothing, and `KOGEN_REVOD_GATE_GOLDEN=write` no longer writes: scenario 1, first run over goldens drifted in a scratch copy (scenario)

@@ -11,7 +11,7 @@ Acceptance:
 - features/steps/k_review_seam/good.json
 - features/steps/k_review_seam/bad.json
 
-K-REVIEW-SEAM for kogen-build (filed by kogen-delivery on main's order, 3 Nov 2026; owner: finish the kogen-review split; change_type: refactor, behaviour-preserving; depends on K-STATE-GOLDENS, landed in kogen-build 5495132). Today `build` and the independent review share state through one package, so the review cannot move to its own repository (planned: a private KogenAI/kogen-review, moved mechanically after this lands; `build/core` is planned to move into kogen-executor as the shared execution and session contracts). This change splits the module's `build` package into three packages of the same module:
+K-REVIEW-SEAM for kogen-build (change_type: refactor, behaviour-preserving; depends on K-STATE-GOLDENS, landed in kogen-build 5495132). Today `build` and the independent review share state through one package, so the review cannot move to its own repository (planned: a separate review repository; `build/core` is planned to move into kogen-executor as the shared execution and session contracts). This change splits the module's `build` package into three packages of the same module:
 
 - `github.com/KogenAI/kogen-build/build/core` (package `core`): only what review and build both need — the Attempt/state types and the services they share. It imports no package of this module outside `build/core`.
 - `github.com/KogenAI/kogen-build/build/review` (package `review`): the review implementation itself — Review, Resume, the review loop, verdict evaluation and the review tool conversation, of both reviewers (native and external executor). It imports `build/core` and no other package of this module.
