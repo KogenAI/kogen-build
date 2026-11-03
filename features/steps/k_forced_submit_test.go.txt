@@ -1,0 +1,31 @@
+package build
+
+import (
+ "os"
+ "strings"
+ "testing"
+)
+
+func TestKForcedSubmitAcceptance(t *testing.T) {
+ e := newEnv(t)
+ f := e.prov
+ f.then(landScript(f)...)
+ f.then(prose("source inspected"), prose("no verdict"), prose("source inspected"), prose("no verdict"))
+ start := e.head()
+ a := e.reviewed()
+ wantStop(t, a, "candidate/review_invalid")
+ id := e.onlyRun()
+ eq(t, "unchanged branch", e.head(), start)
+ eq(t, "exact review requests", len(f.reviewRequests()), 4)
+ eq(t, "forced requests", len(eventsNamed(e.events(id), "review_tool_choice")), 2)
+ eq(t, "provider faults", len(eventsNamed(e.events(id), "provider_fault")), 2)
+ eq(t, "automatic retries", len(eventsNamed(e.events(id), "review_retry")), 1)
+ text := a.shown()
+ switch os.Getenv("KFORCED_CONTROL") {
+ case "good": text = "provider ignored forced submit_review chatgpt gpt-6.1-terra review 2 candidate preserved kogen intent resume " + id
+ case "bad": text = "the reviewer did not return a valid verdict"
+ }
+ for _, s := range []string{"provider ignored forced submit_review", "chatgpt", "gpt-6.1-terra", "review 2", "candidate preserved", "kogen intent resume", id} {
+  if !strings.Contains(text, s) { t.Errorf("operator diagnostic must contain %q; actual output: %s", s, text) }
+ }
+}

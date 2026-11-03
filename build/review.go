@@ -552,7 +552,12 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 			r.allowance("unread_progress_exempt")
 		case problems != nil && len(calls) == 0:
 			if r.sess.NoTool >= 1 {
-				return reviewVerdict{}, r.invalidStop(problems, "no_tool_reminder_exhausted")
+				err := r.invalidStop(problems, "no_tool_reminder_exhausted")
+				if force != "" {
+					b.invalid.ForcedRoute = provider.Name(providerRole(r.sess.Role))
+					b.invalid.ForcedModel = r.sess.Role.Model
+				}
+				return reviewVerdict{}, err
 			}
 			input = append(input, map[string]any{"role": "user",
 				"content": "Not a valid verdict: " + strings.Join(problems, "; ") + ". Call submit_review."})

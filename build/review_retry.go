@@ -33,6 +33,8 @@ import (
 // reason, the consumed allowances and what the review did to the checkout.
 type invalidReview struct {
 	Review          int
+	ForcedRoute     string
+	ForcedModel     string
 	Reason          string
 	Problems        []string
 	RejectedVerdict int
@@ -119,6 +121,7 @@ func (b *Attempt) reviewWithRetry(ctx context.Context, first func() (Approved, e
 			(b.ReviewRetry == nil || b.ReviewRetry.Tree != inv.Base.Tree || !b.ReviewRetry.Automatic)
 		if why := b.reviewOnlyBlocked(inv, automatic); why != "" {
 			b.Run.Event(map[string]any{"event": "review_only", "review": inv.Review, "eligible": false, "why": why})
+			b.forcedReviewDiagnostic(inv, false)
 			return Approved{}, err
 		}
 		pass := *inv.Base
@@ -140,6 +143,7 @@ func (b *Attempt) reviewWithRetry(ctx context.Context, first func() (Approved, e
 			"rejected_verdicts": inv.RejectedVerdict, "no_tool_reminders": inv.NoToolReminder,
 		})
 		if !automatic {
+			b.forcedReviewDiagnostic(inv, true)
 			return Approved{}, err
 		}
 		b.Run.Event(map[string]any{
@@ -148,6 +152,18 @@ func (b *Attempt) reviewWithRetry(ctx context.Context, first func() (Approved, e
 		b.s.Progress(fmt.Sprintf("kogen: review %d ended without a valid verdict; starting one fresh review of the unchanged candidate", inv.Review))
 		run = func() (Approved, error) { return b.deps.reviewer().Review(ctx, b, pass) }
 	}
+}
+
+// forcedReviewDiagnostic reports the terminal provider fault without changing the retry or stop.
+func (b *Attempt) forcedReviewDiagnostic(inv *invalidReview, eligible bool) {
+	if inv.ForcedRoute == "" {
+		return
+	}
+	message := fmt.Sprintf("provider ignored forced submit_review on route %s model %s in review %d", inv.ForcedRoute, inv.ForcedModel, inv.Review)
+	if eligible {
+		message += "; candidate preserved"
+	}
+	b.s.Puts(message)
 }
 
 // reviewRetryOf is the retry record of the green tree: the Build's own while it concerns that

@@ -36,7 +36,11 @@ func TestKReviewInvalidResumeRepaired(t *testing.T) {
 	f.then(landScript(f)...)
 	f.then(repairThenApprove(f), rejectedApprove(f), rejectedApprove(f))
 	start := e.head()
-	wantStop(t, e.reviewed(), "candidate/review_invalid")
+	a := e.reviewed()
+	wantStop(t, a, "candidate/review_invalid")
+	if strings.Contains(a.shown(), "provider ignored forced submit_review") {
+		t.Fatalf("invalid verdict mislabeled as provider fault: %s", a.shown())
+	}
 	id := e.onlyRun()
 
 	eq(t, "stage", e.checkpointStage(id), StageReviewOnly)
