@@ -154,6 +154,7 @@ func TestFailingCheckBuildEvidence(t *testing.T) {
 	}
 	eq(t, "collection order", before, []string{"first", "second", "third"})
 	eq(t, "baseline event", eventsNamed(evs, "baseline_checks")[0]["failing"], any([]any{"first", "second"}))
+	requireBaselineTimings(t, evs, []string{"first", "second", "third"})
 
 	// The builder saw every state, in order.
 	builder := requestText(f.requests()[0])

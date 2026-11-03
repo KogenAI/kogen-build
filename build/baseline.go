@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-verification/verify"
@@ -47,11 +48,42 @@ func stateOf(r verify.CommandResult) checkState {
 	return checkState{State: checkPassed, Status: &status, Output: r.Output}
 }
 
+// baselineRunning is the baseline check in progress: from just before its command event until
+// its result returns. It lives on the Attempt only, never in the checkpoint.
+type baselineRunning struct {
+	name, command string
+	started       time.Time
+}
+
+// stopRecord is the stop record's account of a Build that ends while a baseline check is in
+// progress (nil otherwise), taken when the stop is recorded.
+func (b *Attempt) stopRecord() map[string]any {
+	r := b.baselineRunning
+	if r == nil {
+		return nil
+	}
+	b.baselineRunning = nil
+	stopped := time.Now()
+	return map[string]any{"name": r.name, "command": r.command, "started_at": core.ISOTime(r.started),
+		"stopped_at": core.ISOTime(stopped), "wall_ms": stopped.Sub(r.started).Milliseconds()}
+}
+
+// reportBaselineStop keeps the baseline check a stop interrupted for the stop record and prints
+// its line.
+func (b *Attempt) reportBaselineStop() {
+	b.baselineStop = b.stopRecord()
+	if m := b.baselineStop; m != nil {
+		b.s.Puts(fmt.Sprintf("  stopped during the check baseline: check %s (%s) ran %d ms (started %s)", m["name"], m["command"], m["wall_ms"], m["started_at"]))
+	}
+}
+
 // recordBaseline runs every configured check once on the unchanged tree and keeps each
 // name, command, exit status and output, in order. A check that exits nonzero does not stop
 // the collection. Only an execution error (or an interrupt) does.
 func (b *Attempt) recordBaseline(ctx context.Context) error {
 	b.CheckBaseline = nil
+	began := time.Now()
+	timings := []any{}
 	for i, c := range b.Config.Checks {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -71,7 +103,10 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 			}
 		}
 		b.s.Progress("kogen: checking " + c.Name + " before the Build changes anything")
+		b.baselineRunning = &baselineRunning{name: c.Name, command: c.Run, started: time.Now()}
 		b.Run.Event(map[string]any{"event": "command", "name": c.Name, "command": c.Run, "before_change": true})
+		started := time.Now()
+		b.baselineRunning.started = started
 		r, err := verify.RunWatched(b.s, c.Name, c.Run, b.Run, func() (sys.Result, error) {
 			if c.Run == ":" {
 				return sys.Result{}, nil
@@ -81,7 +116,12 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		b.Run.Event(map[string]any{"event": "command_result", "name": c.Name, "status": r.Status, "output": Cap(r.Output)})
+		ended := time.Now()
+		b.baselineRunning = nil
+		wall := ended.Sub(started).Milliseconds()
+		b.Run.Event(map[string]any{"event": "command_result", "name": c.Name, "status": r.Status, "output": Cap(r.Output),
+			"started_at": core.ISOTime(started), "ended_at": core.ISOTime(ended), "wall_ms": wall})
+		timings = append(timings, map[string]any{"name": c.Name, "started_at": core.ISOTime(started), "ended_at": core.ISOTime(ended), "wall_ms": wall})
 		b.CheckBaseline = append(b.CheckBaseline, verify.CommandResult{Name: c.Name, Command: c.Run, Status: r.Status, Output: verify.Cap(r.Output)})
 		if c.Run == ":" && digest != "" && ctx.Err() == nil && b.Run != nil && b.Run.LogErr() == nil {
 			if after, _, err := baselineIdentity(b.Root, b.Config.Checks); err == nil && after == digest {
@@ -93,12 +133,14 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 	if len(b.CheckBaseline) == 0 {
 		return nil
 	}
+	finished := time.Now()
 	failing := b.baselineFailures()
 	names := make([]string, 0, len(failing))
 	for _, r := range failing {
 		names = append(names, r.Name)
 	}
-	b.Run.Event(map[string]any{"event": "baseline_checks", "checks": len(b.CheckBaseline), "failing": core.NonNil(names)})
+	b.Run.Event(map[string]any{"event": "baseline_checks", "checks": len(b.CheckBaseline), "failing": core.NonNil(names),
+		"started_at": core.ISOTime(began), "ended_at": core.ISOTime(finished), "wall_ms": finished.Sub(began).Milliseconds(), "timings": timings})
 	if len(failing) == 0 {
 		return nil
 	}

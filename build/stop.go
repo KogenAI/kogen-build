@@ -73,6 +73,7 @@ func (b *Attempt) stopped(e *sys.Error) (int, error) {
 		b.s.Puts(fmt.Sprintf("failed %s: %s (Build %s)", b.Slug, e.Reason, b.Run.ID))
 	}
 	b.s.Out(e.Render())
+	b.reportBaselineStop()
 	b.facts.fail(e)
 	if err := b.details(e.Reason, report, e.ProviderFailure); err != nil {
 		return 70, err
@@ -85,6 +86,7 @@ func (b *Attempt) stopped(e *sys.Error) (int, error) {
 func (b *Attempt) interrupted(signal string) error {
 	b.s.Puts(fmt.Sprintf("stopped %s: interrupted (Build %s)", b.Slug, b.Run.ID))
 	b.s.Puts(fmt.Sprintf("candidate/interrupted: Build %s stopped by %s; edits are left in place", b.Run.ID, signal))
+	b.reportBaselineStop()
 	return b.details("interrupted", true, nil)
 }
 
@@ -134,6 +136,10 @@ func (b *Attempt) details(reason string, report bool, providerFailure map[string
 	if providerFailure != nil {
 		outcome["provider_failure"] = providerFailure
 	}
+	if b.baselineStop != nil {
+		outcome["stopped_during"] = "baseline"
+		outcome["baseline_check"] = b.baselineStop
+	}
 	b.Run.Event(outcome)
 	extra := map[string]any{"edited": core.NonNil(edited), "still_failing": still}
 	if b.Blocker != nil {
@@ -141,6 +147,10 @@ func (b *Attempt) details(reason string, report bool, providerFailure map[string
 	}
 	if providerFailure != nil {
 		extra["provider_failure"] = providerFailure
+	}
+	if b.baselineStop != nil {
+		extra["stopped_during"] = "baseline"
+		extra["baseline_check"] = b.baselineStop
 	}
 	if err := b.Run.Write("result.json", b.result(reason, extra)); err != nil {
 		return err

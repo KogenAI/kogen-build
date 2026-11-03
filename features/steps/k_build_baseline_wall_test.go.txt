@@ -1,0 +1,483 @@
+// The K-BUILD-BASELINE-WALL acceptance driver: a program that runs real Builds through
+// build.Build in a temporary fixture repository and judges their run log, result.json and
+// stdout. Usage: driver wall|stop|setup|good|bad. Modes good and bad are the observer controls:
+// good feeds every judge a known-good record and must pass; bad feeds every judge a known-bad
+// record and exits nonzero only when every judge rejects its record.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/KogenAI/kogen-build/build"
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-verification/verify"
+	"kogen-loop/provider"
+	"kogen-loop/sys"
+)
+
+const kbwLayout = "2006-01-02T15:04:05.000000Z"
+
+var kbwInstant = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$`)
+
+type kbwSpan struct {
+	start, end time.Time
+	wall       int64
+}
+
+// kbwTimes reads started_at, endKey and wall_ms of m and checks their format and agreement.
+func kbwTimes(what string, m map[string]any, endKey string) (kbwSpan, error) {
+	var sp kbwSpan
+	if m == nil {
+		return sp, fmt.Errorf("%s: missing", what)
+	}
+	parse := func(key string) (time.Time, error) {
+		s, ok := m[key].(string)
+		if !ok || !kbwInstant.MatchString(s) {
+			return time.Time{}, fmt.Errorf("%s: %s = %#v, want a UTC instant like 2026-11-03T06:00:00.000000Z", what, key, m[key])
+		}
+		return time.Parse(kbwLayout, s)
+	}
+	var err error
+	if sp.start, err = parse("started_at"); err != nil {
+		return sp, err
+	}
+	if sp.end, err = parse(endKey); err != nil {
+		return sp, err
+	}
+	w, ok := m["wall_ms"].(float64)
+	if !ok || w < 0 || w != math.Trunc(w) {
+		return sp, fmt.Errorf("%s: wall_ms = %#v, want a nonnegative integer", what, m["wall_ms"])
+	}
+	sp.wall = int64(w)
+	if sp.end.Before(sp.start) {
+		return sp, fmt.Errorf("%s: %s %v is before started_at %v", what, endKey, m[endKey], m["started_at"])
+	}
+	if d := sp.end.Sub(sp.start).Milliseconds() - sp.wall; d < -2 || d > 2 {
+		return sp, fmt.Errorf("%s: wall_ms %d disagrees with %s - started_at = %d ms", what, sp.wall, endKey, sp.end.Sub(sp.start).Milliseconds())
+	}
+	return sp, nil
+}
+
+func kbwKeys(m map[string]any) []string {
+	var keys []string
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func kbwNoStop(what string, m map[string]any) error {
+	for _, k := range []string{"stopped_during", "baseline_check"} {
+		if v, ok := m[k]; ok {
+			return fmt.Errorf("%s has %s = %#v; only a Build that ends while a baseline check runs has it", what, k, v)
+		}
+	}
+	return nil
+}
+
+// kbwCheckWall judges a Build whose baseline ran slow (exit 0) then fast (exit 3) to completion.
+func kbwCheckWall(evs []map[string]any, result map[string]any, slow, fast string, minSlow int64) error {
+	var results []map[string]any
+	var names []string
+	for _, ev := range evs {
+		if ev["event"] == "command_result" && (ev["name"] == slow || ev["name"] == fast) {
+			results = append(results, ev)
+			names = append(names, fmt.Sprint(ev["name"]))
+		}
+	}
+	if !reflect.DeepEqual(names, []string{slow, fast}) {
+		return fmt.Errorf("baseline command_result events %v, want [%s %s]", names, slow, fast)
+	}
+	if results[0]["status"] != float64(0) || results[1]["status"] != float64(3) {
+		return fmt.Errorf("baseline statuses %v %v, want 0 3", results[0]["status"], results[1]["status"])
+	}
+	spans := make([]kbwSpan, 2)
+	for i, r := range results {
+		sp, err := kbwTimes("command_result "+names[i], r, "ended_at")
+		if err != nil {
+			return err
+		}
+		spans[i] = sp
+	}
+	if spans[0].wall < minSlow {
+		return fmt.Errorf("command_result %s wall_ms %d, want at least %d", slow, spans[0].wall, minSlow)
+	}
+	if spans[1].start.Before(spans[0].end) {
+		return fmt.Errorf("check %s started before check %s ended", fast, slow)
+	}
+	var bcs []map[string]any
+	for _, ev := range evs {
+		if ev["event"] == "baseline_checks" {
+			bcs = append(bcs, ev)
+		}
+	}
+	if len(bcs) != 1 {
+		return fmt.Errorf("%d baseline_checks events, want 1", len(bcs))
+	}
+	bc := bcs[0]
+	if bc["checks"] != float64(2) || !reflect.DeepEqual(bc["failing"], []any{fast}) {
+		return fmt.Errorf("baseline_checks checks=%v failing=%v, want 2 [%s]", bc["checks"], bc["failing"], fast)
+	}
+	whole, err := kbwTimes("baseline_checks", bc, "ended_at")
+	if err != nil {
+		return err
+	}
+	if spans[0].start.Before(whole.start) || whole.end.Before(spans[1].end) {
+		return fmt.Errorf("baseline_checks %v..%v does not span its checks %v..%v", bc["started_at"], bc["ended_at"], results[0]["started_at"], results[1]["ended_at"])
+	}
+	if whole.wall < minSlow {
+		return fmt.Errorf("baseline_checks wall_ms %d, want at least %d", whole.wall, minSlow)
+	}
+	timings, ok := bc["timings"].([]any)
+	if !ok || len(timings) != 2 {
+		return fmt.Errorf("baseline_checks timings = %#v, want one entry per check that ran", bc["timings"])
+	}
+	for i, raw := range timings {
+		got, _ := raw.(map[string]any)
+		want := map[string]any{"name": names[i], "started_at": results[i]["started_at"], "ended_at": results[i]["ended_at"], "wall_ms": results[i]["wall_ms"]}
+		if !reflect.DeepEqual(got, want) {
+			return fmt.Errorf("baseline_checks timings[%d] = %#v, want %#v", i, got, want)
+		}
+	}
+	return kbwNoStop("result.json of a Build that completed its baseline", result)
+}
+
+// kbwCheckStop judges a Build interrupted by SIGTERM while baseline check name ran command.
+func kbwCheckStop(out, id string, result, outcome map[string]any, name, command string, minWall int64) error {
+	stoppedLine := "stopped fixture: interrupted (Build " + id + ")\n"
+	candidateLine := "candidate/interrupted: Build " + id + " stopped by SIGTERM; edits are left in place\n"
+	if !strings.Contains(out, stoppedLine) || !strings.Contains(out, candidateLine) {
+		return fmt.Errorf("stdout lacks the unchanged interrupt lines:\n%s", out)
+	}
+	if result["outcome"] != "interrupted" || result["stopped_during"] != "baseline" {
+		return fmt.Errorf("result.json outcome=%v stopped_during=%v, want interrupted baseline", result["outcome"], result["stopped_during"])
+	}
+	bc, _ := result["baseline_check"].(map[string]any)
+	if got := kbwKeys(bc); !reflect.DeepEqual(got, []string{"command", "name", "started_at", "stopped_at", "wall_ms"}) {
+		return fmt.Errorf("result.json baseline_check keys %v, want [command name started_at stopped_at wall_ms]", got)
+	}
+	if bc["name"] != name || bc["command"] != command {
+		return fmt.Errorf("result.json baseline_check names %v (%v), want %s (%s)", bc["name"], bc["command"], name, command)
+	}
+	sp, err := kbwTimes("result.json baseline_check", bc, "stopped_at")
+	if err != nil {
+		return err
+	}
+	if sp.wall < minWall {
+		return fmt.Errorf("result.json baseline_check wall_ms %d, want at least %d", sp.wall, minWall)
+	}
+	if outcome["outcome"] != "interrupted" || outcome["stopped_during"] != "baseline" || !reflect.DeepEqual(outcome["baseline_check"], result["baseline_check"]) {
+		return fmt.Errorf("outcome event %#v, want interrupted, stopped_during baseline and result.json's baseline_check", outcome)
+	}
+	line := "  stopped during the check baseline: check " + name + " (" + command + ") ran " + strconv.FormatInt(sp.wall, 10) + " ms (started " + bc["started_at"].(string) + ")\n"
+	i := strings.Index(out, line)
+	if i < 0 || i < strings.Index(out, candidateLine) {
+		return fmt.Errorf("stdout lacks %q after the candidate/interrupted line:\n%s", line, out)
+	}
+	return nil
+}
+
+// kbwCheckNotDuring judges a Build interrupted by SIGTERM before its baseline started.
+func kbwCheckNotDuring(out, id string, result, outcome map[string]any) error {
+	if !strings.Contains(out, "stopped fixture: interrupted (Build "+id+")\n") {
+		return fmt.Errorf("stdout lacks the interrupt line:\n%s", out)
+	}
+	if strings.Contains(out, "stopped during the check baseline") {
+		return fmt.Errorf("stdout names the baseline of a Build interrupted during setup:\n%s", out)
+	}
+	if result["outcome"] != "interrupted" || outcome["outcome"] != "interrupted" {
+		return fmt.Errorf("outcome %v / %v, want interrupted", result["outcome"], outcome["outcome"])
+	}
+	if err := kbwNoStop("result.json", result); err != nil {
+		return err
+	}
+	return kbwNoStop("outcome event", outcome)
+}
+
+func kbwSynthetic() (wallEvs []map[string]any, wallResult map[string]any, stopOut string, stopResult, stopOutcome map[string]any, setupOut string, setupResult, setupOutcome map[string]any) {
+	t0 := time.Date(2026, 11, 3, 6, 0, 0, 0, time.UTC)
+	iso := func(ms int) string { return t0.Add(time.Duration(ms) * time.Millisecond).Format(kbwLayout) }
+	slow := map[string]any{"event": "command_result", "name": "slow", "status": float64(0), "output": "SLOW-MARKER\n", "started_at": iso(10), "ended_at": iso(1015), "wall_ms": float64(1005)}
+	fast := map[string]any{"event": "command_result", "name": "fast", "status": float64(3), "output": "FAST-MARKER\n", "started_at": iso(1020), "ended_at": iso(1030), "wall_ms": float64(10)}
+	bc := map[string]any{"event": "baseline_checks", "checks": float64(2), "failing": []any{"fast"}, "started_at": iso(0), "ended_at": iso(1031), "wall_ms": float64(1031),
+		"timings": []any{
+			map[string]any{"name": "slow", "started_at": iso(10), "ended_at": iso(1015), "wall_ms": float64(1005)},
+			map[string]any{"name": "fast", "started_at": iso(1020), "ended_at": iso(1030), "wall_ms": float64(10)},
+		}}
+	wallEvs = []map[string]any{{"event": "start"}, {"event": "command", "name": "slow"}, slow, {"event": "command", "name": "fast"}, fast, bc, {"event": "outcome", "outcome": "provider_failure"}}
+	wallResult = map[string]any{"outcome": "provider_failure"}
+	check := map[string]any{"name": "slow", "command": "touch '/tmp/m'; sleep 600", "started_at": iso(0), "stopped_at": iso(450), "wall_ms": float64(450)}
+	stopOut = "stopped fixture: interrupted (Build 0123abcd)\ncandidate/interrupted: Build 0123abcd stopped by SIGTERM; edits are left in place\n" +
+		"  stopped during the check baseline: check slow (touch '/tmp/m'; sleep 600) ran 450 ms (started " + iso(0) + ")\n  run log: /tmp/log.jsonl\n"
+	stopResult = map[string]any{"outcome": "interrupted", "stopped_during": "baseline", "baseline_check": check}
+	stopOutcome = map[string]any{"event": "outcome", "outcome": "interrupted", "stopped_during": "baseline", "baseline_check": check}
+	setupOut = "stopped fixture: interrupted (Build 0123abcd)\ncandidate/interrupted: Build 0123abcd stopped by SIGTERM; edits are left in place\n  run log: /tmp/log.jsonl\n"
+	setupResult = map[string]any{"outcome": "interrupted"}
+	setupOutcome = map[string]any{"event": "outcome", "outcome": "interrupted"}
+	return
+}
+
+// fixture is a temporary repository with an approved Intent, a signed-in home and a provider
+// that refuses every request.
+type fixture struct {
+	root, home string
+	env        []string
+	srv        *httptest.Server
+}
+
+func must(err error) {
+	if err != nil {
+		fmt.Println("fixture:", err)
+		os.Exit(2)
+	}
+}
+
+func tempDir(prefix string) string {
+	d, err := os.MkdirTemp("", prefix)
+	must(err)
+	d, err = filepath.EvalSymlinks(d)
+	must(err)
+	return d
+}
+
+func write(path, content string) {
+	must(os.MkdirAll(filepath.Dir(path), 0o755))
+	must(os.WriteFile(path, []byte(content), 0o644))
+}
+
+func (f *fixture) git(args ...string) string {
+	cmd := exec.Command("git", args...)
+	cmd.Dir, cmd.Env = f.root, f.env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		must(fmt.Errorf("git %s: %v %s", strings.Join(args, " "), err, out))
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func newFixture(cfg *project.Config) *fixture {
+	f := &fixture{root: tempDir("kbw-root-"), home: tempDir("kbw-home-")}
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		fmt.Fprint(w, `{"error":{"code":"invalid_request_error","message":"scripted provider refusal","type":"invalid_request_error"}}`)
+	}))
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			f.env = append(f.env, kv)
+		}
+	}
+	f.env = append(f.env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0",
+		"HOME="+f.home, "KOGEN_PROVIDER_URL="+f.srv.URL, "KOGEN_AUTH_URL="+f.srv.URL)
+	f.git("init", "-q", "--initial-branch=main")
+	f.git("config", "user.name", "Kogen Acceptance")
+	f.git("config", "user.email", "kogen-acceptance@example.invalid")
+	f.git("config", "commit.gpgsign", "false")
+	write(filepath.Join(f.root, "README.md"), "# Fixture project\n")
+	write(filepath.Join(f.root, "app.txt"), "baseline\n")
+	write(filepath.Join(f.root, ".gitignore"), ".kogen/local/\n")
+	cfg.Acceptance = &project.Acceptance{Run: "true", StepsDir: "features/steps"}
+	write(filepath.Join(f.root, ".kogen/project.yaml"), project.RenderConfig(cfg))
+	f.git("add", "README.md", "app.txt", ".gitignore", ".kogen/project.yaml")
+	f.git("commit", "-qm", "fixture baseline")
+	write(filepath.Join(f.root, project.IntentMDPath("fixture")), "# Preserve the fixture\n\nSlug: fixture\nModel: not applicable — no model for this fixture\n\n"+
+		"Acceptance:\n- .kogen/intents/fixture/acceptance.feature\n- features/steps/fixture_steps.js\n\n## Tests\n- the fixture stays as it is: the acceptance scenario (existing)\n\n"+
+		"## Source comparison\n- addressed: preserve app.txt; source request; contract Tests.\n\n## Feasibility\n- none\n")
+	write(filepath.Join(f.root, project.FeaturePath("fixture")), "Feature: Fixture\n  Scenario: First\n    Then the acceptance check passes\n")
+	write(filepath.Join(f.root, "features/steps/fixture_steps.js"), "// steps\n")
+	loaded, err := project.LoadConfig(f.root)
+	must(err)
+	baseline, err := project.Baseline(f.root, "fixture", loaded)
+	must(err)
+	must(project.WriteApproval(f.root, project.Approval{Slug: "fixture", SHA256: project.Hash(f.root, baseline), Base: f.git("rev-parse", "HEAD"),
+		Approver: "Kogen Acceptance <kogen-acceptance@example.invalid>", ApprovedAt: "2026-11-03T00:00:00Z"}))
+	creds, _ := json.Marshal(map[string]any{"client_id": "oaiapp_fake", "access_token": "fake-access-token", "refresh_token": "fake-refresh-token",
+		"expires_at": time.Now().Unix() + 86400, "scope": "openid", "email": "acceptance@example.invalid"})
+	must(os.MkdirAll(filepath.Join(f.home, ".kogen", "credentials"), 0o700))
+	must(os.Chmod(filepath.Join(f.home, ".kogen"), 0o700))
+	must(os.WriteFile(filepath.Join(f.home, ".kogen", "credentials", "chatgpt.json"), creds, 0o600))
+	return f
+}
+
+func (f *fixture) close() {
+	f.srv.Close()
+	os.RemoveAll(f.root)
+	os.RemoveAll(f.home)
+}
+
+// build runs `kogen intent build fixture`; with marker set it sends SIGTERM once marker exists
+// and the command has run for wait more.
+func (f *fixture) build(marker string, wait time.Duration) (int, string) {
+	s := sys.NewWith(f.env, f.root)
+	out := &strings.Builder{}
+	s.Stdout, s.Stderr = out, &strings.Builder{}
+	in := build.Input{Deps: build.Deps{Client: &provider.Client{Cache: provider.NewCache(nil), Version: "kogen dev+00000000 (acceptance)"}, Tools: verify.Tools{}},
+		Project: f.root, Slug: "fixture"}
+	done := make(chan int, 1)
+	go func() {
+		exit, _ := build.Build(context.Background(), s, in)
+		done <- exit
+	}()
+	if marker != "" {
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			if _, err := os.Stat(marker); err == nil {
+				break
+			}
+			select {
+			case exit := <-done:
+				must(fmt.Errorf("the Build ended (exit %d) before %s appeared:\n%s", exit, marker, out.String()))
+			default:
+			}
+			if time.Now().After(deadline) {
+				s.Interrupt("SIGTERM")
+				<-done
+				must(fmt.Errorf("timed out waiting for %s:\n%s", marker, out.String()))
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		time.Sleep(wait)
+		s.Interrupt("SIGTERM")
+	}
+	select {
+	case exit := <-done:
+		return exit, out.String()
+	case <-time.After(240 * time.Second):
+		s.Interrupt("SIGTERM")
+		must(fmt.Errorf("the Build did not end:\n%s", out.String()))
+	}
+	return 0, ""
+}
+
+func (f *fixture) run() (string, []map[string]any, map[string]any) {
+	runs, err := os.ReadDir(filepath.Join(f.root, ".kogen/local/runs"))
+	must(err)
+	if len(runs) != 1 {
+		must(fmt.Errorf("%d runs, want 1", len(runs)))
+	}
+	dir := filepath.Join(f.root, ".kogen/local/runs", runs[0].Name())
+	raw, err := os.ReadFile(filepath.Join(dir, "log.jsonl"))
+	must(err)
+	var evs []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var m map[string]any
+		must(json.Unmarshal([]byte(line), &m))
+		evs = append(evs, m)
+	}
+	raw, err = os.ReadFile(filepath.Join(dir, "result.json"))
+	must(err)
+	var result map[string]any
+	must(json.Unmarshal(raw, &result))
+	return runs[0].Name(), evs, result
+}
+
+func outcomeOf(evs []map[string]any) map[string]any {
+	var found []map[string]any
+	for _, ev := range evs {
+		if ev["event"] == "outcome" {
+			found = append(found, ev)
+		}
+	}
+	if len(found) != 1 {
+		must(fmt.Errorf("%d outcome events, want 1", len(found)))
+	}
+	return found[0]
+}
+
+func judge(mode string) error {
+	switch mode {
+	case "wall":
+		f := newFixture(&project.Config{Checks: []project.Check{{Name: "slow", Run: "sleep 1; echo SLOW-MARKER"}, {Name: "fast", Run: "echo FAST-MARKER; exit 3"}}})
+		defer f.close()
+		_, out := f.build("", 0)
+		_, evs, result := f.run()
+		if err := kbwCheckWall(evs, result, "slow", "fast", 1000); err != nil {
+			return fmt.Errorf("%v\nstdout:\n%s", err, out)
+		}
+		return nil
+	case "stop":
+		marker := filepath.Join(tempDir("kbw-marker-"), "baseline-running")
+		defer os.RemoveAll(filepath.Dir(marker))
+		command := "touch '" + marker + "'; sleep 600"
+		f := newFixture(&project.Config{Checks: []project.Check{{Name: "slow", Run: command}, {Name: "fast", Run: "echo FAST-MARKER"}}})
+		defer f.close()
+		exit, out := f.build(marker, 400*time.Millisecond)
+		if exit != 143 {
+			return fmt.Errorf("exit %d, want 143\n%s", exit, out)
+		}
+		id, evs, result := f.run()
+		return kbwCheckStop(out, id, result, outcomeOf(evs), "slow", command, 400)
+	case "setup":
+		marker := filepath.Join(tempDir("kbw-marker-"), "setup-running")
+		defer os.RemoveAll(filepath.Dir(marker))
+		f := newFixture(&project.Config{Setup: []string{"touch '" + marker + "'; sleep 600"}, Checks: []project.Check{{Name: "fast", Run: "echo FAST-MARKER"}}})
+		defer f.close()
+		exit, out := f.build(marker, 100*time.Millisecond)
+		if exit != 143 {
+			return fmt.Errorf("exit %d, want 143\n%s", exit, out)
+		}
+		id, evs, result := f.run()
+		return kbwCheckNotDuring(out, id, result, outcomeOf(evs))
+	case "good":
+		wallEvs, wallResult, stopOut, stopResult, stopOutcome, setupOut, setupResult, setupOutcome := kbwSynthetic()
+		for _, err := range []error{
+			kbwCheckWall(wallEvs, wallResult, "slow", "fast", 1000),
+			kbwCheckStop(stopOut, "0123abcd", stopResult, stopOutcome, "slow", "touch '/tmp/m'; sleep 600", 400),
+			kbwCheckNotDuring(setupOut, "0123abcd", setupResult, setupOutcome),
+		} {
+			if err != nil {
+				return fmt.Errorf("known-good record rejected: %v", err)
+			}
+		}
+		return nil
+	case "bad":
+		wallEvs, wallResult, stopOut, stopResult, stopOutcome, setupOut, setupResult, setupOutcome := kbwSynthetic()
+		delete(wallEvs[5], "timings")
+		delete(stopResult, "stopped_during")
+		setupResult["stopped_during"] = "baseline"
+		rejected := 0
+		for i, err := range []error{
+			kbwCheckWall(wallEvs, wallResult, "slow", "fast", 1000),
+			kbwCheckStop(stopOut, "0123abcd", stopResult, stopOutcome, "slow", "touch '/tmp/m'; sleep 600", 400),
+			kbwCheckNotDuring(setupOut, "0123abcd", setupResult, setupOutcome),
+		} {
+			if err == nil {
+				fmt.Printf("known-bad record %d accepted\n", i+1)
+			} else {
+				rejected++
+			}
+		}
+		if rejected == 3 {
+			return fmt.Errorf("every known-bad record rejected")
+		}
+		return nil
+	}
+	return fmt.Errorf("mode %q, want wall, stop, setup, good or bad", mode)
+}
+
+func main() {
+	if len(os.Args) != 2 {
+		fmt.Println("usage: driver wall|stop|setup|good|bad")
+		os.Exit(2)
+	}
+	if err := judge(os.Args[1]); err != nil {
+		fmt.Printf("KBW %s: FAIL: %v\n", os.Args[1], err)
+		os.Exit(1)
+	}
+	fmt.Printf("KBW %s: PASS\n", os.Args[1])
+}

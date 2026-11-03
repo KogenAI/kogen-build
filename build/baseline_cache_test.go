@@ -298,6 +298,7 @@ func TestBaselinePerBaseFailures(t *testing.T) {
 	if len(hits) != 1 || hits[0]["name"] != "closed" {
 		t.Fatalf("unexpected reuse: %v", hits)
 	}
+	requireBaselineTimings(t, events, []string{"failure"})
 	if got := commandResults(events, "failure"); len(got) < 2 || got[0] != 7 || got[1] != 7 {
 		t.Fatalf("final failure did not run fresh: %v", got)
 	}

@@ -66,6 +66,10 @@ type Attempt struct {
 	// ledgerReset is the read_ledger_reset event of the reset that prepared the request being
 	// sent, until Request logs it with the bytes its prefill appended.
 	ledgerReset map[string]any
+	// baselineRunning is the baseline check in progress, and baselineStop the record of the one
+	// a stop interrupted (baseline.go). Neither is persisted.
+	baselineRunning *baselineRunning
+	baselineStop    map[string]any
 }
 
 // noRunNotice follows a refusal that happened before any run was created (stdout, indented
