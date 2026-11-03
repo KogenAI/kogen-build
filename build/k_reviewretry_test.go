@@ -448,17 +448,7 @@ func chatReply(text string, verdict map[string]any) handler {
 // reviewRole puts the review role on another provider and signs it in with a fixture key.
 func (e *env) reviewRole(role string, credential string) {
 	e.t.Helper()
-	path := filepath.Join(e.root, ".kogen/project.yaml")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	review := regexp.MustCompile(`(?m)^  review:\n(    .*\n)+`)
-	if !review.Match(b) {
-		e.t.Fatalf("no review role in\n%s", b)
-	}
-	writeFile(e.t, path, string(review.ReplaceAll(b, []byte("  review: "+role+"\n"))), 0o644)
-	e.run("git", "add", ".kogen/project.yaml")
+	e.setRole("review", "  review: "+role+"\n")
 	e.run("git", "commit", "-qm", "review role")
 	e.approve()
 	dir := filepath.Join(e.home, ".kogen", "credentials")

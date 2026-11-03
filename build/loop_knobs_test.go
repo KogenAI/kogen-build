@@ -48,17 +48,7 @@ func knobOutput(t *testing.T, outputs []string) string {
 // approves the changed configuration.
 func anthropicRole(e *env, role string) {
 	e.t.Helper()
-	cfgPath := filepath.Join(e.root, ".kogen/project.yaml")
-	cfg, err := os.ReadFile(cfgPath)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	re := regexp.MustCompile(`(?m)^  ` + role + `:\n(    .*\n)+`)
-	if !re.Match(cfg) {
-		e.t.Fatalf("no %s role in:\n%s", role, cfg)
-	}
-	writeFile(e.t, cfgPath, string(re.ReplaceAll(cfg, []byte("  "+role+": {provider: anthropic, model: claude-sonnet-5-5, effort: high}\n"))), 0o644)
-	e.run("git", "add", ".kogen/project.yaml")
+	e.setRole(role, "  "+role+": {provider: anthropic, model: claude-sonnet-5-5, effort: high}\n")
 	e.run("git", "commit", "-qm", "anthropic "+role+" role")
 	e.approve()
 	dir := filepath.Join(e.home, ".kogen", "credentials")

@@ -395,6 +395,10 @@ func TestMain76BuildsResumeAndLand(t *testing.T) {
 		t.Run(sc.name, func(t *testing.T) {
 			t.Parallel()
 			e, id := newLegacy76Env(t, sc.name)
+			if lineupMoved {
+				legacyMovedLineupRefusal(t, e, id)
+				return
+			}
 			sc.script(e)
 			before := e.runFiles(id)
 			r := legacyResume(e, id)

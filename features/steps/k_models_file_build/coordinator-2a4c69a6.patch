@@ -1,0 +1,208 @@
+diff --git a/project/baseline.go b/project/baseline.go
+--- a/project/baseline.go
++++ b/project/baseline.go
+@@ -20 +20 @@
+-// `acceptance.feature`, its acceptance list, the rest of its files, the project configuration and
++// `acceptance.feature`, its acceptance list, the rest of its files, the project configuration, the team lineup and
+@@ -64 +64 @@
+-   all = append(all, ConfigPath)
++   all = append(all, ConfigPath, ModelsPath)
+diff --git a/project/config.go b/project/config.go
+--- a/project/config.go
++++ b/project/config.go
+@@ -2 +2,2 @@
+-// (commands, protected paths, models), Gherkin features, Intent packages with their baseline
++// (commands, checks, protect patterns and settings) with the model lineup in `.kogen/models.yaml`
++// and the per-machine override `.kogen/local/models.yaml`, Gherkin features, Intent packages with their baseline
+@@ -7,0 +9 @@
++   "errors"
+@@ -8,0 +11 @@
++   "io/fs"
+@@ -23,0 +27,9 @@
++// ModelsPath is the committed team lineup, relative to the repository root.
++const ModelsPath = ".kogen/models.yaml"
++
++// LocalModelsPath is the optional per-machine lineup override; it replaces the roles it names.
++const LocalModelsPath = ".kogen/local/models.yaml"
++
++// SourceDefault is the ModelSources value of a role no lineup file names.
++const SourceDefault = "default"
++
+@@ -81,5 +93,8 @@
+-   Setup, Fix         []string
+-   Checks             []Check
+-   Acceptance         *Acceptance // nil when neither run nor steps_dir is set
+-   Protect            []string
+-   Models             map[string]Role // "shape", "build", "review"; defaults where the file says nothing
++   Setup, Fix []string
++   Checks     []Check
++   Acceptance *Acceptance // nil when neither run nor steps_dir is set
++   Protect    []string
++   Models     map[string]Role // the effective lineup: "shape", "build", "review"
++   // ModelSources is where each role of Models came from: LocalModelsPath, ModelsPath or
++   // SourceDefault. It is not part of the JSON encoding.
++   ModelSources       map[string]string `json:"-"`
+@@ -94,0 +110,9 @@
++// defaultSources is ModelSources of a lineup that comes from no file.
++func defaultSources() map[string]string {
++   out := map[string]string{}
++   for _, role := range ModelRoles {
++       out[role] = SourceDefault
++   }
++   return out
++}
++
+@@ -131 +155,3 @@
+-// environment/not_initialized, environment/old_kogen_config and environment/project_config_invalid.
++// environment/not_initialized, environment/old_kogen_config, environment/models_moved and
++// environment/project_config_invalid. The effective lineup of each role is the local override's
++// entry, else the team file's, else the default.
+@@ -138 +164,43 @@
+-   return ParseConfig(string(b), file)
++   cfg, err := ParseConfig(string(b), file)
++   if err != nil {
++       return nil, err
++   }
++   for _, source := range []string{ModelsPath, LocalModelsPath} {
++       path := filepath.Join(root, source)
++       text, err := os.ReadFile(path)
++       if errors.Is(err, fs.ErrNotExist) {
++           continue
++       }
++       if err != nil {
++           return nil, err
++       }
++       roles, err := ParseModels(string(text), path)
++       if err != nil {
++           return nil, err
++       }
++       for role, r := range roles {
++           cfg.Models[role] = r
++           cfg.ModelSources[role] = source
++       }
++   }
++   return cfg, nil
++}
++
++// ParseModels validates the text of one lineup file (`.kogen/models.yaml` or
++// `.kogen/local/models.yaml`) and returns the roles it names, without defaults; file names it
++// in errors. A file with only comments and blank lines names no role.
++func ParseModels(text, file string) (map[string]Role, error) {
++   if blank(text) {
++       return map[string]Role{}, nil
++   }
++   var roles map[string]Role
++   node, problems := parseYAML(text)
++   if problems == nil {
++       v := &validator{}
++       roles = v.models(node)
++       problems = v.problems
++   }
++   if err := problemsError(file, problems); err != nil {
++       return nil, err
++   }
++   return roles, nil
+@@ -141 +209,31 @@
+-// ParseConfig validates configuration text; file names it in errors.
++// blank reports whether text has nothing but comments and blank lines.
++func blank(text string) bool {
++   for _, raw := range strings.Split(text, "\n") {
++       if strings.TrimSpace(stripComment(trimRightSpace(raw))) != "" {
++           return false
++       }
++   }
++   return true
++}
++
++// problemsError is environment/project_config_invalid for file with one line per problem, sorted
++// by line and message; nil without problems.
++func problemsError(file string, problems []problem) error {
++   if len(problems) == 0 {
++       return nil
++   }
++   sort.SliceStable(problems, func(i, j int) bool {
++       if problems[i].line != problems[j].line {
++           return problems[i].line < problems[j].line
++       }
++       return problems[i].msg < problems[j].msg
++   })
++   e := sys.Fail("environment", "project_config_invalid", file, 3)
++   for _, p := range problems {
++       e.Lines = append(e.Lines, fmt.Sprintf("line %d: %s", p.line, p.msg))
++   }
++   return e
++}
++
++// ParseConfig validates configuration text; file names it in errors. It reads no lineup file:
++// Models is the default lineup with every source SourceDefault.
+@@ -150 +248 @@
+-       hasVersion := false
++       hasVersion, hasModels := false, false
+@@ -152,0 +251 @@
++           hasModels = hasModels || p.key == "models"
+@@ -156,0 +256,3 @@
++       if hasModels {
++           return nil, sys.Fail("environment", "models_moved", ".kogen/project.yaml still has models:; move that lineup to .kogen/models.yaml", 3)
++       }
+@@ -161,12 +263,2 @@
+-   if len(problems) > 0 {
+-       sort.SliceStable(problems, func(i, j int) bool {
+-           if problems[i].line != problems[j].line {
+-               return problems[i].line < problems[j].line
+-           }
+-           return problems[i].msg < problems[j].msg
+-       })
+-       e := sys.Fail("environment", "project_config_invalid", file, 3)
+-       for _, p := range problems {
+-           e.Lines = append(e.Lines, fmt.Sprintf("line %d: %s", p.line, p.msg))
+-       }
+-       return nil, e
++   if err := problemsError(file, problems); err != nil {
++       return nil, err
+@@ -191 +283 @@
+-   c := &Config{Models: DefaultModels(), ShapeWorkers: Workers{Roles: map[string]Role{}}, ReviewMaterial: ReviewMaterial{Mode: "parts"}}
++   c := &Config{Models: DefaultModels(), ModelSources: defaultSources(), ShapeWorkers: Workers{Roles: map[string]Role{}}, ReviewMaterial: ReviewMaterial{Mode: "parts"}}
+@@ -210,2 +301,0 @@
+-       case "models":
+-           c.Models = v.models(p.node)
+@@ -316,0 +407 @@
++// models validates the top-level mapping of a lineup file and returns the roles it names.
+@@ -318 +409 @@
+-   roles := DefaultModels()
++   roles := map[string]Role{}
+@@ -322,0 +414 @@
++   known := DefaultModels()
+@@ -329 +421 @@
+-       if _, known := roles[p.key]; !known {
++       if _, ok := known[p.key]; !ok {
+@@ -664 +756 @@
+-   return &Config{Models: DefaultModels(), ShapeWorkers: Workers{Roles: map[string]Role{}}}
++   return &Config{Models: DefaultModels(), ModelSources: defaultSources(), ShapeWorkers: Workers{Roles: map[string]Role{}}}
+diff --git a/project/render.go b/project/render.go
+--- a/project/render.go
++++ b/project/render.go
+@@ -8,2 +8,6 @@
+-// every list empty, acceptance null, the default model per role.
+-func Template() string {
++// every list empty, acceptance null. The model lineup is ModelsTemplate.
++func Template() string { return templateHead }
++
++// ModelsTemplate is the team lineup `kogen init` writes to `.kogen/models.yaml`: the default
++// model per role.
++func ModelsTemplate() string {
+@@ -11 +15 @@
+-   b.WriteString(templateHead)
++   b.WriteString("# The team's model lineup. A role named in " + LocalModelsPath + " replaces that role on one machine.\n")
+@@ -14 +18 @@
+-       b.WriteString("  " + role + ":\n    model: " + d[role].Model + "\n    effort: " + d[role].Effort + "\n")
++       b.WriteString(role + ":\n  model: " + d[role].Model + "\n  effort: " + d[role].Effort + "\n")
+@@ -28 +31,0 @@
+-models:
+@@ -42 +45 @@
+-// protect and acceptance fields of c are written; models keep their defaults.
++// protect and acceptance fields of c are written.
+@@ -80,3 +83 @@
+-   lines = append(lines, "models:")
+-   _, models, _ := strings.Cut(Template(), "models:\n")
+-   return strings.Join(lines, "\n") + "\n" + models
++   return strings.Join(lines, "\n") + "\n"

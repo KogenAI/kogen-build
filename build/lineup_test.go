@@ -12,11 +12,7 @@ import (
 
 func lineupConfig(t *testing.T, models string) *project.Config {
 	t.Helper()
-	cfg, err := project.ParseConfig("version: 1\nmodels:\n"+models, "f")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return cfg
+	return loadLineup(t, models)
 }
 
 // TestClaudeLineupNativeCompatibility: an omitted executor and an explicit `executor: native`

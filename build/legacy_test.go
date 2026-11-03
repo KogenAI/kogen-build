@@ -959,6 +959,29 @@ func legacyResume(e *env, id string) *attempt {
 	return e.resume(id, func(in *ResumeInput) { in.Reviewer = nativeReviewer() })
 }
 
+// legacyMovedLineupRefusal checks, for the moved coordinator, what resuming an Elixir Build does
+// when the project's .kogen/project.yaml still has models: (the Elixir fixtures keep it): the
+// configuration is refused with environment/models_moved, exit 3, before any run, request or
+// change of the Elixir Build's files or of the checkout.
+func legacyMovedLineupRefusal(t *testing.T, e *env, id string) {
+	t.Helper()
+	before, files, runs, requests := e.state(), e.runFiles(id), e.runIDs(), e.prov.count()
+	r := legacyResume(e, id)
+	eq(t, "exit", r.exit, 3)
+	text := r.shown()
+	contains(t, "output", text, "environment/models_moved: .kogen/project.yaml still has models:; move that lineup to .kogen/models.yaml")
+	contains(t, "output", text, "  no newly created Build run;")
+	if !reflect.DeepEqual(e.state(), before) {
+		t.Fatalf("custody changed:\n%v\n%v", before, e.state())
+	}
+	if !reflect.DeepEqual(e.runFiles(id), files) {
+		t.Fatal("the files of the Elixir Build changed")
+	}
+	if !reflect.DeepEqual(e.runIDs(), runs) || e.prov.count() != requests {
+		t.Fatal("a run or request was started")
+	}
+}
+
 func legacyChild(t *testing.T, e *env, id string) string {
 	t.Helper()
 	for _, c := range e.runIDs() {
@@ -1068,6 +1091,10 @@ func TestALegacyBuilderCheckpointResumesTheSameConversationAndLandsOnce(t *testi
 	t.Parallel()
 	// ExUnit: test/integration/build_context_files_test.exs: cancelled initial request freezes conversation; test/integration/build_boundaries_test.exs: resuming pending reviewer verification keeps repairs with the reviewer
 	e, id := newLegacyEnv(t, "builder")
+	if lineupMoved {
+		legacyMovedLineupRefusal(t, e, id)
+		return
+	}
 	f := e.prov
 	f.then(f.calls("finish", map[string]any{"summary": "nothing to change"}), f.calls("submit_review", approveVerdict()))
 	before := e.runFiles(id)
@@ -1131,6 +1158,10 @@ func TestALegacyBuilderVerifyCheckpointRunsTheFixersAndThePassThenLands(t *testi
 	t.Parallel()
 	// ExUnit: lib/kogen/build.ex resume_locked: stage builder_verify (round_end/1, then Shape.output of the saved finish call)
 	e, id := newLegacyEnv(t, "builder_verify")
+	if lineupMoved {
+		legacyMovedLineupRefusal(t, e, id)
+		return
+	}
 	f := e.prov
 	f.then(f.calls("submit_review", approveVerdict()))
 	before := e.runFiles(id)
@@ -1146,6 +1177,10 @@ func TestALegacyReviewCheckpointContinuesTheSameReviewerConversation(t *testing.
 	t.Parallel()
 	// ExUnit: test/integration/build_boundaries_test.exs: resuming pending reviewer verification keeps repairs with the reviewer
 	e, id := newLegacyEnv(t, "review")
+	if lineupMoved {
+		legacyMovedLineupRefusal(t, e, id)
+		return
+	}
 	f := e.prov
 	f.then(f.calls("submit_review", approveVerdict()))
 	before := e.runFiles(id)
@@ -1166,6 +1201,10 @@ func TestALegacyReviewVerifyCheckpointJudgesTheSavedVerdictWithoutAskingAgain(t 
 	t.Parallel()
 	// ExUnit: lib/kogen/review.ex resume/2: stage review_verify with an approve verdict (evaluate/8)
 	e, id := newLegacyEnv(t, "review_verify")
+	if lineupMoved {
+		legacyMovedLineupRefusal(t, e, id)
+		return
+	}
 	before := e.runFiles(id)
 	r := legacyResume(e, id)
 	child := legacyLanded(t, e, id, r, before)
@@ -1179,6 +1218,10 @@ func TestALegacyRetryCheckpointSendsTheBlockerAndTheFreshResultsToTheSameReviewe
 	t.Parallel()
 	// ExUnit: test/integration/build_boundaries_test.exs: blocked #{retry_outcome} retry provider failure retains fresh evidence and the saved reviewer
 	e, id := newLegacyEnv(t, "review_retry_verify")
+	if lineupMoved {
+		legacyMovedLineupRefusal(t, e, id)
+		return
+	}
 	f := e.prov
 	f.then(f.calls("submit_review", approveVerdict()))
 	before := e.runFiles(id)
@@ -1230,14 +1273,17 @@ func TestLegacyResumeRefusals(t *testing.T) {
 		prep     func(e *env, id string)
 		want     string
 		kind     string
+		// config marks a case refused only after the configuration is loaded: the moved
+		// coordinator refuses the Elixir fixtures' models: there instead.
+		config bool
 	}
 	runDir := func(m *legacyMap) *legacyMap { return legacyDigMap(t, m, latom("run")) }
 	cases := []refusal{
 		{name: "damaged index backup", prep: func(e *env, id string) {
 			os.WriteFile(e.runPath(id, "index-at-start"), []byte("damaged original index"), 0o644)
-		}, want: "original index backup missing or damaged: "},
+		}, want: "original index backup missing or damaged: ", config: true},
 		{name: "index custody", prep: func(e *env, id string) { e.write("staged.txt", "x\n"); e.run("git", "add", "staged.txt") },
-			want: "index/staged custody changed"},
+			want: "index/staged custody changed", config: true},
 		{name: "configuration", prep: func(e *env, id string) { e.write(".kogen/project.yaml", "version: [invalid") },
 			want: "baseline changed: .kogen/project.yaml"},
 		{name: "protected check file", prep: func(e *env, id string) { e.write("accept.sh", "#!/bin/sh\nexit 0\n") },
@@ -1253,9 +1299,9 @@ func TestLegacyResumeRefusals(t *testing.T) {
 		{name: "head moved", prep: func(e *env, id string) { e.run("git", "commit", "-q", "--allow-empty", "-m", "moved") },
 			want: "HEAD moved or uncertain commit; inspect git log"},
 		{name: "candidate drift", prep: func(e *env, id string) { e.write("app.txt", "drift\n") },
-			want: "candidate contents/modes or unrelated paths changed: app.txt"},
+			want: "candidate contents/modes or unrelated paths changed: app.txt", config: true},
 		{name: "unrelated path", prep: func(e *env, id string) { e.write("other.txt", "x\n") },
-			want: "candidate contents/modes or unrelated paths changed: other.txt"},
+			want: "candidate contents/modes or unrelated paths changed: other.txt", config: true},
 		{name: "another checkout", envelope: func(doc map[string]any) { doc["identity"] = "/elsewhere:1:2" }, want: "another checkout identity"},
 		{name: "another root", state: func(m *legacyMap) {
 			legacyPut(m, latom("root"), "/elsewhere")
@@ -1267,10 +1313,10 @@ func TestLegacyResumeRefusals(t *testing.T) {
 		{name: "run log", state: func(m *legacyMap) { legacyPut(runDir(m), latom("log"), "/elsewhere/log.jsonl") }, want: "checkpoint run/index paths changed"},
 		{name: "configuration of the Build differs", state: func(m *legacyMap) {
 			legacyPut(legacyDigMap(t, m, latom("config")), latom("setup"), []any{"false"})
-		}, want: "baseline/configuration changed"},
+		}, want: "baseline/configuration changed", config: true},
 		{name: "baseline of the Build differs", state: func(m *legacyMap) {
 			legacyPut(m, latom("baseline"), []any{".kogen/intents/fixture/intent.md", project.ConfigPath})
-		}, want: "baseline/configuration changed"},
+		}, want: "baseline/configuration changed", config: true},
 		{name: "tool boundary", fixture: "tool", want: "uncertain tool boundary; inspect effects before starting a freshly approved Build"},
 		{name: "commit boundary", fixture: "commit", want: "uncertain commit boundary; inspect effects before starting a freshly approved Build"},
 		{name: "startup boundary", fixture: "startup", want: "uncertain startup boundary; inspect effects before starting a freshly approved Build"},
@@ -1301,6 +1347,10 @@ func TestLegacyResumeRefusals(t *testing.T) {
 			}))
 			if c.prep != nil {
 				c.prep(e, id)
+			}
+			if c.config && lineupMoved {
+				legacyMovedLineupRefusal(t, e, id)
+				return
 			}
 			before, files, runs, requests := e.state(), e.runFiles(id), e.runIDs(), e.prov.count()
 			r := e.resume(id)

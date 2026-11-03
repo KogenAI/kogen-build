@@ -225,6 +225,7 @@ func TestNamedFeedbackCompatibility(t *testing.T) {
 		eq(t, "ordinary assertion feedback", feedback, want.Feedback)
 		got, _ := json.Marshal(request)
 		exp, _ := json.Marshal(want.Request)
+		exp = []byte(withLineupFile(string(exp)))
 		if string(got) != string(exp) {
 			t.Fatalf("the passing Build's first request changed:\n got %s\nwant %s", got, exp)
 		}

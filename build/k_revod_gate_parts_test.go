@@ -24,7 +24,14 @@ import (
 // rewrites it from the current code's output (a Git diff to review like any other change).
 // Without -update it is only compared with.
 
-const revodGateGolden = "testdata/k-revod-gate/parts-requests.json"
+// revodGateGolden holds the requests as the pinned coordinator makes them; the moved coordinator's
+// protected-file lists name `.kogen/models.yaml` too, so they are recorded in their own file.
+var revodGateGolden = func() string {
+	if lineupMoved {
+		return "testdata/k-revod-gate/parts-requests-moved.json"
+	}
+	return "testdata/k-revod-gate/parts-requests.json"
+}()
 
 // revodGateFixedDir is a new temporary folder whose physical path has exactly n bytes, so that
 // the requests carrying it have the same size (and so the same windows and native data) on

@@ -45,7 +45,7 @@ func sameWireFixture(t *testing.T, name, got string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eq(t, name+" request bytes", got, string(b))
+	eq(t, name+" request bytes", got, withLineupFile(string(b)))
 }
 
 // TestKReviewRetryUnchangedValidRequests: a review whose first verdict is valid sends exactly

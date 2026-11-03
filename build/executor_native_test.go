@@ -311,10 +311,12 @@ func newConformanceAttempt(t *testing.T, root, home string, prov *fakeProvider, 
 		t.Fatal(err)
 	}
 	cfg := &project.Config{Models: project.DefaultModels()}
-	baseline := []string{project.ConfigPath}
 	if protect {
 		cfg.Protect = []string{"protected"}
-		baseline = append(baseline, conformance.ProtectedPath)
+	}
+	baseline, err := project.Baseline(root, "conformance", cfg)
+	if err != nil {
+		t.Fatal(err)
 	}
 	facts, err := startFacts(root, "conformance", run, cfg, "", "")
 	if err != nil {

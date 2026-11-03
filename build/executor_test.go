@@ -127,18 +127,7 @@ func externalWritesApp(content string, usage executor.Usage) func(int, context.C
 // commits the configuration and approves again.
 func (e *env) useExecutor(extra string) {
 	e.t.Helper()
-	path := filepath.Join(e.root, ".kogen/project.yaml")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	old := "  build:\n    model: gpt-6.1-sol\n    effort: medium\n"
-	if !strings.Contains(string(b), old) {
-		e.t.Fatalf("project.yaml has no default build role:\n%s", b)
-	}
-	text := strings.Replace(string(b), old, "  build:\n    executor: claude-code\n    model: claude-sonnet-5-5\n    effort: high\n"+extra, 1)
-	writeFile(e.t, path, text, 0o644)
-	e.run("git", "add", ".kogen/project.yaml")
+	e.setRole("build", "  build:\n    executor: claude-code\n    model: claude-sonnet-5-5\n    effort: high\n"+extra)
 	e.run("git", "commit", "-qm", "build with claude-code")
 	e.approve()
 }
@@ -294,10 +283,7 @@ func contains2(list []string, s string) bool {
 func TestExternalNeedsNoProviderLoginForTheBuildRole(t *testing.T) {
 	t.Parallel()
 	// The build role uses Claude Code's own sign-in; only the native review needs a Kogen login.
-	cfg, err := project.ParseConfig("version: 1\nmodels:\n  build: {executor: claude-code, model: m, effort: low}\n", "f")
-	if err != nil {
-		t.Fatal(err)
-	}
+	cfg := loadLineup(t, "  build: {executor: claude-code, model: m, effort: low}\n")
 	roles := buildRoles(cfg)
 	if len(roles) != 1 || roles[0].Model != cfg.Models["review"].Model {
 		t.Fatalf("roles %+v", roles)
@@ -599,10 +585,7 @@ func TestNativeCheckpointAndConfigCarryNoExecutorIdentity(t *testing.T) {
 func TestNativeSelectionIgnoresDepsExternal(t *testing.T) {
 	t.Parallel()
 	// executor: native (written out) is the native builder, and never asks Deps.External.
-	cfg, err := project.ParseConfig("version: 1\nmodels:\n  build: {executor: native, model: gpt-6.1-sol, effort: medium}\n", "f")
-	if err != nil {
-		t.Fatal(err)
-	}
+	cfg := loadLineup(t, "  build: {executor: native, model: gpt-6.1-sol, effort: medium}\n")
 	ext, err := selectExecutor(Deps{External: func(project.Role) (executor.Executor, error) {
 		t.Error("the native builder asked for an external executor")
 		return nil, nil

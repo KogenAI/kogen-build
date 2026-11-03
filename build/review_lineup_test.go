@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -110,21 +109,8 @@ const blockingFinding = `{"path":"app.txt","line":1,"severity":"blocking","messa
 // useLineup selects claude-code for the build and review roles (review keeps extra keys).
 func (e *env) useLineup(reviewExtra string) {
 	e.t.Helper()
-	path := filepath.Join(e.root, ".kogen/project.yaml")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	text := string(b)
-	build := regexp.MustCompile(`(?m)^  build:\n(    .*\n)+`)
-	review := regexp.MustCompile(`(?m)^  review:\n(    .*\n)+`)
-	if !build.MatchString(text) || !review.MatchString(text) {
-		e.t.Fatalf("project.yaml lacks default roles:\n%s", text)
-	}
-	text = build.ReplaceAllString(text, "  build:\n    executor: claude-code\n    model: claude-sonnet-5-5\n    effort: high\n")
-	text = review.ReplaceAllString(text, "  review:\n    executor: claude-code\n    model: claude-opus-5-5\n    effort: xhigh\n"+reviewExtra)
-	writeFile(e.t, path, text, 0o644)
-	e.run("git", "add", ".kogen/project.yaml")
+	e.setRole("build", "  build:\n    executor: claude-code\n    model: claude-sonnet-5-5\n    effort: high\n")
+	e.setRole("review", "  review:\n    executor: claude-code\n    model: claude-opus-5-5\n    effort: xhigh\n"+reviewExtra)
 	e.run("git", "commit", "-qm", "claude-code build and review")
 	e.approve()
 }
@@ -500,14 +486,7 @@ func TestClaudeLineupReviewRefusesResume(t *testing.T) {
 	t.Run("native builder checkpoint", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t)
-		path := filepath.Join(e.root, ".kogen/project.yaml")
-		b, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		review := regexp.MustCompile(`(?m)^  review:\n(    .*\n)+`)
-		writeFile(t, path, review.ReplaceAllString(string(b), "  review:\n    executor: claude-code\n    model: claude-opus-5-5\n    effort: xhigh\n"), 0o644)
-		e.run("git", "add", ".kogen/project.yaml")
+		e.setRole("review", "  review:\n    executor: claude-code\n    model: claude-opus-5-5\n    effort: xhigh\n")
 		e.run("git", "commit", "-qm", "claude-code review")
 		e.approve()
 		p := e.prov

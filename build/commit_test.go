@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -387,17 +386,7 @@ func TestALargeUnicodeStartupCheckIsRecordedCutAndTheBuildContinues(t *testing.T
 func TestBuildAnthropicInvalidProviderFailureReachesResultAndOutcome(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	cfgPath := filepath.Join(e.root, ".kogen/project.yaml")
-	cfg, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	role := regexp.MustCompile(`(?m)^  build:\n(    .*\n)+`)
-	if !role.Match(cfg) {
-		t.Fatalf("no build role in:\n%s", cfg)
-	}
-	writeFile(t, cfgPath, string(role.ReplaceAll(cfg, []byte("  build: {provider: anthropic, model: claude-sonnet-5-5, effort: high}\n"))), 0o644)
-	e.run("git", "add", ".kogen/project.yaml")
+	e.setRole("build", "  build: {provider: anthropic, model: claude-sonnet-5-5, effort: high}\n")
 	e.run("git", "commit", "-qm", "anthropic build role")
 	e.approve()
 	dir := filepath.Join(e.home, ".kogen", "credentials")

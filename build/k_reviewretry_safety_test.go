@@ -19,14 +19,7 @@ import (
 // native (an external builder's checkpoint is never resumed).
 func (e *env) useExternalReviewer() {
 	e.t.Helper()
-	path := filepath.Join(e.root, ".kogen/project.yaml")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	review := regexp.MustCompile(`(?m)^  review:\n(    .*\n)+`)
-	writeFile(e.t, path, review.ReplaceAllString(string(b), "  review:\n    executor: claude-code\n    model: claude-opus-5-5\n    effort: xhigh\n"), 0o644)
-	e.run("git", "add", ".kogen/project.yaml")
+	e.setRole("review", "  review:\n    executor: claude-code\n    model: claude-opus-5-5\n    effort: xhigh\n")
 	e.run("git", "commit", "-qm", "claude-code review")
 	e.approve()
 }

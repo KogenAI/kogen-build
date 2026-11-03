@@ -41,28 +41,12 @@ func (e *env) useRoles(extBuild, extReview bool) {
 	if !extBuild && !extReview {
 		return
 	}
-	path := filepath.Join(e.root, ".kogen/project.yaml")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	text := string(b)
 	if extBuild {
-		re := regexp.MustCompile(`(?m)^  build:\n(    .*\n)+`)
-		if !re.MatchString(text) {
-			e.t.Fatalf("project.yaml lacks the build role:\n%s", text)
-		}
-		text = re.ReplaceAllString(text, "  build:\n    executor: claude-code\n    model: claude-sonnet-5-5\n    effort: high\n")
+		e.setRole("build", "  build:\n    executor: claude-code\n    model: claude-sonnet-5-5\n    effort: high\n")
 	}
 	if extReview {
-		re := regexp.MustCompile(`(?m)^  review:\n(    .*\n)+`)
-		if !re.MatchString(text) {
-			e.t.Fatalf("project.yaml lacks the review role:\n%s", text)
-		}
-		text = re.ReplaceAllString(text, "  review:\n    executor: claude-code\n    model: claude-opus-5-5\n    effort: xhigh\n")
+		e.setRole("review", "  review:\n    executor: claude-code\n    model: claude-opus-5-5\n    effort: xhigh\n")
 	}
-	writeFile(e.t, path, text, 0o644)
-	e.run("git", "add", ".kogen/project.yaml")
 	e.run("git", "commit", "-qm", "claude-code roles")
 	e.approve()
 }
@@ -443,6 +427,17 @@ func TestContextExternalNativeBytes(t *testing.T) {
 	var golden map[string]map[string]string
 	if err := json.Unmarshal(raw, &golden); err != nil {
 		t.Fatal(err)
+	}
+	for _, c := range extCombos {
+		for _, suffix := range []string{" without context", " with context"} {
+			for part, text := range golden[c.name+suffix] {
+				text = withLineupFile(text)
+				if c.extBuild || c.extReview {
+					text = withTrackedLineupFile(text)
+				}
+				golden[c.name+suffix][part] = text
+			}
+		}
 	}
 	d := diagnosticOf()
 	// With -update, each subtest that owns a golden entry records its output under the entry's
