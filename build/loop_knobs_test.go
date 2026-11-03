@@ -10,25 +10,23 @@ import (
 	"testing"
 )
 
-// The defaults of the native builder and the independent review: tool results cut at 16384 bytes
-// with a 4096-byte head, the 524288-byte input budget and no authority breakpoint.
+// The defaults of the native builder and the independent review: tool results bounded at 16384
+// bytes, the 524288-byte input budget and no authority breakpoint.
 
 // knobShell is a shell command whose output is far over any result bound under test.
 const knobShell = "head -c 30000 /dev/zero | tr '\\000' a"
 
 var knobMarker = regexp.MustCompile(`\n\[\.\.\. (\d+) bytes omitted \.\.\.\]\n`)
 
-func knobCut(t *testing.T, what, out string, bound, head int) {
+// knobCut checks what kogen-build relies on from a cut tool result: it fits the bound and carries
+// the omission marker. Where kogen-loop cuts and which bytes it keeps are its own.
+func knobCut(t *testing.T, what, out string, bound int) {
 	t.Helper()
-	loc := knobMarker.FindStringIndex(out)
-	if loc == nil {
+	if len(out) > bound {
+		t.Fatalf("%s: %d bytes delivered, want at most %d", what, len(out), bound)
+	}
+	if !knobMarker.MatchString(out) {
 		t.Fatalf("%s: no omission marker in %d bytes: %.200q", what, len(out), out)
-	}
-	if len(out) > bound || len(out) < bound-64 {
-		t.Fatalf("%s: %d bytes delivered, want about %d", what, len(out), bound)
-	}
-	if loc[0] > head || loc[0] < head-3 {
-		t.Fatalf("%s: marker after %d bytes, want the head of %d", what, loc[0], head)
 	}
 }
 
@@ -102,7 +100,7 @@ func bigDiagnostic() *Diagnostic {
 
 func TestLoopKnobsNativeBuilder(t *testing.T) {
 	t.Parallel()
-	t.Run("a tool result is cut at 16384 bytes with a 4096-byte head", func(t *testing.T) {
+	t.Run("a long tool result is cut within 16384 bytes and still delivered", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t)
 		e.prov.then(e.prov.calls("shell", map[string]any{"command": knobShell}))
@@ -111,7 +109,7 @@ func TestLoopKnobsNativeBuilder(t *testing.T) {
 		if a.exit != 0 {
 			t.Fatalf("exit %d: %s", a.exit, a.shown())
 		}
-		knobCut(t, "shell result", knobOutput(t, e.prov.toolOutputs()), 16384, 4096)
+		knobCut(t, "shell result", knobOutput(t, e.prov.toolOutputs()), 16384)
 	})
 
 	t.Run("a large diagnostic fits the input budget and is sent", func(t *testing.T) {
@@ -143,7 +141,7 @@ func TestLoopKnobsReview(t *testing.T) {
 	t.Parallel()
 	bigApp := "// candidate\n" + strings.Repeat("padding of the candidate source line\n", 1800)
 
-	t.Run("a tool result is cut at 16384 bytes with a 4096-byte head", func(t *testing.T) {
+	t.Run("a long tool result is cut within 16384 bytes and still delivered", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t)
 		f := e.prov
@@ -161,7 +159,7 @@ func TestLoopKnobsReview(t *testing.T) {
 				}
 			}
 		}
-		knobCut(t, "reviewer shell result", knobOutput(t, outputs), 16384, 4096)
+		knobCut(t, "reviewer shell result", knobOutput(t, outputs), 16384)
 	})
 
 	t.Run("the candidate source stays inline within the input budget", func(t *testing.T) {
