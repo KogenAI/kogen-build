@@ -4,290 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/provider"
 )
-
-// Tokens is a token total, as a Build's run record and checkpoint hold it. A count is nil
-// (JSON null, shown as "unknown") once a request did not report it: unknown stays unknown
-// in every sum.
-type Tokens struct {
-	Input     *int `json:"input"`
-	Cached    *int `json:"cached"`
-	Output    *int `json:"output"`
-	Reasoning *int `json:"reasoning"`
-}
-
-// count is a known token count.
-func count(n int) *int { return &n }
-
-// zeroTokens is the total of no requests.
-func zeroTokens() Tokens { return Tokens{count(0), count(0), count(0), count(0)} }
-
-func addCounts(a, b *int) *int {
-	if a == nil || b == nil {
-		return nil
-	}
-	return count(*a + *b)
-}
-
-func (t Tokens) plus(u Tokens) Tokens {
-	return Tokens{addCounts(t.Input, u.Input), addCounts(t.Cached, u.Cached), addCounts(t.Output, u.Output), addCounts(t.Reasoning, u.Reasoning)}
-}
-
-func fromUsage(u provider.Usage) Tokens {
-	return Tokens{count(u.Input), count(u.Cached), count(u.Output), count(u.Reasoning)}
-}
-
-// responseTokens is what one response adds to the totals. Anthropic reports no reasoning
-// count and may omit any other, so its totals come from the validated analytical usage; the
-// other routes' compatible totals are always integers.
-func responseTokens(role project.Role, resp *provider.Response) Tokens {
-	if provider.Name(providerRole(role)) == "anthropic" {
-		k := resp.Known
-		return Tokens{k.Input, k.Cached, k.Output, k.Reasoning}
-	}
-	return fromUsage(resp.Usage)
-}
-
-func countText(n *int) string {
-	if n == nil {
-		return "unknown"
-	}
-	return strconv.Itoa(*n)
-}
-
-// Line is the progress text `input=… cached=… output=… reasoning=…`.
-func (t Tokens) Line() string {
-	return "input=" + countText(t.Input) + " cached=" + countText(t.Cached) + " output=" + countText(t.Output) + " reasoning=" + countText(t.Reasoning)
-}
-
-// Total is input plus output, or "unknown".
-func (t Tokens) Total() string {
-	if t.Input == nil || t.Output == nil {
-		return "unknown"
-	}
-	return strconv.Itoa(*t.Input + *t.Output)
-}
-
-func (t Tokens) valid() bool {
-	for _, n := range []*int{t.Input, t.Cached, t.Output, t.Reasoning} {
-		if n != nil && *n < 0 {
-			return false
-		}
-	}
-	return true
-}
-
-// ReviewRecord is the latest review: its number, verdict ("approve", "changes", "pending" or
-// "invalid"), findings (as the reviewer submitted them: path, line, severity, message) and the
-// candidate tree it judged.
-type ReviewRecord struct {
-	N        int              `json:"n"`
-	Verdict  string           `json:"verdict"`
-	Findings []map[string]any `json:"findings"`
-	Tree     string           `json:"tree,omitempty"`
-}
-
-// HistoryRef names an archived working-context window: its path and SHA-256.
-type HistoryRef struct {
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256"`
-}
-
-// OwnerContext is the working context of one conversation owner ("build" or "review"): the
-// mandatory opening messages, the observations kept across resets and the archived windows.
-type OwnerContext struct {
-	Mandatory    []any        `json:"mandatory"`
-	Observations []any        `json:"observations"`
-	History      []HistoryRef `json:"history"`
-	// InlineMaterial and SourceTree belong to the review owner while the candidate's source
-	// still rides inline in its opening message: the material that message was made from and
-	// the tree it describes (nil for a message of a checkpoint that predates the binding).
-	// Under pressure that source relocates to pinned parts instead of being rebuilt from the
-	// checkout. Both are dropped once the source is pinned.
-	InlineMaterial *materialSet `json:"inline_material,omitempty"`
-	SourceTree     *string      `json:"source_tree,omitempty"`
-}
-
-// Continuation stages. The stages that are boundaries whose effects cannot be told after an
-// interruption ("startup", "tool", "commit") are not resumable.
-const (
-	StageStartup       = "startup"
-	StageBuilder       = "builder"
-	StageUsageLimit    = "builder_usage_limit"
-	StageBuilderVerify = "builder_verify"
-	StageTool          = "tool"
-	StageCommit        = "commit"
-	// StageCommitFailed is the checkpoint of a Build whose `git commit` definitely failed with
-	// HEAD still at the start: the verified and approved candidate is intact, so an explicit
-	// resume finishes the commit alone.
-	StageCommitFailed = "commit_failed"
-	StageLanded       = "landed"
-	StageReview       = "review"
-	StageReviewVerify = "review_verify"
-	StageReviewRetry  = "review_retry_verify"
-	// StageReviewOnly is the review-only checkpoint of a green candidate whose independent
-	// reviews ended without a valid verdict: it holds the green pass and no reviewer
-	// conversation, so an explicit resume starts a fresh review of that exact tree.
-	StageReviewOnly = "review_only"
-)
-
-// Completed is a tool call that ran and the result it gave.
-type Completed struct {
-	Call   map[string]any `json:"call"`
-	Result any            `json:"result"`
-}
-
-// Continuation is where a Build can continue from: the stage and what the stage needs.
-type Continuation struct {
-	Stage string `json:"stage"`
-	// Input is the builder's conversation (stages builder, builder_verify and tool).
-	Input    []any  `json:"input,omitempty"`
-	Feedback string `json:"feedback,omitempty"`
-	// Finish is the builder's finish call that opened a builder_verify stage.
-	Finish map[string]any `json:"finish,omitempty"`
-	// Owner is who owned the tool boundary ("build" or "review").
-	Owner     string           `json:"owner,omitempty"`
-	Completed *Completed       `json:"completed,omitempty"`
-	Response  []map[string]any `json:"response,omitempty"`
-	// Request marks a tool boundary that a model request saved (the response is in
-	// Response), as opposed to one a tool loop saved.
-	Request bool `json:"request,omitempty"`
-	// Tree is the tree being committed (stages commit and commit_failed).
-	Tree string `json:"tree,omitempty"`
-	// Commit is the landed commit (stage landed).
-	Commit         string `json:"commit,omitempty"`
-	AlreadyPresent bool   `json:"already_present,omitempty"`
-	// Pass and Review belong to the review stages: the green pass under review and the
-	// reviewer's own session state, which only the review code interprets.
-	Pass   *verify.Pass    `json:"pass,omitempty"`
-	Review json.RawMessage `json:"review,omitempty"`
-	// Base belongs to the review stages: the green pass that reviewer's current session was
-	// started from (the pass its Review call was given). It stays the same through the
-	// session's rounds and repairs, while Pass may become a later red pass, and it is what a
-	// fresh review resumes from when the session itself cannot be resumed (an external
-	// reviewer) or ends without a valid verdict.
-	Base *verify.Pass `json:"base,omitempty"`
-}
-
-// State is everything a Build keeps and a checkpoint records (the `state` of a version 4
-// checkpoint).
-type State struct {
-	Root            string            `json:"root"`
-	Slug            string            `json:"slug"`
-	Config          *project.Config   `json:"config"`
-	IntentText      string            `json:"intent_text"`
-	Start           string            `json:"start"`
-	Baseline        []string          `json:"baseline"`
-	BaselineDigests map[string]string `json:"baseline_digests"`
-	Excluded        []string          `json:"excluded"`
-	Run             *Run              `json:"run"`
-	GitIndex        string            `json:"git_index"`
-	StartTree       string            `json:"start_tree"`
-	Phase           string            `json:"phase"` // "startup" or "building"
-	// T0 is when this run started, in Unix milliseconds.
-	T0               int64                          `json:"t0"`
-	Usage            Tokens                         `json:"usage"`
-	Round            int                            `json:"round"`
-	Pass             int                            `json:"pass"`
-	Review           int                            `json:"review"`
-	Repairs          int                            `json:"repairs"`
-	LastPass         *verify.Pass                   `json:"last_pass"`
-	LastReview       *ReviewRecord                  `json:"last_review"`
-	Blocker          map[string]any                 `json:"blocker"`
-	Continuation     Continuation                   `json:"continuation"`
-	ApprovalBytes    string                         `json:"approval_bytes"` // base64
-	Parent           *string                        `json:"parent"`
-	RootRun          *string                        `json:"root_run"`
-	ModelActiveMS    int64                          `json:"model_active_ms"`
-	UnknownRequests  int                            `json:"unknown_requests"`
-	AttemptUsage     Tokens                         `json:"attempt_usage"`
-	WorkingContext   map[string]*OwnerContext       `json:"working_context"`
-	SourceProvenance *project.SourceRef             `json:"source_provenance"`
-	PromptCache      map[string]provider.CacheState `json:"prompt_cache_states"`
-	// CacheIDs are the prompt-cache identities of the Build's model conversations, by
-	// conversation ("build", "review-<n>"): created when a conversation starts, kept for every
-	// later request of it, in resets and in an explicit resume.
-	CacheIDs map[string]string `json:"cache_ids,omitempty"`
-	// The staged plan, its durable progress and the evidence of each stage gate; all absent
-	// for an Intent without a `## Stages` plan.
-	StagePlan     []stageDef      `json:"stage_plan,omitempty"`
-	StageProgress *StageProgress  `json:"stage_progress,omitempty"`
-	StageEvidence []StageEvidence `json:"stage_evidence,omitempty"`
-	// Executor identifies the external executor that produced the candidate and what it
-	// reported (docs/executor-contract.md); nil for the native builder, so a native checkpoint
-	// keeps its bytes. A checkpoint that has it is not resumed at the builder's own stages.
-	Executor *ExecutorState `json:"executor,omitempty"`
-	// ReviewExecutor is the same for an independent review by an external executor: its own
-	// session, rounds and usage, separate from the builder's. Nil for the native reviewer.
-	ReviewExecutor *ExecutorState `json:"review_executor,omitempty"`
-	// BuildRequestBudget is the enabled total builder request budget and how many builder
-	// requests have been attempted against it; nil (and absent from the checkpoint) when off.
-	BuildRequestBudget *RequestBudget `json:"build_request_budget,omitempty"`
-	// ReviewRetry is the durable lineage of independent reviews that ended without a valid
-	// verdict for one exact green tree, and whether that tree's one automatic fresh review is
-	// spent. Absent until a review ends invalid, so other checkpoints keep their bytes.
-	ReviewRetry *ReviewRetry `json:"review_retry,omitempty"`
-	// CheckBaseline is the result of every configured check, in configured order, on the
-	// unchanged tree before the builder edited anything (AUT-5): diagnostic evidence kept
-	// through every checkpoint, never a waiver. Absent for a Build that collected none.
-	CheckBaseline []verify.CommandResult `json:"check_baseline,omitempty"`
-}
-
-// RequestBudget is a Build's total builder request limit and its cumulative attempt count.
-// An attempt is counted at the durable boundary before dispatch and never uncounted.
-type RequestBudget struct {
-	Limit int `json:"limit"`
-	Count int `json:"count"`
-}
-
-// ReviewRetry belongs to one exact green candidate tree. Automatic is true once the single
-// automatic fresh review of that tree was started: an interruption, a resume or a later
-// explicit review-only resume never resets it.
-type ReviewRetry struct {
-	Tree      string          `json:"tree"`
-	Automatic bool            `json:"automatic"`
-	Invalid   []InvalidReview `json:"invalid"`
-}
-
-// InvalidReview records one review that ended without a valid verdict: its number, why, how
-// much of each allowance it consumed, the run that stopped it and what followed ("automatic"
-// fresh review, "stop" for an explicit review-only resume).
-type InvalidReview struct {
-	Review          int    `json:"review"`
-	Reason          string `json:"reason"`
-	RejectedVerdict int    `json:"rejected_verdicts"`
-	NoToolReminder  int    `json:"no_tool_reminders"`
-	Run             string `json:"run"`
-	Next            string `json:"next"`
-}
-
-// ExecutorState is an external executor's identity and its running totals in a Build:
-// harness-reported figures, never provider-exact and never a bill.
-type ExecutorState struct {
-	Name      string        `json:"name"`
-	Version   string        `json:"version"`
-	SessionID string        `json:"session_id"`
-	Rounds    int           `json:"rounds"`
-	Usage     ExecutorUsage `json:"usage"`
-}
-
-// ExecutorUsage sums the usage the executor reported over the rounds. A count is nil once a
-// round did not report it (unknown stays unknown); CostUSD is the harness's own estimate.
-type ExecutorUsage struct {
-	Input     *int     `json:"input"`
-	Cached    *int     `json:"cached"`
-	Output    *int     `json:"output"`
-	Reasoning *int     `json:"reasoning"`
-	State     string   `json:"state"`
-	Source    string   `json:"source"`
-	CostUSD   *float64 `json:"cost_usd,omitempty"`
-}
 
 // requiredStateKeys are the fields a checkpoint state must carry.
 var requiredStateKeys = []string{
@@ -370,22 +92,13 @@ func sameConfig(a, b *project.Config) bool {
 	return configJSON(a) == configJSON(b)
 }
 
-// intent rebuilds the Intent from the text the Build was started with.
-func (s *State) intent() (*project.Intent, error) {
+// stateIntent rebuilds the Intent from the text the Build was started with.
+func stateIntent(s *State) (*project.Intent, error) {
 	return project.ReadIntent(s.Root, s.Slug, map[string][]byte{project.IntentMDPath(s.Slug): []byte(s.IntentText)})
 }
 
-// title is the Intent's title, the commit message's subject.
-func (s *State) title() string {
-	i, err := s.intent()
-	if err != nil {
-		return ""
-	}
-	return i.Title
-}
-
 // validContinuation is the shape check of a continuation.
-func (c *Continuation) valid() bool {
+func validContinuation(c *Continuation) bool {
 	switch c.Stage {
 	case StageBuilder, StageUsageLimit:
 		return validItems(c.Input)
@@ -415,7 +128,7 @@ func validItems(items []any) bool {
 }
 
 // expectedScenarios parses the Intent's feature for the completeness check of a green pass.
-func (s *State) expectedScenarios() ([]project.Scenario, bool) {
+func expectedScenarios(s *State) ([]project.Scenario, bool) {
 	feature, err := readFile(s.Root, project.FeaturePath(s.Slug))
 	if err != nil {
 		return nil, false
@@ -424,14 +137,14 @@ func (s *State) expectedScenarios() ([]project.Scenario, bool) {
 	return expected, err == nil
 }
 
-// completePass is whether a recorded green pass proves every required gate (VER-7).
-func (s *State) completePass(p *verify.Pass, model *project.ModelSpec) bool {
-	expected, ok := s.expectedScenarios()
+// stateComplete is whether a recorded green pass proves every required gate (VER-7).
+func stateComplete(s *State, p *verify.Pass, model *project.ModelSpec) bool {
+	expected, ok := expectedScenarios(s)
 	return ok && p.Complete(s.Config, expected, model)
 }
 
-// valid is the structural check of a decoded state against its checkpoint envelope.
-func (s *State) valid(doc *Checkpoint) bool {
+// validCheckpointState is the structural check of a decoded state against its checkpoint envelope.
+func validCheckpointState(s *State, doc *Checkpoint) bool {
 	if s.Phase != "startup" && s.Phase != "building" {
 		return false
 	}
@@ -441,16 +154,16 @@ func (s *State) valid(doc *Checkpoint) bool {
 	if s.Run == nil || s.Run.ID == "" || s.Run.Dir == "" || s.Run.LogPath == "" || s.Config == nil {
 		return false
 	}
-	intent, err := s.intent()
+	intent, err := stateIntent(s)
 	if err != nil || intent.Title == "" || intent.Model == nil {
 		return false
 	}
 	if s.LastPass != nil {
-		if !s.LastPass.Valid() || (s.LastPass.Green && !s.completePass(s.LastPass, intent.Model)) {
+		if !s.LastPass.Valid() || (s.LastPass.Green && !stateComplete(s, s.LastPass, intent.Model)) {
 			return false
 		}
 	}
-	if !s.validWorkingContext() || !validSource(s.SourceProvenance) {
+	if !validWorkingContext(s) || !validSource(s.SourceProvenance) {
 		return false
 	}
 	if r := s.LastReview; r != nil && !slices.Contains([]string{"approve", "changes", "pending", "invalid"}, r.Verdict) {
@@ -459,13 +172,13 @@ func (s *State) valid(doc *Checkpoint) bool {
 	if !provider.ValidCacheStates(s.PromptCache) || !validCacheIDs(s.CacheIDs) {
 		return false
 	}
-	if !s.stagesValid() {
+	if !stagesValid(s) {
 		return false
 	}
 	if r := s.ReviewRetry; r != nil && r.Tree == "" {
 		return false
 	}
-	if !s.validBaseline() {
+	if !validBaseline(s) {
 		return false
 	}
 	if s.Baseline == nil || !slices.Contains(s.Baseline, project.ConfigPath) || s.BaselineDigests == nil {
@@ -482,7 +195,7 @@ func (s *State) valid(doc *Checkpoint) bool {
 		}
 	}
 	for _, t := range []Tokens{s.Usage, s.AttemptUsage} {
-		if !t.valid() {
+		if !validTokens(t) {
 			return false
 		}
 	}
@@ -493,10 +206,10 @@ func (s *State) valid(doc *Checkpoint) bool {
 		return false
 	}
 	c := &s.Continuation
-	if !c.valid() {
+	if !validContinuation(c) {
 		return false
 	}
-	if c.Pass != nil && c.Pass.Green && !s.completePass(c.Pass, intent.Model) {
+	if c.Pass != nil && c.Pass.Green && !stateComplete(s, c.Pass, intent.Model) {
 		return false
 	}
 	if c.Stage == StageLanded {
@@ -520,7 +233,7 @@ func sameProgress(a, b *StageProgress) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return canonical(a.value()) == canonical(b.value())
+	return canonical(a.Value()) == canonical(b.Value())
 }
 
 // validCacheIDs is the checkpoint check of the conversation identities: at most
@@ -538,7 +251,7 @@ func validSource(r *project.SourceRef) bool {
 	return r == nil || (r.Path != "" && r.SHA256 != "" && r.ContractSHA256 != "")
 }
 
-func (s *State) validWorkingContext() bool {
+func validWorkingContext(s *State) bool {
 	if s.WorkingContext == nil {
 		return false
 	}
@@ -559,3 +272,12 @@ func (s *State) validWorkingContext() bool {
 }
 
 func trimmed(s string) string { return strings.TrimSpace(s) }
+
+func validTokens(t Tokens) bool {
+	for _, n := range []*int{t.Input, t.Cached, t.Output, t.Reasoning} {
+		if n != nil && *n < 0 {
+			return false
+		}
+	}
+	return true
+}

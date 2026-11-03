@@ -7,6 +7,8 @@ It is a component of [Kogen](https://github.com/KogenAI/kogen), which pins an ex
 ## Packages
 
 - `build`: the builder rounds, native and external executors, working context, verification gates, the independent review and repair stage, the commit stage, checkpoints, resume and recovery.
+- `build/review`: the independent review and repair: the native and the external-executor reviewer (review, resume, the review loop, verdict evaluation and the review tool conversation). It imports `build/core` and nothing else of this module.
+- `build/core`: what `build` and `build/review` share: the persisted Build state, the run record, the review contract and the services the review uses. It imports nothing else of this module.
 
 ## Testing
 

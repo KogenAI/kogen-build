@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
@@ -67,7 +68,7 @@ func (b *Attempt) brief() (executor.Brief, error) {
 		modelText + "\n" +
 		"# Project instructions (README.md)\n\n" + readme + "\n\n" +
 		"# Testing rules (docs/testing-rules.md)\n\n" + agent.Prompt(agent.TestingRules) + "\n\n" +
-		b.State.navigation() + "\n" +
+		b.State.Navigation() + "\n" +
 		"# Configured commands\n\n" +
 		"setup: " + inspectStrings(b.Config.Setup) + "\n" +
 		"fix (run once after each of your rounds): " + inspectStrings(b.Config.Fix) + "\n" +
@@ -265,7 +266,7 @@ func (b *Attempt) roundEnd(ctx context.Context) (feedback string, landed bool, e
 // leaves the whole-Intent gates, independent review and commit. A red gate keeps the builder
 // at the same stage.
 func (b *Attempt) stageGate(ctx context.Context) (string, bool, error) {
-	p := b.StageProgress.clone()
+	p := b.StageProgress.Clone()
 	index := len(p.Completed) + 1
 	stage := b.StagePlan[index-1]
 	b.s.Progress(fmt.Sprintf("kogen: stage %d/%d: %s", index, p.Total, stage.ID))
@@ -280,7 +281,7 @@ func (b *Attempt) stageGate(ctx context.Context) (string, bool, error) {
 	b.StageEvidence = append(slices.Clone(b.StageEvidence), evidence)
 	b.Run.Event(map[string]any{
 		"event": "stage_pass", "stage_id": stage.ID, "stage_index": index, "tree": pass.Tree,
-		"green": pass.Green, "failing": nonNil(pass.Failing), "not_run": nonNil(pass.NotRun),
+		"green": pass.Green, "failing": core.NonNil(pass.Failing), "not_run": core.NonNil(pass.NotRun),
 	})
 	if pass.Green {
 		b.s.Progress("kogen: stage " + stage.ID + " gate passed")
@@ -319,7 +320,7 @@ func (b *Attempt) stageGate(ctx context.Context) (string, bool, error) {
 		return b.verifyAndReview(ctx, true)
 	}
 	// The verified milestone and its navigation are durable before the next request.
-	feedback := "Stage " + stage.ID + " passed. Continue the next stage. " + b.State.navigation()
+	feedback := "Stage " + stage.ID + " passed. Continue the next stage. " + b.State.Navigation()
 	c := b.Continuation
 	next := b.afterRound(c.Input, c.Finish, feedback)
 	if err := b.Save(Continuation{Stage: StageBuilder, Input: next}); err != nil {
@@ -404,7 +405,7 @@ func (b *Attempt) builderResumeRefusal() string {
 // conversation or a review, never an external executor's builder session.
 func (b *Attempt) resumeStage(ctx context.Context) error {
 	if why := b.builderResumeRefusal(); why != "" {
-		return resumeRefused(why)
+		return core.ResumeRefused(why)
 	}
 	if err := provider.RequireLogin(b.s.Getenv("HOME"), buildRoles(b.Config)); err != nil {
 		return err

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"strings"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/sys"
@@ -57,7 +58,7 @@ func (b *Attempt) externalStalled(stage string, pass verify.Pass) error {
 	}
 	b.Run.Event(map[string]any{
 		"event": "executor_no_progress", "rounds": b.Executor.Rounds,
-		"fingerprint": fingerprint, "failing": nonNil(pass.Failing),
+		"fingerprint": fingerprint, "failing": core.NonNil(pass.Failing),
 	})
 	return executor.RoundLimit(b.Executor.Rounds)
 }

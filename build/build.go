@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
@@ -205,10 +206,10 @@ func cleanPaths(repo *git.Repo, intent *project.Intent) ([]string, error) {
 func buildRoles(cfg *project.Config) []provider.Role {
 	var roles []provider.Role
 	if role := cfg.Models["build"]; !role.External() {
-		roles = append(roles, providerRole(role))
+		roles = append(roles, core.ProviderRole(role))
 	}
 	if role := cfg.Models["review"]; !role.External() {
-		roles = append(roles, providerRole(role))
+		roles = append(roles, core.ProviderRole(role))
 	}
 	return roles
 }
@@ -317,11 +318,11 @@ func checked(ctx context.Context, s *sys.Session, in Input, repo *git.Repo, cfg 
 	b := &Attempt{
 		State: State{
 			Root: root, Slug: slug, Config: cfg, IntentText: intent.Text, Start: start, Baseline: baseline,
-			BaselineDigests: digests, Excluded: nonNil(excluded), Run: run, GitIndex: gitIndex, StartTree: startTree,
+			BaselineDigests: digests, Excluded: core.NonNil(excluded), Run: run, GitIndex: gitIndex, StartTree: startTree,
 			Phase: "startup", T0: time.Now().UnixMilli(), Continuation: Continuation{Stage: StageStartup},
 			ApprovalBytes: encodeBase64(approvalFile), WorkingContext: map[string]*OwnerContext{},
 			SourceProvenance: source, PromptCache: map[string]provider.CacheState{},
-			Usage: zeroTokens(), AttemptUsage: zeroTokens(), CacheIDs: map[string]string{},
+			Usage: core.ZeroTokens(), AttemptUsage: core.ZeroTokens(), CacheIDs: map[string]string{},
 			StagePlan: plan, StageProgress: initialProgress(plan),
 		},
 		s: s, deps: in.Deps, repo: repo, cache: provider.NewCache(nil), facts: facts, intent: intent, model: intent.Model, diag: in.Context, ext: ext,
@@ -409,11 +410,11 @@ func (b *Attempt) Save(c Continuation) error {
 	if err != nil {
 		return err
 	}
-	state, err := encodeJSON(b.State)
+	state, err := core.EncodeJSON(b.State)
 	if err != nil {
 		return err
 	}
-	if err := b.Run.takeLogErr(); err != nil {
+	if err := b.Run.TakeLogErr(); err != nil {
 		return err
 	}
 	doc := Checkpoint{
@@ -481,26 +482,6 @@ type attempts struct{ run *Run }
 
 func (a attempts) Attempt(record map[string]any) {
 	a.run.Event(map[string]any{"event": "provider_attempt", "provider": record})
-}
-
-// RequestSpec is one model request of a Build.
-type RequestSpec struct {
-	// Owner is the conversation: "build" or "review".
-	Owner        string
-	Role         project.Role
-	Instructions string
-	Input        []any
-	Tools        []any
-	// Retain records the input actually sent (after working-context resets) in the
-	// continuation the request is checkpointed with. Nil: the builder's Continuation.Input.
-	Retain func(c *Continuation, input []any)
-	// Prefill, when set, may append native data to the input after the working window is
-	// prepared and before the request is checkpointed, so the checkpoint, the archive and the
-	// request all hold exactly what is sent.
-	Prefill func(input []any) ([]any, error)
-	// ForceTool names a tool this request alone must call, where the route supports named
-	// tool selection (provider.Request.ToolChoice); the next request is ordinary again.
-	ForceTool string
 }
 
 // Request sends one request of a conversation and returns the response and the input that
@@ -573,7 +554,7 @@ func (b *Attempt) Request(ctx context.Context, sp RequestSpec) (*provider.Respon
 		parent = *b.RootRun
 	}
 	req := provider.Request{
-		Role: providerRole(sp.Role), Instructions: sp.Instructions, Input: input, Tools: sp.Tools, ToolChoice: sp.ForceTool, CacheID: b.cacheID(sp.Owner), Cache: b.cache,
+		Role: core.ProviderRole(sp.Role), Instructions: sp.Instructions, Input: input, Tools: sp.Tools, ToolChoice: sp.ForceTool, CacheID: b.cacheID(sp.Owner), Cache: b.cache,
 		Context: map[string]any{
 			"phase": sp.Owner, "role": sp.Owner, "run_id": b.Run.ID, "slug": b.Slug, "lineage": parent,
 			"pass": b.Pass, "repair": b.Repairs,
@@ -590,9 +571,9 @@ func (b *Attempt) Request(ctx context.Context, sp RequestSpec) (*provider.Respon
 	wall := time.Since(t0).Milliseconds()
 	b.UnknownRequests--
 	b.ModelActiveMS += wall
-	got := responseTokens(sp.Role, resp)
-	b.AttemptUsage = b.AttemptUsage.plus(got)
-	b.Usage = b.Usage.plus(got)
+	got := core.ResponseTokens(sp.Role, resp)
+	b.AttemptUsage = b.AttemptUsage.Plus(got)
+	b.Usage = b.Usage.Plus(got)
 	if err := b.Save(Continuation{Stage: StageTool, Owner: sp.Owner, Response: resp.Items, Request: true}); err != nil {
 		return nil, nil, err
 	}

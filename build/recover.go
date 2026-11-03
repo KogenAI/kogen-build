@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/durable"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -173,7 +174,7 @@ func (r *recovery) run() error {
 	if err != nil {
 		return err
 	}
-	if v, err := decodeJSONNumbers(raw); err == nil {
+	if v, err := core.DecodeJSONNumbers(raw); err == nil {
 		if m, ok := v.(map[string]any); ok {
 			if version, ok := m["version"]; ok {
 				if n, _ := version.(json.Number); n != "3" && n != "4" {
@@ -215,7 +216,7 @@ func (r *recovery) run() error {
 		return err
 	}
 	var result map[string]any
-	if v, err := decodeJSONNumbers(resultBytes); err != nil {
+	if v, err := core.DecodeJSONNumbers(resultBytes); err != nil {
 		return err
 	} else if result, _ = v.(map[string]any); result == nil {
 		return recoveryRefused("result does not match completed build_blocked report", "")
@@ -231,10 +232,10 @@ func (r *recovery) run() error {
 	if err := project.ValidateSource(b.SourceProvenance); err != nil {
 		return err
 	}
-	if r.approv, err = decodeBase64(doc.Approval); err != nil {
+	if r.approv, err = core.DecodeBase64(doc.Approval); err != nil {
 		return err
 	}
-	if r.index, err = decodeBase64(doc.Index); err != nil {
+	if r.index, err = core.DecodeBase64(doc.Index); err != nil {
 		return err
 	}
 	backup, err := readSafe(filepath.Join(r.dir, "index-at-start"))

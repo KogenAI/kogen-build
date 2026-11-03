@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
@@ -118,8 +119,8 @@ func (n *nativeSession) Round(ctx context.Context, in executor.Input) (executor.
 	role := b.Config.Models["build"]
 	tl := &tools.Tools{Root: b.Root, Session: b.s, Repo: agent.Git(b.repo), Enabled: builderTools, Protected: b.Baseline, Excluded: b.Excluded}
 	rd := loop.Round{
-		Owner: "build", Role: providerRole(role), Instructions: agent.Prompt(agent.Builder),
-		Definitions: shellDefinitions(tl, builderDefs),
+		Owner: "build", Role: core.ProviderRole(role), Instructions: agent.Prompt(agent.Builder),
+		Definitions: core.ShellDefinitions(tl, builderDefs),
 		Tools:       tl,
 		Terminal:    []string{agent.FinishTool},
 	}
@@ -277,15 +278,4 @@ func finalText(resp *provider.Response) string {
 		}
 	}
 	return text
-}
-
-// shellDefinitions keeps all other definitions unchanged while using the executing tool's policy.
-func shellDefinitions(t *tools.Tools, names []string) []any {
-	defs := agent.Defs(names...)
-	for i, name := range names {
-		if name == "shell" {
-			defs[i], _ = t.Definition(name)
-		}
-	}
-	return agent.AsAny(defs)
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/KogenAI/kogen-build/build/core"
 )
 
 // interrupt starts a Build whose first request hangs, interrupts it there and returns its
@@ -389,11 +391,11 @@ func TestCheckpointUsageCountsMayBeNilButNeverMalformed(t *testing.T) {
 func TestUnknownUsageStaysUnknownInTotals(t *testing.T) {
 	t.Parallel()
 	// ExUnit: lib/kogen/usage.ex add/2, line/1 and total/1 (a count that is not known stays unknown)
-	known := Tokens{count(2), count(1), count(3), count(0)}
-	unknown := Tokens{nil, count(1), count(1), nil}
-	sum := known.plus(unknown)
+	known := Tokens{Input: core.Count(2), Cached: core.Count(1), Output: core.Count(3), Reasoning: core.Count(0)}
+	unknown := Tokens{Input: nil, Cached: core.Count(1), Output: core.Count(1), Reasoning: nil}
+	sum := known.Plus(unknown)
 	eq(t, "line", sum.Line(), "input=unknown cached=2 output=4 reasoning=unknown")
 	eq(t, "unknown total", sum.Total(), "unknown")
-	eq(t, "known total", known.plus(known).Total(), "10")
-	eq(t, "zero", zeroTokens().Line(), "input=0 cached=0 output=0 reasoning=0")
+	eq(t, "known total", known.Plus(known).Total(), "10")
+	eq(t, "zero", core.ZeroTokens().Line(), "input=0 cached=0 output=0 reasoning=0")
 }

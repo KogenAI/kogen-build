@@ -1,4 +1,8 @@
-package build
+// Package review is the independent review and repair of a green candidate (chapter 06): the
+// native reviewer (Independent) and the reviewer served by an external executor (External), each
+// the core.Reviewer a Build runs, with the reviewer's own saved session. It works on the state
+// and the services of package core and imports no other package of this module.
+package review
 
 import (
 	"bytes"
@@ -10,6 +14,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-verification/verify"
@@ -20,10 +25,10 @@ import (
 
 // The independent review and repair (chapter 06). After a green pass one reviewer, in a
 // fresh conversation that never sees the builder's, reads the approved Intent and the
-// candidate's source (material.go), repairs supported defects with the file and command
-// tools and submits a verdict. Changed contents are verified externally; failures return to
-// this same reviewer conversation. An unresolved blocker ends the Build instead of restarting
-// the builder, and an explicit resume reopens it under the same reviewer.
+// candidate's source (the Build's review material), repairs supported defects with the file
+// and command tools and submits a verdict. Changed contents are verified externally; failures
+// return to this same reviewer conversation. An unresolved blocker ends the Build instead of
+// restarting the builder, and an explicit resume reopens it under the same reviewer.
 //
 // The reviewer's own state is kept in the Continuation (`Pass` is the pass under review and
 // `Review` the session below), so a resume continues the very same conversation:
@@ -40,31 +45,32 @@ import (
 // conversation after the verdict; in `review_retry_verify` the conversation the explicit
 // resume continues after fresh verification.
 
-var reviewToolNames = []string{"read_file", "view_image", "list_files", "search_text", "write_file", "shell"}
+// ToolNames are the native tools the reviewer is given (besides submit_review).
+var ToolNames = []string{"read_file", "view_image", "list_files", "search_text", "write_file", "shell"}
 
-// reviewVerdict is a valid submission of submit_review.
-type reviewVerdict struct {
+// Verdict is a valid submission of submit_review.
+type Verdict struct {
 	Verdict  string           `json:"verdict"`
 	Findings []map[string]any `json:"findings"`
 }
 
-// reviewAttempt is one submitted verdict of a review: the pass it followed and the tree it
+// Submitted is one submitted verdict of a review: the pass it followed and the tree it
 // judged.
-type reviewAttempt struct {
+type Submitted struct {
 	Pass     int              `json:"pass"`
 	Tree     string           `json:"tree"`
 	Verdict  string           `json:"verdict"`
 	Findings []map[string]any `json:"findings"`
 }
 
-// reviewSession is the reviewer's saved state (see above).
-type reviewSession struct {
-	Role     project.Role    `json:"role"`
-	Input    []any           `json:"input"`
-	Usage    Tokens          `json:"usage"`
-	Attempts []reviewAttempt `json:"attempts"`
-	Verdict  *reviewVerdict  `json:"verdict,omitempty"`
-	Tree     string          `json:"tree,omitempty"`
+// Session is the reviewer's saved state (see above): what Continuation.Review holds.
+type Session struct {
+	Role     project.Role `json:"role"`
+	Input    []any        `json:"input"`
+	Usage    core.Tokens  `json:"usage"`
+	Attempts []Submitted  `json:"attempts"`
+	Verdict  *Verdict     `json:"verdict,omitempty"`
+	Tree     string       `json:"tree,omitempty"`
 	// Seen is the seen tree: the tree whose bytes the reviewer holds. An approval binds only
 	// it. Empty (a session saved without one): the tree of the checkpoint's pass.
 	Seen string `json:"seen_tree,omitempty"`
@@ -88,22 +94,24 @@ type reviewSession struct {
 	Repaired bool `json:"repaired,omitempty"`
 }
 
-func (s reviewSession) encode() (json.RawMessage, error) {
-	s.Attempts = nonNil(s.Attempts)
+// Encode is the JSON a checkpoint keeps of the session.
+func (s Session) Encode() (json.RawMessage, error) {
+	s.Attempts = core.NonNil(s.Attempts)
 	for i := range s.Attempts {
-		s.Attempts[i].Findings = nonNil(s.Attempts[i].Findings)
+		s.Attempts[i].Findings = core.NonNil(s.Attempts[i].Findings)
 	}
 	if s.Verdict != nil {
 		v := *s.Verdict
-		v.Findings = nonNil(v.Findings)
+		v.Findings = core.NonNil(v.Findings)
 		s.Verdict = &v
 	}
-	s.Input = nonNil(s.Input)
-	return encodeJSON(s)
+	s.Input = core.NonNil(s.Input)
+	return core.EncodeJSON(s)
 }
 
-func reviewDecode(raw json.RawMessage) (reviewSession, error) {
-	var s reviewSession
+// DecodeSession reads a session a checkpoint kept.
+func DecodeSession(raw json.RawMessage) (Session, error) {
+	var s Session
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	if err := dec.Decode(&s); err != nil {
@@ -112,107 +120,106 @@ func reviewDecode(raw json.RawMessage) (reviewSession, error) {
 	return s, nil
 }
 
-// reviewIndependent is the real Reviewer.
-type reviewIndependent struct{}
+// Independent is the native independent reviewer; its zero value is the reviewer.
+type Independent struct{}
 
-// reviewRun is one independent review in progress: the pass under review and the session.
-type reviewRun struct {
-	b           *Attempt
+var _ core.Reviewer = Independent{}
+
+// run is one independent review in progress: the pass under review and the session.
+type run struct {
+	b           *core.Attempt
 	pass        verify.Pass
-	sess        reviewSession
+	sess        Session
 	tools       []any
 	nativeTools *tools.Tools
 	// external: the reviewer is an external executor; its source is delivered as complete
-	// Kogen-owned prompt data (review_external.go), not as pinned parts it must read.
+	// Kogen-owned prompt data (external.go), not as pinned parts it must read.
 	external bool
 	// base is the green pass the review session was started from (nil when a resumed native
 	// session has none); it is recorded in every checkpoint of the session (Continuation.Base).
 	base *verify.Pass
 }
 
-func (b *Attempt) reviewNativeTools() *tools.Tools {
-	return &tools.Tools{Root: b.Root, Session: b.s, Repo: agent.Git(b.repo), Enabled: reviewToolNames, Protected: b.Baseline, Excluded: b.Excluded}
-}
 func reviewTools(t *tools.Tools) []any {
-	return shellDefinitions(t, slices.Concat(reviewToolNames, []string{agent.SubmitReviewTool}))
+	return core.ShellDefinitions(t, slices.Concat(ToolNames, []string{agent.SubmitReviewTool}))
 }
 
 // Review starts the review of a green pass (REV-1): a new review number, the material and
 // the conversation.
-func (reviewIndependent) Review(ctx context.Context, b *Attempt, pass verify.Pass) (Approved, error) {
+func (Independent) Review(ctx context.Context, b *core.Attempt, pass verify.Pass) (core.Approved, error) {
 	b.Review++
 	if err := b.Track(); err != nil {
-		return Approved{}, err
+		return core.Approved{}, err
 	}
-	b.s.Progress(fmt.Sprintf("kogen: reviewing (review %d)", b.Review))
+	b.Progress(fmt.Sprintf("kogen: reviewing (review %d)", b.Review))
 	role := b.Config.Models["review"]
 	// Only the frozen caller diagnostic follows the authority message here, never the
 	// builder's replay, progress or reasoning.
-	diagnostic := slices.Concat(b.diagnosticMessages(), b.reviewBaselineMessage(pass))
-	if nav := b.State.navigationIn(phaseReview); nav != "" {
+	diagnostic := slices.Concat(b.DiagnosticMessages(), b.BaselineMessage(pass))
+	if nav := b.NavigationIn(core.PhaseReview); nav != "" {
 		// A staged Build's reviewer is told the plan's position and that stage evidence is
 		// historical: as its own leading message, so its instructions stay frozen.
 		diagnostic = append(slices.Clone(diagnostic), map[string]any{"role": "user",
 			"content": "Staged plan context for this independent review." + nav})
 	}
-	nativeTools := b.reviewNativeTools()
+	nativeTools := b.NativeTools(ToolNames)
 	tools := reviewTools(nativeTools)
-	m, err := b.materialOf(pass)
+	m, err := b.Material(pass)
 	if err != nil {
-		return Approved{}, err
+		return core.Approved{}, err
 	}
 	// A review is a fresh conversation: the unfinished observations of an earlier review that
 	// ended without a verdict are not carried into it (its archives stay in custody).
 	if state := b.WorkingContext["review"]; state != nil {
 		state.Observations = []any{}
 	}
-	input, err := b.materialPrepare(pass.Tree, m, role, agent.Prompt(agent.Reviewer), tools, diagnostic, false)
+	input, err := b.MaterialPrepare(pass.Tree, m, role, agent.Prompt(agent.Reviewer), tools, diagnostic, false)
 	if err != nil {
-		return Approved{}, err
+		return core.Approved{}, err
 	}
 	base := pass
-	r := &reviewRun{b: b, pass: pass, base: &base, tools: tools, nativeTools: nativeTools, sess: reviewSession{Role: role, Input: input, Usage: zeroTokens(), Seen: pass.Tree}}
+	r := &run{b: b, pass: pass, base: &base, tools: tools, nativeTools: nativeTools, sess: Session{Role: role, Input: input, Usage: core.ZeroTokens(), Seen: pass.Tree}}
 	return r.loop(ctx, nil, "")
 }
 
 // Resume continues a saved review (LOOP-10): a request that was interrupted is sent again
 // with the saved conversation; a verdict whose verification was interrupted is judged
 // again; a blocked review (verdict changes) is reopened, not replayed.
-func (reviewIndependent) Resume(ctx context.Context, b *Attempt) (Approved, error) {
+func (Independent) Resume(ctx context.Context, b *core.Attempt) (core.Approved, error) {
 	c := b.Continuation
-	sess, err := reviewDecode(c.Review)
+	sess, err := DecodeSession(c.Review)
 	if err != nil || c.Pass == nil {
-		return Approved{}, resumeRefused("the saved review state cannot be read")
+		return core.Approved{}, core.ResumeRefused("the saved review state cannot be read")
 	}
-	nativeTools := b.reviewNativeTools()
+	nativeTools := b.NativeTools(ToolNames)
 	tools := reviewTools(nativeTools)
 	if len(sess.Tools) > 0 {
 		tools = sess.Tools
 	}
-	r := &reviewRun{b: b, pass: *c.Pass, base: nativeResumeBase(c, sess), sess: sess, tools: tools, nativeTools: nativeTools}
-	verdicts := c.Stage != StageReview
+	r := &run{b: b, pass: *c.Pass, base: nativeResumeBase(c, sess), sess: sess, tools: tools, nativeTools: nativeTools}
+	verdicts := c.Stage != core.StageReview
 	if verdicts && (sess.Verdict == nil || sess.Tree == "") {
-		return Approved{}, resumeRefused("the saved review state has no verdict")
+		return core.Approved{}, core.ResumeRefused("the saved review state has no verdict")
 	}
 	switch {
-	case c.Stage == StageReviewRetry:
+	case c.Stage == core.StageReviewRetry:
 		return r.retry(ctx)
-	case c.Stage == StageReviewVerify && sess.Verdict.Verdict == "changes":
+	case c.Stage == core.StageReviewVerify && sess.Verdict.Verdict == "changes":
 		// An explicit resume reopens the blocker, not its terminal verdict.
-		record := ReviewRecord{N: b.Review, Verdict: "pending", Findings: nonNil(sess.Verdict.Findings), Tree: sess.Tree}
+		record := core.ReviewRecord{N: b.Review, Verdict: "pending", Findings: core.NonNil(sess.Verdict.Findings), Tree: sess.Tree}
 		if b.LastReview != nil {
 			record = *b.LastReview
 			record.Verdict = "pending"
 		}
 		b.LastReview = &record
 		if err := b.Track(); err != nil {
-			return Approved{}, err
+			return core.Approved{}, err
 		}
-		if err := r.save(StageReviewRetry); err != nil {
-			return Approved{}, err
+		if err := r.save(core.StageReviewRetry); err != nil {
+			return core.Approved{}, err
 		}
 		return r.retry(ctx)
-	case c.Stage == StageReviewVerify:
+	case c.Stage == core.StageReviewVerify:
 		return r.loop(ctx, sess.Verdict, sess.Tree)
 	}
 	return r.loop(ctx, nil, "")
@@ -221,7 +228,7 @@ func (reviewIndependent) Resume(ctx context.Context, b *Attempt) (Approved, erro
 // nativeResumeBase is the green base of a native session continued from a checkpoint: the one
 // the checkpoint records, else (written before it was recorded) the checkpoint's pass while the
 // session has not repaired, else none.
-func nativeResumeBase(c Continuation, sess reviewSession) *verify.Pass {
+func nativeResumeBase(c core.Continuation, sess Session) *verify.Pass {
 	switch {
 	case c.Base != nil:
 		base := *c.Base
@@ -234,35 +241,35 @@ func nativeResumeBase(c Continuation, sess reviewSession) *verify.Pass {
 }
 
 // save checkpoints the review at stage.
-func (r *reviewRun) save(stage string) error {
-	raw, err := r.sess.encode()
+func (r *run) save(stage string) error {
+	raw, err := r.sess.Encode()
 	if err != nil {
 		return err
 	}
 	pass := r.pass
-	r.b.setPhase(phaseReview)
-	return r.b.Save(Continuation{Stage: stage, Pass: &pass, Review: raw, Base: r.base})
+	r.b.SetPhase(core.PhaseReview)
+	return r.b.Save(core.Continuation{Stage: stage, Pass: &pass, Review: raw, Base: r.base})
 }
 
 // loop runs the reviewer's conversation, and judges each verdict, until the review approves
 // or stops. A pending verdict (a review resumed while its verdict was being verified) is
 // judged first.
-func (r *reviewRun) loop(ctx context.Context, pending *reviewVerdict, tree string) (Approved, error) {
+func (r *run) loop(ctx context.Context, pending *Verdict, tree string) (core.Approved, error) {
 	b := r.b
 	for {
 		if pending == nil {
-			if err := r.save(StageReview); err != nil {
-				return Approved{}, err
+			if err := r.save(core.StageReview); err != nil {
+				return core.Approved{}, err
 			}
-			if err := b.facts.update(b, "reviewing", ""); err != nil {
-				return Approved{}, err
+			if err := b.PublishFacts("reviewing"); err != nil {
+				return core.Approved{}, err
 			}
 			verdict, err := r.converse(ctx)
 			if err != nil {
-				return Approved{}, err
+				return core.Approved{}, err
 			}
-			if tree, err = b.repo.Tree(b.Start, b.Excluded); err != nil {
-				return Approved{}, err
+			if tree, err = b.Tree(); err != nil {
+				return core.Approved{}, err
 			}
 			pending = &verdict
 		}
@@ -276,26 +283,26 @@ func (r *reviewRun) loop(ctx context.Context, pending *reviewVerdict, tree strin
 
 // retry is the explicit resume of a blocked review (REV-5): fresh verification of the
 // candidate, then the original finding and the actual results go back to the same reviewer.
-func (r *reviewRun) retry(ctx context.Context) (Approved, error) {
+func (r *run) retry(ctx context.Context) (core.Approved, error) {
 	b := r.b
 	verdict := r.sess.Verdict
 	pass, err := b.Verify(ctx)
 	if err != nil {
-		return Approved{}, err
+		return core.Approved{}, err
 	}
-	attempts := append(slices.Clone(r.sess.Attempts), reviewAttempt{
+	attempts := append(slices.Clone(r.sess.Attempts), Submitted{
 		Pass: r.pass.N, Tree: r.sess.Tree, Verdict: verdict.Verdict, Findings: verdict.Findings,
 	})
-	findings, err := encodeJSON(nonNil(verdict.Findings))
+	findings, err := core.EncodeJSON(core.NonNil(verdict.Findings))
 	if err != nil {
-		return Approved{}, err
+		return core.Approved{}, err
 	}
 	evidence := pass.Results()
 	if !pass.Green {
 		evidence = b.PassFeedback(pass, "submit_review")
 	}
-	if len(b.baselineFailures()) > 0 {
-		evidence += "\n" + strings.Join(b.comparisonLines(), "\n")
+	if b.BaselineFailing() {
+		evidence += "\n" + strings.Join(b.ComparisonLines(), "\n")
 	}
 	feedback := "The caller explicitly resumed this blocked Build. Continue as the same independent\n" +
 		"reviewer for targeted clearance or scoped repair, not a new whole-change critique.\n" +
@@ -306,13 +313,13 @@ func (r *reviewRun) retry(ctx context.Context) (Approved, error) {
 		"Use the actual results, including failures and unrun items. Do not infer an operator\n" +
 		"explanation. Submit changes if unresolved, or explicitly approve after resolving it;\n" +
 		"edits still require ordinary external exact verification before commit.\n"
-	delivery, err := b.deliverySection(r.seenTree(), pass.Tree)
+	delivery, err := deliverySection(b, r.seenTree(), pass.Tree)
 	if err != nil {
-		return Approved{}, err
+		return core.Approved{}, err
 	}
 	feedback = delivery + feedback
 	r.pass = pass
-	r.sess = reviewSession{
+	r.sess = Session{
 		Role: r.sess.Role, Usage: r.sess.Usage, Attempts: attempts, Reopened: true, Repaired: r.sess.Repaired, Seen: pass.Tree,
 		Input: slices.Concat(r.sess.Input, []any{map[string]any{"role": "user", "content": feedback}}),
 	}
@@ -320,7 +327,7 @@ func (r *reviewRun) retry(ctx context.Context) (Approved, error) {
 }
 
 // seenTree is the tree whose bytes the reviewer holds.
-func (r *reviewRun) seenTree() string {
+func (r *run) seenTree() string {
 	if r.sess.Seen != "" {
 		return r.sess.Seen
 	}
@@ -329,15 +336,15 @@ func (r *reviewRun) seenTree() string {
 
 // deliverySection tells the reviewer that the candidate changed after its contents were
 // delivered, with the exact diff against the seen tree. It is empty when the trees are equal.
-func (b *Attempt) deliverySection(seen, now string) (string, error) {
+func deliverySection(b *core.Attempt, seen, now string) (string, error) {
 	if seen == now {
 		return "", nil
 	}
-	paths, err := b.repo.Changed(seen, now)
+	paths, err := b.Changed(seen, now)
 	if err != nil {
 		return "", err
 	}
-	diff, err := b.repo.Diff(seen, now, paths)
+	diff, err := b.Diff(seen, now, paths)
 	if err != nil {
 		return "", err
 	}
@@ -350,35 +357,35 @@ func (b *Attempt) deliverySection(seen, now string) (string, error) {
 // An approval binds the tree: when it is not the tree of a green pass, the changed contents
 // are verified, and a pass that is not green on that very tree returns to the reviewer
 // (again true) with targeted feedback.
-func (r *reviewRun) evaluate(ctx context.Context, verdict reviewVerdict, tree string) (ap Approved, again bool, err error) {
+func (r *run) evaluate(ctx context.Context, verdict Verdict, tree string) (ap core.Approved, again bool, err error) {
 	b := r.b
 	n := b.Review
 	r.sess.Verdict, r.sess.Tree = &verdict, tree
-	if err := r.save(StageReviewVerify); err != nil {
-		return Approved{}, false, err
+	if err := r.save(core.StageReviewVerify); err != nil {
+		return core.Approved{}, false, err
 	}
 	if err := b.BaselineIntact(); err != nil {
-		return Approved{}, false, err
+		return core.Approved{}, false, err
 	}
-	findings := nonNil(verdict.Findings)
-	review := ReviewRecord{N: n, Verdict: verdict.Verdict, Findings: findings, Tree: tree}
+	findings := core.NonNil(verdict.Findings)
+	review := core.ReviewRecord{N: n, Verdict: verdict.Verdict, Findings: findings, Tree: tree}
 	b.LastReview = &review
 	if err := b.Track(); err != nil {
-		return Approved{}, false, err
+		return core.Approved{}, false, err
 	}
-	attempts := append(slices.Clone(r.sess.Attempts), reviewAttempt{Pass: r.pass.N, Tree: tree, Verdict: verdict.Verdict, Findings: findings})
+	attempts := append(slices.Clone(r.sess.Attempts), Submitted{Pass: r.pass.N, Tree: tree, Verdict: verdict.Verdict, Findings: findings})
 	blocking := 0
 	for _, f := range findings {
 		if f["severity"] == "blocking" {
 			blocking++
 		}
 	}
-	b.s.Progress(fmt.Sprintf("kogen: review %d: %s, %d blocking", n, verdict.Verdict, blocking))
-	if err := b.Run.Write(reviewFile(n), map[string]any{
+	b.Progress(fmt.Sprintf("kogen: review %d: %s, %d blocking", n, verdict.Verdict, blocking))
+	if err := b.Run.Write(File(n), map[string]any{
 		"model": r.sess.Role.Model, "effort": r.sess.Role.Effort, "usage": r.sess.Usage,
 		"verdict": verdict.Verdict, "findings": findings, "tree": tree, "attempts": attempts,
 	}); err != nil {
-		return Approved{}, false, err
+		return core.Approved{}, false, err
 	}
 	b.Run.Event(map[string]any{
 		"event": "review", "review": n, "attempt": len(attempts), "pass": r.pass.N, "tree": tree,
@@ -390,10 +397,10 @@ func (r *reviewRun) evaluate(ctx context.Context, verdict reviewVerdict, tree st
 			"the reviewer could not resolve a substantive blocker within the approved Intent; edits are left in place", 1)
 		for _, f := range findings {
 			if f["severity"] == "blocking" {
-				e.Lines = append(e.Lines, fmt.Sprintf("review: %s:%s: %s", display(f["path"]), display(f["line"]), display(f["message"])))
+				e.Lines = append(e.Lines, fmt.Sprintf("review: %s:%s: %s", core.Display(f["path"]), core.Display(f["line"]), core.Display(f["message"])))
 			}
 		}
-		return Approved{}, false, e
+		return core.Approved{}, false, e
 	}
 
 	// An approval binds the seen tree: only an approval of the contents whose bytes reached the
@@ -405,66 +412,66 @@ func (r *reviewRun) evaluate(ctx context.Context, verdict reviewVerdict, tree st
 		pending.Verdict = "pending"
 		b.LastReview = &pending
 		if err := b.Track(); err != nil {
-			return Approved{}, false, err
+			return core.Approved{}, false, err
 		}
 		if final, err = b.Verify(ctx); err != nil {
-			return Approved{}, false, err
+			return core.Approved{}, false, err
 		}
 	}
 	if tree == seen && final.Green && final.Tree == tree {
 		approved := review
 		b.LastReview = &approved
 		if err := b.Track(); err != nil {
-			return Approved{}, false, err
+			return core.Approved{}, false, err
 		}
-		return Approved{Pass: final, Review: approved}, false, nil
+		return core.Approved{Pass: final, Review: approved}, false, nil
 	}
 
-	feedback, err := b.deliverySection(seen, final.Tree)
+	feedback, err := deliverySection(b, seen, final.Tree)
 	if err != nil {
-		return Approved{}, false, err
+		return core.Approved{}, false, err
 	}
 	if feedback != "" {
-		b.s.Progress(fmt.Sprintf("kogen: review %d: the candidate changed after its contents were delivered; returning the changes to the reviewer", n))
+		b.Progress(fmt.Sprintf("kogen: review %d: the candidate changed after its contents were delivered; returning the changes to the reviewer", n))
 	}
 	if final.Green {
 		feedback += "The new tree passed checks but has not been reviewed. Inspect these changes and submit_review for the current contents; do not restart the whole critique."
 	} else {
-		b.s.Progress(fmt.Sprintf("kogen: review %d: final verification failed; continuing targeted repairs", n))
+		b.Progress(fmt.Sprintf("kogen: review %d: final verification failed; continuing targeted repairs", n))
 		feedback += "Final verification of your repairs failed. Fix these failures and regressions from your edits; do not restart a whole-change critique. If observed evidence demonstrates a protected fixture defect, use submit_review changes with a blocking finding at that protected path instead of a production workaround, including a test-facing hidden comment.\n" +
 			b.PassFeedback(final, "submit_review")
 	}
 	b.Repairs++
 	if err := b.Track(); err != nil {
-		return Approved{}, false, err
+		return core.Approved{}, false, err
 	}
 	r.pass = final
-	r.sess = reviewSession{
+	r.sess = Session{
 		Role: r.sess.Role, Usage: r.sess.Usage, Attempts: attempts, Reopened: r.sess.Reopened, Repaired: true, Seen: final.Tree,
 		Input: slices.Concat(r.sess.Input, []any{map[string]any{"role": "user", "content": feedback}}),
 	}
-	return Approved{}, true, nil
+	return core.Approved{}, true, nil
 }
 
 // converse is the reviewer's requests and tool calls until it submits a valid verdict. Two
 // allowances, spent independently and each once: a rejected submit_review is sent back with its
 // problems, and a prose-only turn is sent back with a reminder (the next request requires
 // submit_review where the route supports it). Spending an allowance a second time ends this
-// review without a verdict (reviewRun.invalidStop).
-func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
+// review without a verdict (run.invalidStop).
+func (r *run) converse(ctx context.Context) (Verdict, error) {
 	b := r.b
 	prevUnread := -1
 	if r.sess.PrevUnread > 0 {
 		prevUnread = r.sess.PrevUnread
 	}
 	for {
-		if err := r.save(StageReview); err != nil {
-			return reviewVerdict{}, err
+		if err := r.save(core.StageReview); err != nil {
+			return Verdict{}, err
 		}
 		force := ""
 		if r.sess.Remind {
 			mode := "text_fallback"
-			if provider.SupportsToolChoice(providerRole(r.sess.Role)) {
+			if provider.SupportsToolChoice(core.ProviderRole(r.sess.Role)) {
 				mode = "api_forced"
 				force = agent.SubmitReviewTool
 			}
@@ -473,52 +480,52 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 				"rejected_verdicts": r.sess.Rejected, "no_tool_reminders": r.sess.NoTool,
 			})
 		}
-		retain := func(c *Continuation, input []any) {
+		retain := func(c *core.Continuation, input []any) {
 			sent := r.sess
 			sent.Input = input
-			if raw, err := sent.encode(); err == nil {
+			if raw, err := sent.Encode(); err == nil {
 				c.Review = raw
 			}
 		}
-		resp, active, err := b.Request(ctx, RequestSpec{
+		resp, active, err := b.Request(ctx, core.RequestSpec{
 			Owner: "review", Role: r.sess.Role, Instructions: agent.Prompt(agent.Reviewer),
 			Input: r.sess.Input, Tools: r.tools, Retain: retain, ForceTool: force,
 			Prefill: func(input []any) ([]any, error) {
-				return b.prefillSource(r.sess.Role, agent.Prompt(agent.Reviewer), r.tools, input)
+				return b.PrefillSource(r.sess.Role, agent.Prompt(agent.Reviewer), r.tools, input)
 			},
 		})
 		if err != nil {
-			return reviewVerdict{}, err
+			return Verdict{}, err
 		}
 		// The reminder request is over: ordinary tool choice again.
 		r.sess.Remind = false
-		r.sess.Usage = r.sess.Usage.plus(responseTokens(r.sess.Role, resp))
+		r.sess.Usage = r.sess.Usage.Plus(core.ResponseTokens(r.sess.Role, resp))
 		if err := b.Track(); err != nil {
-			return reviewVerdict{}, err
+			return Verdict{}, err
 		}
 		input := slices.Concat(active, tools.Replay(resp.Items))
 		calls := tools.Calls(resp.Items)
 		tl := r.nativeTools
 		if tl == nil {
-			tl = b.reviewNativeTools()
+			tl = b.NativeTools(ToolNames)
 		}
 
 		var outs []any
-		var verdict *reviewVerdict
+		var verdict *Verdict
 		var problems []string
 		for i := range calls {
 			call := calls[i]
-			if err := b.s.Err(); err != nil {
-				return reviewVerdict{}, err
+			if err := b.Err(); err != nil {
+				return Verdict{}, err
 			}
-			if err := b.validateWorkingContext(); err != nil {
-				return reviewVerdict{}, err
+			if err := b.ValidateWorkingContext(); err != nil {
+				return Verdict{}, err
 			}
 			if err := project.ValidateSource(b.SourceProvenance); err != nil {
-				return reviewVerdict{}, err
+				return Verdict{}, err
 			}
-			if err := b.Save(Continuation{Stage: StageTool, Owner: "review", Input: slices.Concat(input, outs)}); err != nil {
-				return reviewVerdict{}, err
+			if err := b.Save(core.Continuation{Stage: core.StageTool, Owner: "review", Input: slices.Concat(input, outs)}); err != nil {
+				return Verdict{}, err
 			}
 			switch {
 			case verdict != nil || problems != nil:
@@ -526,7 +533,7 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 			case call.Name == agent.SubmitReviewTool:
 				v, probs, err := r.validate(call.Args(), input)
 				if err != nil {
-					return reviewVerdict{}, err
+					return Verdict{}, err
 				}
 				if probs != nil {
 					problems = probs
@@ -541,18 +548,18 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 				edits := call.Name == "write_file" || call.Name == "shell"
 				before := ""
 				if edits {
-					if before, err = b.repo.Tree(b.Start, b.Excluded); err != nil {
-						return reviewVerdict{}, err
+					if before, err = b.Tree(); err != nil {
+						return Verdict{}, err
 					}
 				}
 				out, err := tl.Call(call)
 				if err != nil {
-					return reviewVerdict{}, err
+					return Verdict{}, err
 				}
 				if edits {
-					after, err := b.repo.Tree(b.Start, b.Excluded)
+					after, err := b.Tree()
 					if err != nil {
-						return reviewVerdict{}, err
+						return Verdict{}, err
 					}
 					if before == r.seenTree() {
 						r.sess.Seen = after
@@ -566,17 +573,17 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 					"event": "review_tool_call", "name": call.Name,
 					"arguments": provider.Fingerprint(call.Arguments), "result": provider.Fingerprint(result.Value()),
 				}
-				for k, v := range b.toolRecordFields(call, result, b.reviewPartID) {
+				for k, v := range b.ToolRecord(call, result) {
 					event[k] = v
 				}
 				b.Run.Event(event)
-				done := &Completed{Call: call.Item, Result: result.Value()}
-				if err := b.Save(Continuation{Stage: StageTool, Owner: "review", Input: slices.Concat(input, outs), Completed: done}); err != nil {
-					return reviewVerdict{}, err
+				done := &core.Completed{Call: call.Item, Result: result.Value()}
+				if err := b.Save(core.Continuation{Stage: core.StageTool, Owner: "review", Input: slices.Concat(input, outs), Completed: done}); err != nil {
+					return Verdict{}, err
 				}
 				if call.Name == "shell" {
 					if err := b.BaselineIntact(); err != nil {
-						return reviewVerdict{}, err
+						return Verdict{}, err
 					}
 				}
 				outs = append(outs, call.Output(result))
@@ -590,7 +597,7 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 				// the provider, not unread-part progress. It is only a no-tool turn for the allowance.
 				b.Run.Event(map[string]any{
 					"event": "provider_fault", "fault": "forced_tool_not_called", "review": b.Review, "tool": force,
-					"mode": "api_forced", "route": provider.Name(providerRole(r.sess.Role)), "model": r.sess.Role.Model,
+					"mode": "api_forced", "route": provider.Name(core.ProviderRole(r.sess.Role)), "model": r.sess.Role.Model,
 				})
 			}
 		}
@@ -606,12 +613,7 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 			r.allowance("unread_progress_exempt")
 		case problems != nil && len(calls) == 0:
 			if r.sess.NoTool >= 1 {
-				err := r.invalidStop(problems, "no_tool_reminder_exhausted")
-				if force != "" {
-					b.invalid.ForcedRoute = provider.Name(providerRole(r.sess.Role))
-					b.invalid.ForcedModel = r.sess.Role.Model
-				}
-				return reviewVerdict{}, err
+				return Verdict{}, r.invalidStop(problems, "no_tool_reminder_exhausted", force != "")
 			}
 			input = append(input, map[string]any{"role": "user",
 				"content": "Not a valid verdict: " + strings.Join(problems, "; ") + ". Call submit_review."})
@@ -620,15 +622,15 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 			r.allowance("no_tool_turn")
 		case problems != nil:
 			if r.sess.Rejected >= 1 {
-				return reviewVerdict{}, r.invalidStop(problems, "rejected_verdict_exhausted")
+				return Verdict{}, r.invalidStop(problems, "rejected_verdict_exhausted", false)
 			}
 			r.sess.Rejected++
 			r.allowance("rejected_verdict")
 		case verdict != nil:
 			r.sess.Input = input
 			if !r.external {
-				if err := b.materialEvent(input); err != nil {
-					return reviewVerdict{}, err
+				if err := b.MaterialEvent(input); err != nil {
+					return Verdict{}, err
 				}
 			}
 			return *verdict, nil
@@ -641,7 +643,7 @@ func (r *reviewRun) converse(ctx context.Context) (reviewVerdict, error) {
 // {path, line, severity, message}; every path names a file of the checkout or of the start
 // HEAD; changes has a blocking finding, approve none; and an approval has read all pinned source
 // parts. It returns the verdict, or the problems to send back.
-func (r *reviewRun) validate(args map[string]any, input []any) (*reviewVerdict, []string, error) {
+func (r *run) validate(args map[string]any, input []any) (*Verdict, []string, error) {
 	b := r.b
 	verdict, _ := args["verdict"].(string)
 	list, isList := args["findings"].([]any)
@@ -700,7 +702,7 @@ func (r *reviewRun) validate(args map[string]any, input []any) (*reviewVerdict, 
 		if st, err := os.Stat(filepath.Join(b.Root, path)); err == nil && st.Mode().IsRegular() {
 			continue
 		}
-		if _, ok := b.repo.Show(b.Start, path); !ok {
+		if !b.InStart(path) {
 			problems = append(problems, path+" is not a file of the repository")
 		}
 	}
@@ -711,7 +713,7 @@ func (r *reviewRun) validate(args map[string]any, input []any) (*reviewVerdict, 
 		problems = append(problems, "an approve verdict cannot have blocking findings")
 	}
 	if verdict == "changes" && !r.external {
-		unread, err := b.materialUnread(input)
+		unread, err := b.MaterialUnread(input)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -721,7 +723,7 @@ func (r *reviewRun) validate(args map[string]any, input []any) (*reviewVerdict, 
 		}
 	}
 	if verdict == "approve" && !r.external {
-		unread, err := b.materialUnread(input)
+		unread, err := b.MaterialUnread(input)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -733,7 +735,7 @@ func (r *reviewRun) validate(args map[string]any, input []any) (*reviewVerdict, 
 	if problems != nil {
 		return nil, problems, nil
 	}
-	return &reviewVerdict{Verdict: verdict, Findings: findings}, nil, nil
+	return &Verdict{Verdict: verdict, Findings: findings}, nil, nil
 }
 
 // reviewInteger is v when it is a JSON integer (not a float).
@@ -759,4 +761,10 @@ func unreadProblemCount(problems []string) int {
 		}
 	}
 	return 0
+}
+
+// Validate checks a submit_review call of the native reviewer's conversation input as the
+// reviewer does (REV-4): it returns the verdict, or the problems to send back.
+func Validate(b *core.Attempt, args map[string]any, input []any) (*Verdict, []string, error) {
+	return (&run{b: b}).validate(args, input)
 }

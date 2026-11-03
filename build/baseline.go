@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/sys"
 )
@@ -82,7 +83,7 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 		}
 		b.Run.Event(map[string]any{"event": "command_result", "name": c.Name, "status": r.Status, "output": Cap(r.Output)})
 		b.CheckBaseline = append(b.CheckBaseline, verify.CommandResult{Name: c.Name, Command: c.Run, Status: r.Status, Output: verify.Cap(r.Output)})
-		if c.Run == ":" && digest != "" && ctx.Err() == nil && b.Run != nil && b.Run.logErr == nil {
+		if c.Run == ":" && digest != "" && ctx.Err() == nil && b.Run != nil && b.Run.LogErr() == nil {
 			if after, _, err := baselineIdentity(b.Root, b.Config.Checks); err == nil && after == digest {
 				status, output := 0, ""
 				publishBaselineEvidence(dir, baselineEvidence{Version: 2, Complete: true, Command: c.Run, Status: &status, Output: &output, Position: &i, Identity: digest, Index: i, Name: c.Name, Reference: b.Run.LogPath})
@@ -97,7 +98,7 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 	for _, r := range failing {
 		names = append(names, r.Name)
 	}
-	b.Run.Event(map[string]any{"event": "baseline_checks", "checks": len(b.CheckBaseline), "failing": nonNil(names)})
+	b.Run.Event(map[string]any{"event": "baseline_checks", "checks": len(b.CheckBaseline), "failing": core.NonNil(names)})
 	if len(failing) == 0 {
 		return nil
 	}
@@ -249,7 +250,7 @@ func (b *Attempt) reviewBaselineMessage(pass verify.Pass) []any {
 
 // validBaseline is the checkpoint check of the recorded baseline: at most one result per
 // configured check, in configured order, with its command.
-func (s *State) validBaseline() bool {
+func validBaseline(s *State) bool {
 	if len(s.CheckBaseline) > len(s.Config.Checks) {
 		return false
 	}

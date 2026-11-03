@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	agent "kogen-loop/tools"
 )
 
@@ -63,7 +64,7 @@ func ledgerEntryOf(path, output string) (ledgerEntry, bool) {
 			return ledgerEntry{}, false
 		}
 	}
-	e := ledgerEntry{Tool: "read_file", Path: path, SHA256: hashHex([]byte(output))}
+	e := ledgerEntry{Tool: "read_file", Path: path, SHA256: core.HashHex([]byte(output))}
 	first := true
 	for _, line := range strings.Split(output, "\n") {
 		number, text, ok := strings.Cut(line, "\t")
@@ -133,7 +134,7 @@ func readLedgerMessage(input []any) (map[string]any, readLedger, error) {
 		}
 	}
 	for {
-		raw, err := encodeJSON(ledger)
+		raw, err := core.EncodeJSON(ledger)
 		if err != nil {
 			return nil, ledger, err
 		}

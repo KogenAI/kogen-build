@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	agent "kogen-loop/tools"
 )
 
@@ -257,11 +258,11 @@ func TestReviewBatchResumeReplaysTheSavedInputAndRecoversTheSameWay(t *testing.T
 
 	// The checkpoint (stage review) saved this input with the full executed outputs, never sent;
 	// resume loads it from JSON and the converse's first request goes through prepareContext.
-	raw, err := encodeJSON(map[string]any{"input": input})
+	raw, err := core.EncodeJSON(map[string]any{"input": input})
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := decodeJSONNumbers(raw)
+	v, err := core.DecodeJSONNumbers(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +331,7 @@ func TestReviewBatchResetThatFitsDefersNothingAndKeepsItsBytes(t *testing.T) {
 	state := b.WorkingContext["review"]
 	eq(t, "history length", len(state.History), n+1)
 	// The archive is exactly the input that was replaced.
-	want, err := encodeJSON(map[string]any{"input": input})
+	want, err := core.EncodeJSON(map[string]any{"input": input})
 	if err != nil {
 		t.Fatal(err)
 	}

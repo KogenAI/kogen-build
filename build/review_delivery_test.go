@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-executor/agent"
 	"kogen-loop/tools"
 )
@@ -390,7 +391,7 @@ func TestAReviewResetReportsEachImageAtItsNewestDeliveryOnlyForThisReview(t *tes
 	writeFile(t, filepath.Join(e.root, shot), string(noisePNG(t, 7, 4)), 0o644)
 	inline := materialSet{Authority: "exact approved authority", Source: "# Diff of existing/deleted paths\n" + strings.Repeat("s", 30_000), Files: []map[string]any{}}
 	authority := materialOpening(inline.Authority, inline.Source, nil)[0]
-	tl := &tools.Tools{Root: e.root, Session: b.s, Repo: agent.Git(b.repo), Enabled: reviewToolNames}
+	tl := &tools.Tools{Root: e.root, Session: b.s, Repo: agent.Git(b.repo), Enabled: review.ToolNames}
 	calls := 0
 	view := func() []any {
 		calls++

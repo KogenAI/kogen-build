@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-verification/verify"
@@ -29,62 +31,15 @@ import (
 // starts from the exact green candidate tree; at the review-only stop they are left in place
 // and an explicit resume discards and logs them before its fresh review.
 
-// invalidReview is what a review that ended without a valid verdict leaves for the Build: the
-// reason, the consumed allowances and what the review did to the checkout.
-type invalidReview struct {
-	Review          int
-	ForcedRoute     string
-	ForcedModel     string
-	Reason          string
-	Problems        []string
-	RejectedVerdict int
-	NoToolReminder  int
-	Pass            verify.Pass
-	// Base is the green pass the review session was started from (nil: see base).
-	Base *verify.Pass
-	// Reopened: it was the reopened conversation of a blocked review, whose blocker only a
-	// new explicit decision of that reviewer can clear. Repaired: it had already judged and
-	// sent back a verdict, so its pass may hold its own verified edits.
-	Reopened, Repaired bool
-}
-
-// base is the green pass the review session was started from. A session that has not repaired
-// still works from the pass it was given; a repaired one without a recorded base has none.
-func (inv *invalidReview) base() *verify.Pass {
+// invalidBase is the green pass the review session was started from. A session that has not
+// repaired still works from the pass it was given; a repaired one without a recorded base has
+// none.
+func invalidBase(inv *invalidReview) *verify.Pass {
 	if inv.Base == nil && !inv.Repaired {
 		pass := inv.Pass
 		return &pass
 	}
 	return inv.Base
-}
-
-// allowance records a consumption of the review's allowances in the run log.
-func (r *reviewRun) allowance(why string) {
-	r.b.Run.Event(map[string]any{
-		"event": "review_allowance", "review": r.b.Review, "why": why,
-		"rejected_verdicts": r.sess.Rejected, "no_tool_reminders": r.sess.NoTool,
-	})
-}
-
-// invalidStop ends the review without a verdict (the second spending of an allowance). It
-// records the reason with both counters, notes the review for the retry gate and returns
-// candidate/review_invalid.
-func (r *reviewRun) invalidStop(problems []string, reason string) error {
-	b := r.b
-	b.Run.Event(map[string]any{
-		"event": "review", "review": b.Review, "verdict": "invalid", "problems": problems, "reason": reason,
-		"rejected_verdicts": r.sess.Rejected, "no_tool_reminders": r.sess.NoTool,
-	})
-	b.LastReview = &ReviewRecord{N: b.Review, Verdict: "invalid", Findings: []map[string]any{}}
-	b.invalid = &invalidReview{
-		Review: b.Review, Reason: reason, Problems: problems, RejectedVerdict: r.sess.Rejected, NoToolReminder: r.sess.NoTool,
-		Pass: r.pass, Base: r.base, Reopened: r.sess.Reopened, Repaired: r.sess.Repaired,
-	}
-	return reviewInvalidError()
-}
-
-func reviewInvalidError() *sys.Error {
-	return sys.Fail("candidate", "review_invalid", "the reviewer did not return a valid verdict; edits are left in place", 1)
 }
 
 // takeInvalid is the fact of the review that just ended invalid, or nil when err is anything
@@ -116,7 +71,7 @@ func (b *Attempt) reviewWithRetry(ctx context.Context, first func() (Approved, e
 		if inv == nil {
 			return Approved{}, err
 		}
-		inv.Base = inv.base()
+		inv.Base = invalidBase(inv)
 		automatic := inv.Base != nil && !inv.Repaired &&
 			(b.ReviewRetry == nil || b.ReviewRetry.Tree != inv.Base.Tree || !b.ReviewRetry.Automatic)
 		if why := b.reviewOnlyBlocked(inv, automatic); why != "" {
@@ -134,7 +89,7 @@ func (b *Attempt) reviewWithRetry(ctx context.Context, first func() (Approved, e
 			Review: inv.Review, Reason: inv.Reason, RejectedVerdict: inv.RejectedVerdict, NoToolReminder: inv.NoToolReminder,
 			Run: b.Run.ID, Next: next,
 		})
-		b.setPhase(phaseReview)
+		b.SetPhase(phaseReview)
 		if err := b.Save(Continuation{Stage: StageReviewOnly, Pass: &pass}); err != nil {
 			return Approved{}, err
 		}
@@ -189,7 +144,7 @@ func (b *Attempt) reviewOnlyBlocked(inv *invalidReview, discard bool) string {
 		return "the review reopened a blocked review; only its own new decision clears the blocker"
 	case inv.Base == nil && inv.Repaired:
 		return "the review already had a verdict judged and its verified edits are part of the pass"
-	case inv.Base == nil || !inv.Base.Green || !b.completePass(inv.Base, b.model):
+	case inv.Base == nil || !inv.Base.Green || !stateComplete(&b.State, inv.Base, b.model):
 		return "the verified pass is not complete green evidence"
 	}
 	// Higher-priority causes first: a moved HEAD, a changed approval, baseline or index is
@@ -260,7 +215,7 @@ func (b *Attempt) discardReviewEdits(inv *invalidReview, current string) ([]stri
 // approvalIntact is the exact approval record the Build started from.
 func (b *Attempt) approvalIntact() error {
 	current, err := os.ReadFile(project.ApprovalPath(b.Root, b.Slug))
-	saved, derr := decodeBase64(b.ApprovalBytes)
+	saved, derr := core.DecodeBase64(b.ApprovalBytes)
 	if err != nil || derr != nil || !bytes.Equal(current, saved) {
 		return fmt.Errorf("the approval changed")
 	}
@@ -294,7 +249,7 @@ func (b *Attempt) indexIntact() error {
 // edits, which the resume discards.
 func (b *Attempt) reviewOnlyRefusal() (string, error) {
 	pass := b.Continuation.Pass
-	if pass != nil && pass.Green && b.completePass(pass, b.model) && b.ReviewRetry != nil && b.ReviewRetry.Tree == pass.Tree {
+	if pass != nil && pass.Green && stateComplete(&b.State, pass, b.model) && b.ReviewRetry != nil && b.ReviewRetry.Tree == pass.Tree {
 		return "", nil
 	}
 	tree, err := b.repo.Tree(b.Start, b.Excluded)
@@ -323,7 +278,7 @@ func (b *Attempt) reviewOnlyResume(ctx context.Context) error {
 	if tree != pass.Tree {
 		paths, err := b.discardReviewEdits(&invalidReview{Review: b.Review, Pass: pass}, tree)
 		if err != nil {
-			return resumeRefused("review " + fmt.Sprint(b.Review) + "'s uncommitted edits could not be discarded: " + err.Error())
+			return core.ResumeRefused("review " + fmt.Sprint(b.Review) + "'s uncommitted edits could not be discarded: " + err.Error())
 		}
 		b.s.Puts(fmt.Sprintf("discarded review %d's uncommitted edits, which are not part of that green candidate: %s", b.Review, strings.Join(paths, ", ")))
 	}
@@ -347,7 +302,7 @@ func (b *Attempt) reviewOnlyResume(ctx context.Context) error {
 	}
 	b.Run.Event(map[string]any{
 		"event": "review_retry", "kind": "resume", "from_review": from, "review": b.Review + 1, "tree": pass.Tree,
-		"parent": nonNilString(b.Parent), "invalid_reviews": nonNil(invalid),
+		"parent": nonNilString(b.Parent), "invalid_reviews": core.NonNil(invalid),
 	})
 	if err := b.Save(c); err != nil {
 		return err
@@ -400,7 +355,7 @@ func (b *Attempt) externalReviewRefusal() string {
 	who := fmt.Sprintf("review %d by executor %s", b.Review, x)
 	blocked := c.Stage == StageReviewRetry
 	if c.Stage == StageReviewVerify {
-		sess, err := reviewDecode(c.Review)
+		sess, err := review.DecodeSession(c.Review)
 		if err != nil {
 			return who + " cannot be continued (resume capability: none) and its saved state cannot be read"
 		}
@@ -411,7 +366,7 @@ func (b *Attempt) externalReviewRefusal() string {
 			"inspect the preserved candidate and evidence read-only and preserve them manually, then start a fresh Build from a Build-clean checkout " +
 			"under the still-current exact approval (ordinary Refine and new approval if the authority must change)"
 	}
-	if base := c.Base; base == nil || !base.Valid() || !base.Green || !b.completePass(base, b.model) {
+	if base := c.Base; base == nil || !base.Valid() || !base.Green || !stateComplete(&b.State, base, b.model) {
 		return who + " cannot be continued (resume capability: none) and this checkpoint records no complete green pass that review started from, " +
 			"so no fresh review can start from verified work; start a fresh Build from a Build-clean checkout under the still-current exact approval"
 	}
@@ -432,7 +387,7 @@ func (b *Attempt) resumeExternalReview(ctx context.Context) error {
 	if tree != base.Tree {
 		paths, err := b.discardReviewEdits(&invalidReview{Review: n, Pass: base}, tree)
 		if err != nil {
-			return resumeRefused("review " + fmt.Sprint(n) + "'s uncommitted edits could not be discarded: " + err.Error())
+			return core.ResumeRefused("review " + fmt.Sprint(n) + "'s uncommitted edits could not be discarded: " + err.Error())
 		}
 		b.s.Puts(fmt.Sprintf("discarded review %d's uncommitted edits, which are not part of that green candidate: %s", n, strings.Join(paths, ", ")))
 	}

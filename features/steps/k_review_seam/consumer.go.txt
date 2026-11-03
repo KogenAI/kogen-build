@@ -1,0 +1,244 @@
+// A consumer of the exported API of package build as of kogen-build 6abf7db: every exported
+// function, variable and constant (with its value), every exported type with its exported fields
+// and methods and their types, and the exact method set of the Reviewer interface (implemented
+// below). The k-review-seam acceptance compiles it with `go build -overlay` as a new package of
+// this module; it never runs.
+package kogenapiconsumer
+
+import (
+	"context"
+	"encoding/json"
+	"github.com/KogenAI/kogen-build/build"
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-verification/verify"
+	"kogen-loop/provider"
+	"kogen-loop/sys"
+)
+
+var _ *build.Approved
+var _ = func(x *build.Approved) *verify.Pass { return &x.Pass }
+var _ = func(x *build.Approved) *build.ReviewRecord { return &x.Review }
+var _ *build.Attempt
+var _ = func(x *build.Attempt) *build.State { return &x.State }
+var _ func(*build.Attempt) error = (*build.Attempt).BaselineIntact
+var _ func(*build.Attempt, verify.Pass, string) string = (*build.Attempt).PassFeedback
+var _ func(*build.Attempt, context.Context, build.RequestSpec) (*provider.Response, []any, error) = (*build.Attempt).Request
+var _ func(*build.Attempt, build.Continuation) error = (*build.Attempt).Save
+var _ func(*build.Attempt) error = (*build.Attempt).Track
+var _ func(*build.Attempt, context.Context) (verify.Pass, error) = (*build.Attempt).Verify
+var _ func(context.Context, *sys.Session, build.Input) (int, error) = build.Build
+var _ func(string) string = build.Cap
+var _ *build.Checkpoint
+var _ = func(x *build.Checkpoint) *int { return &x.Version }
+var _ = func(x *build.Checkpoint) *string { return &x.Identity }
+var _ = func(x *build.Checkpoint) *string { return &x.Candidate }
+var _ = func(x *build.Checkpoint) *string { return &x.Index }
+var _ = func(x *build.Checkpoint) *string { return &x.Approval }
+var _ = func(x *build.Checkpoint) *json.RawMessage { return &x.State }
+var _ = func(x *build.Checkpoint) **build.StageProgress { return &x.StageProgress }
+var _ = func(x *build.Checkpoint) *map[string]*build.RawMeta { return &x.RecoveryRaw }
+var _ *build.Completed
+var _ = func(x *build.Completed) *map[string]any { return &x.Call }
+var _ = func(x *build.Completed) *any { return &x.Result }
+var _ *build.Continuation
+var _ = func(x *build.Continuation) *string { return &x.Stage }
+var _ = func(x *build.Continuation) *[]any { return &x.Input }
+var _ = func(x *build.Continuation) *string { return &x.Feedback }
+var _ = func(x *build.Continuation) *map[string]any { return &x.Finish }
+var _ = func(x *build.Continuation) *string { return &x.Owner }
+var _ = func(x *build.Continuation) **build.Completed { return &x.Completed }
+var _ = func(x *build.Continuation) *[]map[string]any { return &x.Response }
+var _ = func(x *build.Continuation) *bool { return &x.Request }
+var _ = func(x *build.Continuation) *string { return &x.Tree }
+var _ = func(x *build.Continuation) *string { return &x.Commit }
+var _ = func(x *build.Continuation) *bool { return &x.AlreadyPresent }
+var _ = func(x *build.Continuation) **verify.Pass { return &x.Pass }
+var _ = func(x *build.Continuation) *json.RawMessage { return &x.Review }
+var _ = func(x *build.Continuation) **verify.Pass { return &x.Base }
+var _ *build.Deps
+var _ = func(x *build.Deps) *int { return &x.BuildRequestBudget }
+var _ = func(x *build.Deps) *bool { return &x.ReadLedger }
+var _ = func(x *build.Deps) *int { return &x.BuildBriefMaxFiles }
+var _ = func(x *build.Deps) *int { return &x.BuildBriefMaxReadmeBytes }
+var _ = func(x *build.Deps) **provider.Client { return &x.Client }
+var _ = func(x *build.Deps) *verify.Tools { return &x.Tools }
+var _ = func(x *build.Deps) *build.Reviewer { return &x.Reviewer }
+var _ = func(x *build.Deps) *build.LegacyDecoder { return &x.Legacy }
+var _ = func(x *build.Deps) *func(role project.Role) (executor.Executor, error) { return &x.External }
+var _ *build.Diagnostic
+var _ = func(x *build.Diagnostic) *string { return &x.Text }
+var _ = func(x *build.Diagnostic) *string { return &x.SourcePath }
+var _ = func(x *build.Diagnostic) *string { return &x.SHA256 }
+var _ func(*build.Diagnostic) error = (*build.Diagnostic).Validate
+var _ *build.ExecutorState
+var _ = func(x *build.ExecutorState) *string { return &x.Name }
+var _ = func(x *build.ExecutorState) *string { return &x.Version }
+var _ = func(x *build.ExecutorState) *string { return &x.SessionID }
+var _ = func(x *build.ExecutorState) *int { return &x.Rounds }
+var _ = func(x *build.ExecutorState) *build.ExecutorUsage { return &x.Usage }
+var _ *build.ExecutorUsage
+var _ = func(x *build.ExecutorUsage) **int { return &x.Input }
+var _ = func(x *build.ExecutorUsage) **int { return &x.Cached }
+var _ = func(x *build.ExecutorUsage) **int { return &x.Output }
+var _ = func(x *build.ExecutorUsage) **int { return &x.Reasoning }
+var _ = func(x *build.ExecutorUsage) *string { return &x.State }
+var _ = func(x *build.ExecutorUsage) *string { return &x.Source }
+var _ = func(x *build.ExecutorUsage) **float64 { return &x.CostUSD }
+var _ *build.HistoryRef
+var _ = func(x *build.HistoryRef) *string { return &x.Path }
+var _ = func(x *build.HistoryRef) *string { return &x.SHA256 }
+var _ *build.Input
+var _ = func(x *build.Input) *build.Deps { return &x.Deps }
+var _ = func(x *build.Input) *string { return &x.Project }
+var _ = func(x *build.Input) *string { return &x.Slug }
+var _ = func(x *build.Input) **build.Diagnostic { return &x.Context }
+var _ *build.InvalidReview
+var _ = func(x *build.InvalidReview) *int { return &x.Review }
+var _ = func(x *build.InvalidReview) *string { return &x.Reason }
+var _ = func(x *build.InvalidReview) *int { return &x.RejectedVerdict }
+var _ = func(x *build.InvalidReview) *int { return &x.NoToolReminder }
+var _ = func(x *build.InvalidReview) *string { return &x.Run }
+var _ = func(x *build.InvalidReview) *string { return &x.Next }
+var _ *build.LegacyDecoder
+var _ build.LegacyDecoder = func(raw []byte) (*build.Loaded, error) { return nil, nil }
+var _ *build.Loaded
+var _ = func(x *build.Loaded) *build.Checkpoint { return &x.Doc }
+var _ = func(x *build.Loaded) **build.State { return &x.State }
+var _ *build.OwnerContext
+var _ = func(x *build.OwnerContext) *[]any { return &x.Mandatory }
+var _ = func(x *build.OwnerContext) *[]any { return &x.Observations }
+var _ = func(x *build.OwnerContext) *[]build.HistoryRef { return &x.History }
+var _ = func(x *build.OwnerContext) any { return x.InlineMaterial }
+var _ = func(x *build.OwnerContext) **string { return &x.SourceTree }
+var _ *build.RawMeta
+var _ = func(x *build.RawMeta) *string { return &x.Mode }
+var _ = func(x *build.RawMeta) *string { return &x.SHA256 }
+var _ func(context.Context, *sys.Session, build.RecoverInput) (int, error) = build.Recover
+var _ *build.RecoverInput
+var _ = func(x *build.RecoverInput) *string { return &x.Project }
+var _ = func(x *build.RecoverInput) *string { return &x.ID }
+var _ = func(x *build.RecoverInput) *string { return &x.Output }
+var _ *build.RequestBudget
+var _ = func(x *build.RequestBudget) *int { return &x.Limit }
+var _ = func(x *build.RequestBudget) *int { return &x.Count }
+var _ *build.RequestSpec
+var _ = func(x *build.RequestSpec) *string { return &x.Owner }
+var _ = func(x *build.RequestSpec) *project.Role { return &x.Role }
+var _ = func(x *build.RequestSpec) *string { return &x.Instructions }
+var _ = func(x *build.RequestSpec) *[]any { return &x.Input }
+var _ = func(x *build.RequestSpec) *[]any { return &x.Tools }
+var _ = func(x *build.RequestSpec) *func(c *build.Continuation, input []any) { return &x.Retain }
+var _ = func(x *build.RequestSpec) *func(input []any) ([]any, error) { return &x.Prefill }
+var _ = func(x *build.RequestSpec) *string { return &x.ForceTool }
+var _ func(context.Context, *sys.Session, build.ResumeInput) (int, error) = build.Resume
+var _ *build.ResumeInput
+var _ = func(x *build.ResumeInput) *build.Deps { return &x.Deps }
+var _ = func(x *build.ResumeInput) *string { return &x.Project }
+var _ = func(x *build.ResumeInput) *string { return &x.ID }
+var _ *build.ReviewRecord
+var _ = func(x *build.ReviewRecord) *int { return &x.N }
+var _ = func(x *build.ReviewRecord) *string { return &x.Verdict }
+var _ = func(x *build.ReviewRecord) *[]map[string]any { return &x.Findings }
+var _ = func(x *build.ReviewRecord) *string { return &x.Tree }
+var _ *build.ReviewRetry
+var _ = func(x *build.ReviewRetry) *string { return &x.Tree }
+var _ = func(x *build.ReviewRetry) *bool { return &x.Automatic }
+var _ = func(x *build.ReviewRetry) *[]build.InvalidReview { return &x.Invalid }
+var _ *build.Reviewer
+var _ func(build.Reviewer, context.Context, *build.Attempt) (build.Approved, error) = build.Reviewer.Resume
+var _ func(build.Reviewer, context.Context, *build.Attempt, verify.Pass) (build.Approved, error) = build.Reviewer.Review
+var _ *build.Run
+var _ = func(x *build.Run) *string { return &x.ID }
+var _ = func(x *build.Run) *string { return &x.Dir }
+var _ = func(x *build.Run) *string { return &x.LogPath }
+var _ func(*build.Run, map[string]any) = (*build.Run).Event
+var _ func(*build.Run, map[string]any) = (*build.Run).Log
+var _ func(*build.Run, any) error = (*build.Run).PublishCheckpoint
+var _ func(*build.Run, string, any) error = (*build.Run).Write
+var _ = map[bool]int{false: 0, build.StageBuilder == "builder": 1}
+var _ = map[bool]int{false: 0, build.StageBuilderVerify == "builder_verify": 1}
+var _ = map[bool]int{false: 0, build.StageCommit == "commit": 1}
+var _ = map[bool]int{false: 0, build.StageCommitFailed == "commit_failed": 1}
+var _ *build.StageCustody
+var _ = func(x *build.StageCustody) *string { return &x.Path }
+var _ = func(x *build.StageCustody) *string { return &x.SHA256 }
+var _ *build.StageEvidence
+var _ = func(x *build.StageEvidence) *verify.Pass { return &x.Pass }
+var _ = func(x *build.StageEvidence) *string { return &x.StageID }
+var _ = func(x *build.StageEvidence) *int { return &x.Index }
+var _ = func(x *build.StageEvidence) *string { return &x.Contract }
+var _ = func(x *build.StageEvidence) **build.StageCustody { return &x.Custody }
+var _ func(build.StageEvidence) ([]byte, error) = build.StageEvidence.MarshalJSON
+var _ func(*build.StageEvidence, []byte) error = (*build.StageEvidence).UnmarshalJSON
+var _ = map[bool]int{false: 0, build.StageLanded == "landed": 1}
+var _ *build.StageProgress
+var _ = func(x *build.StageProgress) *int { return &x.Total }
+var _ = func(x *build.StageProgress) *[]string { return &x.Completed }
+var _ = func(x *build.StageProgress) **string { return &x.Active }
+var _ = func(x *build.StageProgress) *string { return &x.Phase }
+var _ = map[bool]int{false: 0, build.StageReview == "review": 1}
+var _ = map[bool]int{false: 0, build.StageReviewOnly == "review_only": 1}
+var _ = map[bool]int{false: 0, build.StageReviewRetry == "review_retry_verify": 1}
+var _ = map[bool]int{false: 0, build.StageReviewVerify == "review_verify": 1}
+var _ = map[bool]int{false: 0, build.StageStartup == "startup": 1}
+var _ = map[bool]int{false: 0, build.StageTool == "tool": 1}
+var _ = map[bool]int{false: 0, build.StageUsageLimit == "builder_usage_limit": 1}
+var _ func(string) (*build.Run, error) = build.StartRun
+var _ *build.State
+var _ = func(x *build.State) *string { return &x.Root }
+var _ = func(x *build.State) *string { return &x.Slug }
+var _ = func(x *build.State) **project.Config { return &x.Config }
+var _ = func(x *build.State) *string { return &x.IntentText }
+var _ = func(x *build.State) *string { return &x.Start }
+var _ = func(x *build.State) *[]string { return &x.Baseline }
+var _ = func(x *build.State) *map[string]string { return &x.BaselineDigests }
+var _ = func(x *build.State) *[]string { return &x.Excluded }
+var _ = func(x *build.State) **build.Run { return &x.Run }
+var _ = func(x *build.State) *string { return &x.GitIndex }
+var _ = func(x *build.State) *string { return &x.StartTree }
+var _ = func(x *build.State) *string { return &x.Phase }
+var _ = func(x *build.State) *int64 { return &x.T0 }
+var _ = func(x *build.State) *build.Tokens { return &x.Usage }
+var _ = func(x *build.State) *int { return &x.Round }
+var _ = func(x *build.State) *int { return &x.Pass }
+var _ = func(x *build.State) *int { return &x.Review }
+var _ = func(x *build.State) *int { return &x.Repairs }
+var _ = func(x *build.State) **verify.Pass { return &x.LastPass }
+var _ = func(x *build.State) **build.ReviewRecord { return &x.LastReview }
+var _ = func(x *build.State) *map[string]any { return &x.Blocker }
+var _ = func(x *build.State) *build.Continuation { return &x.Continuation }
+var _ = func(x *build.State) *string { return &x.ApprovalBytes }
+var _ = func(x *build.State) **string { return &x.Parent }
+var _ = func(x *build.State) **string { return &x.RootRun }
+var _ = func(x *build.State) *int64 { return &x.ModelActiveMS }
+var _ = func(x *build.State) *int { return &x.UnknownRequests }
+var _ = func(x *build.State) *build.Tokens { return &x.AttemptUsage }
+var _ = func(x *build.State) *map[string]*build.OwnerContext { return &x.WorkingContext }
+var _ = func(x *build.State) **project.SourceRef { return &x.SourceProvenance }
+var _ = func(x *build.State) *map[string]provider.CacheState { return &x.PromptCache }
+var _ = func(x *build.State) *map[string]string { return &x.CacheIDs }
+var _ = func(x *build.State) any { return x.StagePlan }
+var _ = func(x *build.State) **build.StageProgress { return &x.StageProgress }
+var _ = func(x *build.State) *[]build.StageEvidence { return &x.StageEvidence }
+var _ = func(x *build.State) **build.ExecutorState { return &x.Executor }
+var _ = func(x *build.State) **build.ExecutorState { return &x.ReviewExecutor }
+var _ = func(x *build.State) **build.RequestBudget { return &x.BuildRequestBudget }
+var _ = func(x *build.State) **build.ReviewRetry { return &x.ReviewRetry }
+var _ = func(x *build.State) *[]verify.CommandResult { return &x.CheckBaseline }
+var _ *build.Tokens
+var _ = func(x *build.Tokens) **int { return &x.Input }
+var _ = func(x *build.Tokens) **int { return &x.Cached }
+var _ = func(x *build.Tokens) **int { return &x.Output }
+var _ = func(x *build.Tokens) **int { return &x.Reasoning }
+var _ func(build.Tokens) string = build.Tokens.Line
+var _ func(build.Tokens) string = build.Tokens.Total
+
+type implReviewer struct{}
+
+func (implReviewer) Resume(context.Context, *build.Attempt) (build.Approved, error) { panic(0) }
+func (implReviewer) Review(context.Context, *build.Attempt, verify.Pass) (build.Approved, error) {
+	panic(0)
+}
+
+var _ build.Reviewer = implReviewer{}

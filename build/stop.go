@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/sys"
@@ -14,7 +15,7 @@ import (
 func (b *Attempt) result(outcome string, extra map[string]any) map[string]any {
 	notRun := []string{}
 	if b.LastPass != nil {
-		notRun = nonNil(b.LastPass.NotRun)
+		notRun = core.NonNil(b.LastPass.NotRun)
 	}
 	var parent, rootRun any
 	if b.Parent != nil {
@@ -49,7 +50,7 @@ func (b *Attempt) result(outcome string, extra map[string]any) map[string]any {
 		m["review_executor"] = b.ReviewExecutor
 	}
 	if b.StageProgress != nil {
-		m["stage_progress"] = b.StageProgress.value()
+		m["stage_progress"] = b.StageProgress.Value()
 	}
 	if c := b.comparisonRecord(); c != nil {
 		m["check_comparison"] = c
@@ -134,7 +135,7 @@ func (b *Attempt) details(reason string, report bool, providerFailure map[string
 		outcome["provider_failure"] = providerFailure
 	}
 	b.Run.Event(outcome)
-	extra := map[string]any{"edited": nonNil(edited), "still_failing": still}
+	extra := map[string]any{"edited": core.NonNil(edited), "still_failing": still}
 	if b.Blocker != nil {
 		extra["blocker"] = b.Blocker
 	}

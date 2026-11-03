@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-executor/agent"
 )
 
@@ -26,8 +27,7 @@ func revodGateEmptySourceControls(t *testing.T) {
 		if b.WorkingContext["review"].InlineMaterial == nil || len(b.WorkingContext["review"].History) != 0 {
 			t.Fatalf("cell %d pinned its source", cell)
 		}
-		r := &reviewRun{b: b}
-		if verdict, problems, err := r.validate(map[string]any{"verdict": "approve", "findings": []any{}}, input); err != nil || verdict == nil {
+		if verdict, problems, err := review.Validate(b.reviewing(), map[string]any{"verdict": "approve", "findings": []any{}}, input); err != nil || verdict == nil {
 			t.Fatalf("cell %d approval refused: %v %v", cell, problems, err)
 		}
 	}

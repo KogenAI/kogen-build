@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"kogen-loop/provider"
 	"kogen-loop/tools"
 )
@@ -154,13 +155,13 @@ func (b *Attempt) reviewPartID(path string) (int, bool) {
 		if err != nil {
 			return 0, false
 		}
-		v, err := decodeJSONNumbers(data)
+		v, err := core.DecodeJSONNumbers(data)
 		if err != nil {
 			return 0, false
 		}
 		doc, _ := v.(map[string]any)
 		source, ok := doc["review_source"].(map[string]any)
-		if !ok || display(source["review"]) != itoa(b.Review) {
+		if !ok || core.Display(source["review"]) != itoa(b.Review) {
 			return 0, false
 		}
 		part, _ := source["part"].(json.Number)

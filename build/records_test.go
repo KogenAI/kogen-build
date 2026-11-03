@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"kogen-loop/provider"
 	"kogen-loop/tools"
 )
@@ -21,7 +22,7 @@ func TestRequestUsageCarriesCacheWriteOrNull(t *testing.T) {
 		write *int
 		want  string
 	}{{&seven, `"cache_write":7`}, {nil, `"cache_write":null`}} {
-		raw, err := json.Marshal(requestUsageOf(zeroTokens(), &provider.Response{Known: provider.KnownUsage{Write: c.write}}))
+		raw, err := json.Marshal(requestUsageOf(core.ZeroTokens(), &provider.Response{Known: provider.KnownUsage{Write: c.write}}))
 		if err != nil || !strings.Contains(string(raw), c.want) || !strings.Contains(string(raw), `"cached":0`) {
 			t.Fatalf("%s %v", raw, err)
 		}

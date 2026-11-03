@@ -256,7 +256,7 @@ func TestMain76StagedStateIsReadWithItsEvidence(t *testing.T) {
 		t.Fatal(why)
 	}
 	st := loaded.State
-	eq(t, "progress", canonical(st.StageProgress.value()), `{"active":"surface","completed":["foundation"],"phase":"stage","total":2}`)
+	eq(t, "progress", canonical(st.StageProgress.Value()), `{"active":"surface","completed":["foundation"],"phase":"stage","total":2}`)
 	eq(t, "records", len(st.StageEvidence), 2)
 	red, green := st.StageEvidence[0], st.StageEvidence[1]
 	eq(t, "red", red.Pass.Green, false)
@@ -273,7 +273,7 @@ func TestMain76StagedStateIsReadWithItsEvidence(t *testing.T) {
 	}
 	eq(t, "plan", st.StagePlan[0].Title+" | "+st.StagePlan[0].Goal, "Foundation | First runnable section — é")
 	// Staged navigation: the Elixir Kogen's own text.
-	contains(t, "navigation", st.navigation(), "\nStaged plan progress: {\"active\":\"surface\",\"completed\":[\"foundation\"],\"phase\":\"stage\",\"total\":2}\nActive stage 2/2: ")
+	contains(t, "navigation", st.Navigation(), "\nStaged plan progress: {\"active\":\"surface\",\"completed\":[\"foundation\"],\"phase\":\"stage\",\"total\":2}\nActive stage 2/2: ")
 }
 
 func TestMain76NullableUsageIsKept(t *testing.T) {

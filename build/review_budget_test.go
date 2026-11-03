@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/project"
 	agent "kogen-loop/tools"
 )
@@ -31,7 +32,7 @@ func budgetMaterial(authority string) materialSet {
 // budgetMeasure is the real measurement against the unchanged ceiling.
 func budgetMeasure(t *testing.T, b *Attempt, role project.Role, input []any) agent.Measurement {
 	t.Helper()
-	m, err := agent.Measure(b.bodyOf(role, "policy", input, nil, "review"), providerRole(role))
+	m, err := agent.Measure(b.bodyOf(role, "policy", input, nil, "review"), core.ProviderRole(role))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func refText(h HistoryRef) string {
 func archiveOK(t *testing.T, ref HistoryRef) {
 	t.Helper()
 	data, err := os.ReadFile(ref.Path)
-	if err != nil || hashHex(data) != ref.SHA256 {
+	if err != nil || core.HashHex(data) != ref.SHA256 {
 		t.Fatalf("archive %s: %v", ref.Path, err)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"kogen-loop/sys"
@@ -64,14 +65,14 @@ func startFacts(root, slug string, run *Run, cfg *project.Config, parent, rootRu
 		rootRun = run.ID
 	}
 	now := time.Now()
-	f := &localFacts{root: root, checkout: c, clock: &phaseClock{phase: "startup", started: now, at: isoTime(now)}}
+	f := &localFacts{root: root, checkout: c, clock: &phaseClock{phase: "startup", started: now, at: core.ISOTime(now)}}
 	f.record = map[string]any{
 		"checkout_id":        c.ID,
 		"slug":               slug,
 		"run_id":             run.ID,
 		"resumed_from":       resumedFrom,
 		"root_run":           rootRun,
-		"started_at":         isoTime(now),
+		"started_at":         core.ISOTime(now),
 		"state":              "active",
 		"phase":              "startup",
 		"verification_pass":  nil,
@@ -143,9 +144,9 @@ func (f *localFacts) fail(e *sys.Error) { f.failure = e }
 
 func passSummary(b *Attempt) map[string]any {
 	p := b.LastPass
-	m := map[string]any{"n": p.N, "green": p.Green, "tree": p.Tree, "failing": nonNil(p.Failing)}
+	m := map[string]any{"n": p.N, "green": p.Green, "tree": p.Tree, "failing": core.NonNil(p.Failing)}
 	if !p.Legacy {
-		m["not_run"] = nonNil(p.NotRun)
+		m["not_run"] = core.NonNil(p.NotRun)
 	}
 	return m
 }
@@ -157,13 +158,6 @@ func reviewSummary(b *Attempt) map[string]any {
 		findings = []map[string]any{}
 	}
 	return map[string]any{"n": r.N, "verdict": r.Verdict, "findings": findings}
-}
-
-func nonNil[T any](s []T) []T {
-	if s == nil {
-		return []T{}
-	}
-	return s
 }
 
 // blockers are the reasons a Build cannot simply continue.
@@ -211,7 +205,7 @@ func (f *localFacts) update(b *Attempt, phase, outcome string) error {
 		return nil
 	}
 	if b.StageProgress != nil {
-		r["stage_progress"] = b.StageProgress.value()
+		r["stage_progress"] = b.StageProgress.Value()
 	}
 	// External roles only: each role's own identity, rounds and harness-reported usage. Native
 	// records carry no executor fields.
@@ -236,7 +230,7 @@ func (f *localFacts) update(b *Attempt, phase, outcome string) error {
 		}
 		b.Run.Event(map[string]any{"event": "phase_duration", "phase": name, "timestamp": c.at, "wall_ms": now.Sub(c.started).Milliseconds()})
 		if outcome == "" {
-			f.clock = &phaseClock{phase: phase, started: now, at: isoTime(now)}
+			f.clock = &phaseClock{phase: phase, started: now, at: core.ISOTime(now)}
 		} else {
 			f.clock = nil
 		}
@@ -409,7 +403,7 @@ func (f *localFacts) publish(c project.CheckoutFacts) error {
 	}
 	return atomicJSON(filepath.Join(dir, "completion.json"), map[string]any{
 		"inspect": runs[:min(100, len(runs))],
-		"resume":  nonNil(resume[:min(100, len(resume))]),
+		"resume":  core.NonNil(resume[:min(100, len(resume))]),
 	})
 }
 
@@ -427,7 +421,7 @@ func pick(m map[string]any, keys ...string) map[string]any {
 
 // atomicJSON writes the JSON of v and a newline to path.tmp and renames it over path.
 func atomicJSON(path string, v any) error {
-	b, err := encodeJSON(v)
+	b, err := core.EncodeJSON(v)
 	if err != nil {
 		return err
 	}

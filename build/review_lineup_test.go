@@ -3,7 +3,6 @@ package build
 import (
 	"context"
 	"encoding/json"
-	"github.com/KogenAI/kogen-executor/agent"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +11,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
 	"kogen-loop/sys"
 )
@@ -368,19 +370,19 @@ func TestClaudeLineupReviewMaterialDelivery(t *testing.T) {
 				t.Fatalf("%s mode %v", name, st.Mode().Perm())
 			}
 		}
-		var ev reviewMaterial
+		var ev review.Material
 		raw, _ := os.ReadFile(filepath.Join(dir, "review-1-material.json"))
 		if err := json.Unmarshal(raw, &ev); err != nil {
 			t.Fatal(err)
 		}
-		if !ev.Delivered || ev.Round != 1 || ev.Session == "" || ev.Source.SHA256 != hashHex([]byte(task.Brief.Dynamic)) || ev.Authority.SHA256 != hashHex([]byte(task.Brief.Stable)) {
+		if !ev.Delivered || ev.Round != 1 || ev.Session == "" || ev.Source.SHA256 != core.HashHex([]byte(task.Brief.Dynamic)) || ev.Authority.SHA256 != core.HashHex([]byte(task.Brief.Stable)) {
 			t.Fatalf("evidence %+v", ev)
 		}
 		paths := map[string]string{}
 		for _, p := range ev.Parts {
 			paths[p["path"].(string)], _ = p["sha256"].(string)
 		}
-		if paths["big.txt"] != hashHex([]byte(big)) || paths["small.txt"] != hashHex([]byte("small\n")) || paths["app.txt"] == "" {
+		if paths["big.txt"] != core.HashHex([]byte(big)) || paths["small.txt"] != core.HashHex([]byte("small\n")) || paths["app.txt"] == "" {
 			t.Fatalf("parts %v", paths)
 		}
 	})
@@ -490,8 +492,8 @@ func TestClaudeLineupReviewRefusesResume(t *testing.T) {
 		t.Fatal("the refused resume started a reviewer")
 	}
 	// The reviewer of an external checkpoint cannot be revived through the seam either.
-	if _, err := (reviewExternal{}).Resume(context.Background(), nil); err == nil {
-		t.Fatal("reviewExternal.Resume accepted")
+	if _, err := (review.External{}).Resume(context.Background(), nil); err == nil {
+		t.Fatal("review.External.Resume accepted")
 	}
 
 	// A resumed native-builder checkpoint with an external review role still reviews externally.

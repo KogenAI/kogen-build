@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-verification/verify"
 	looptools "kogen-loop/tools"
@@ -151,7 +152,7 @@ func TestKReviewRetry2LogReplay(t *testing.T) {
 }
 
 // verdictless is a reviewer that ends every review without a valid verdict, for the given
-// reason, the way reviewRun.invalidStop leaves it for the Build.
+// reason, the way review.Independent leaves it for the Build.
 func verdictless(reason string, calls *int) *scriptedReviewer {
 	return &scriptedReviewer{review: func(ctx context.Context, b *Attempt, pass verify.Pass) (Approved, error) {
 		*calls++
@@ -159,7 +160,7 @@ func verdictless(reason string, calls *int) *scriptedReviewer {
 		b.Run.Event(map[string]any{"event": "review", "review": b.Review, "verdict": "invalid", "problems": []string{reason}, "reason": reason})
 		b.LastReview = &ReviewRecord{N: b.Review, Verdict: "invalid", Findings: []map[string]any{}}
 		b.invalid = &invalidReview{Review: b.Review, Reason: reason, Problems: []string{reason}, Pass: pass}
-		return Approved{}, reviewInvalidError()
+		return Approved{}, review.InvalidError()
 	}}
 }
 

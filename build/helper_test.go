@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	gitpkg "github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-verification/verify"
@@ -168,7 +169,7 @@ func failure(status int, code, message string) handler {
 }
 
 func jsonText(v any) string {
-	b, err := encodeJSON(v)
+	b, err := core.EncodeJSON(v)
 	if err != nil {
 		panic(err)
 	}

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
@@ -47,7 +48,7 @@ func resumeRun(ctx context.Context, s *sys.Session, in ResumeInput, out **Attemp
 // one. why is the reason a resume is refused.
 func decodeCheckpoint(raw []byte, legacy LegacyDecoder) (loaded *Loaded, why string) {
 	const malformed = "malformed required checkpoint fields"
-	v, err := decodeJSONNumbers(raw)
+	v, err := core.DecodeJSONNumbers(raw)
 	m, ok := v.(map[string]any)
 	if err != nil || !ok {
 		return nil, malformed
@@ -84,11 +85,11 @@ func decodeCheckpoint(raw []byte, legacy LegacyDecoder) (loaded *Loaded, why str
 	default:
 		return nil, "incompatible checkpoint version " + inspectScalar(version)
 	}
-	if !loaded.State.valid(&loaded.Doc) {
+	if !validCheckpointState(loaded.State, &loaded.Doc) {
 		return nil, malformed
 	}
 	for _, field := range []string{loaded.Doc.Index, loaded.Doc.Approval} {
-		if _, err := decodeBase64(field); err != nil {
+		if _, err := core.DecodeBase64(field); err != nil {
 			return nil, malformed
 		}
 	}
@@ -100,7 +101,7 @@ func inspectScalar(v any) string {
 	case nil:
 		return "nil"
 	case string:
-		return inspectString(x)
+		return core.InspectString(x)
 	case json.Number:
 		return x.String()
 	case bool:
@@ -188,7 +189,7 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 		return refuse(id, why, "")
 	}
 	approval, err := os.ReadFile(project.ApprovalPath(root, b.Slug))
-	saved, derr := decodeBase64(doc.Approval)
+	saved, derr := core.DecodeBase64(doc.Approval)
 	if err != nil || derr != nil || !bytes.Equal(approval, saved) {
 		return refuse(id, "approval changed", "")
 	}
@@ -219,7 +220,7 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	}
 	// The user's index must record exactly what it recorded at the checkpoint. A plain `git
 	// status` may since have refreshed its stat cache: that alone is not a change.
-	savedIndex, _ := decodeBase64(doc.Index)
+	savedIndex, _ := core.DecodeBase64(doc.Index)
 	currentIndex, err := os.ReadFile(b.GitIndex)
 	if err != nil {
 		return refuse(id, "index/staged custody changed", "")
@@ -256,7 +257,7 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 		return refuse(id, detail, "")
 	}
 
-	b.intent, err = b.State.intent()
+	b.intent, err = stateIntent(&b.State)
 	if err != nil {
 		return err
 	}
@@ -308,14 +309,14 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	facts.inherit(b, b.Run)
 	b.Run, b.Parent, b.RootRun = run, &id, &root0
 	b.T0 = time.Now().UnixMilli()
-	b.AttemptUsage = zeroTokens()
+	b.AttemptUsage = core.ZeroTokens()
 	*out = b
 	s.Puts(fmt.Sprintf("resuming Build %s as %s (root %s)", id, run.ID, root0))
 	event := map[string]any{"event": "resume", "parent": id, "root": root0}
 	if refreshed {
 		s.Progress("kogen: the index stat cache was refreshed since Build " + id + "; staged entries are unchanged")
 		event["index"] = "stat_refreshed"
-		event["checkpoint_index_sha256"], event["index_sha256"] = hashHex(savedIndex), hashHex(currentIndex)
+		event["checkpoint_index_sha256"], event["index_sha256"] = core.HashHex(savedIndex), core.HashHex(currentIndex)
 	}
 	run.Event(event)
 	run.Event(agent.BudgetEvent(in.Deps.Client))

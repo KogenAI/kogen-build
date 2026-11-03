@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/KogenAI/kogen-build/build/core"
 )
 
 // With Deps.ReadLedger on, a working-window reset re-opens the conversation with the mandatory
@@ -25,7 +27,7 @@ func ledgerAssistant() any {
 
 func ledgerMessageOf(t *testing.T, doc readLedger) any {
 	t.Helper()
-	raw, err := encodeJSON(doc)
+	raw, err := core.EncodeJSON(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +77,7 @@ func TestReadLedgerEntriesFollowTheReadsOfTheArchivedInput(t *testing.T) {
 	input = append(input, budgetPad("pad", 600_000)...)
 
 	_, ledger := ledgerReset(t, b, input)
-	sum := func(s string) string { return hashHex([]byte(s)) }
+	sum := func(s string) string { return core.HashHex([]byte(s)) }
 	want := []ledgerEntry{
 		{Tool: "read_file", Path: "./dir/a b.txt", StartLine: 7, EndLine: 10, SHA256: sum(numbered), Note: "first line"},
 		{Tool: "read_file", Path: "long.txt", StartLine: 1, EndLine: 2, SHA256: sum("1\t" + long + "\n2\tx\n"), Note: strings.Repeat("Δ", 80)},
@@ -144,11 +146,11 @@ func TestReadLedgerCapEvictsTheOldestEntriesAndCountsThem(t *testing.T) {
 			for i := 0; i < 40; i++ {
 				carried.Entries = append(carried.Entries, ledgerEntry{
 					Tool: "read_file", Path: "dir/" + strings.Repeat("p", 200) + itoa(i+100), StartLine: 1, EndLine: 9,
-					SHA256: hashHex([]byte(itoa(i))), Note: "n" + itoa(i+100),
+					SHA256: core.HashHex([]byte(itoa(i))), Note: "n" + itoa(i+100),
 				})
 			}
 			size := func() int {
-				raw, _ := encodeJSON(carried)
+				raw, _ := core.EncodeJSON(carried)
 				return len(raw)
 			}
 			// Trim the oldest entries to just fit the bound, then pad the last path to the target.

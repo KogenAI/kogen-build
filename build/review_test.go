@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
 )
@@ -958,7 +960,7 @@ func TestLargeSourceIsDeliveredAsPinnedPartsAndMustBeReadBeforeApproval(t *testi
 	eq(t, "status", file["status"], any("changed"))
 	eq(t, "mode", file["mode"], any("100644"))
 	eq(t, "bytes", file["bytes"], any(float64(len(content))))
-	eq(t, "sha256", file["sha256"], any(hashHex([]byte(content))))
+	eq(t, "sha256", file["sha256"], any(core.HashHex([]byte(content))))
 	eq(t, "git object", file["git_object"], any(e.gitOut("rev-parse", "HEAD:app.txt")))
 
 	var source strings.Builder
@@ -988,7 +990,7 @@ func TestLargeSourceIsDeliveredAsPinnedPartsAndMustBeReadBeforeApproval(t *testi
 		eq(t, "parts", doc.ReviewSource.Parts, len(parts))
 		source.WriteString(doc.ReviewSource.Text)
 	}
-	eq(t, "source sha256", hashHex([]byte(source.String())), catalog["source_sha256"].(string))
+	eq(t, "source sha256", core.HashHex([]byte(source.String())), catalog["source_sha256"].(string))
 	eq(t, "source bytes", float64(source.Len()), catalog["source_bytes"].(float64))
 	contains(t, "source", source.String(), "# Diff of existing/deleted paths against start HEAD "+short(e.gitOut("rev-parse", "HEAD^")))
 	contains(t, "source", source.String(), "--- app.txt\n"+content)
@@ -1388,11 +1390,11 @@ func TestReviewValidateAcceptanceSet(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("candidate"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	r := &reviewRun{b: &Attempt{Root: root}}
+	a := &Attempt{State: State{Root: root}}
 	for i, tc := range reviewShapeCases() {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
 			t.Parallel()
-			verdict, problems, err := r.validate(decodeReviewArgs(t, tc.args), nil)
+			verdict, problems, err := review.Validate(a.reviewing(), decodeReviewArgs(t, tc.args), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

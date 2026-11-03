@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
@@ -339,7 +340,7 @@ func newConformanceAttempt(t *testing.T, root, home string, prov *fakeProvider, 
 			Run: run, GitIndex: gitIndex, StartTree: startTree, Phase: "building", T0: time.Now().UnixMilli(),
 			Continuation: Continuation{Stage: StageBuilder}, ApprovalBytes: encodeBase64([]byte("approval")),
 			WorkingContext: map[string]*OwnerContext{}, PromptCache: map[string]provider.CacheState{},
-			Usage: zeroTokens(), AttemptUsage: zeroTokens(), CacheIDs: map[string]string{},
+			Usage: core.ZeroTokens(), AttemptUsage: core.ZeroTokens(), CacheIDs: map[string]string{},
 		},
 		s: s, deps: Deps{Client: &provider.Client{Cache: provider.NewCache(nil), Version: "kogen dev+12345678 (test)"}},
 		repo: repo, cache: provider.NewCache(nil), facts: facts,

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
@@ -41,7 +42,7 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 	}
 	if !(pass.Green && pass.Clean && review.Tree == pass.Tree) || tree != pass.Tree {
 		if !restart {
-			return "", false, resumeRefused("the candidate is no longer the reviewed tree " + pass.Tree + "; " + b.treeDrift(tree, pass.Tree))
+			return "", false, core.ResumeRefused("the candidate is no longer the reviewed tree " + pass.Tree + "; " + b.treeDrift(tree, pass.Tree))
 		}
 		// Something changed after the reviewed pass: verify and review again.
 		return b.verifyAndReview(ctx, false)
@@ -76,7 +77,7 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 		}
 	}
 	os.Remove(project.ApprovalPath(b.Root, b.Slug))
-	b.setPhase(phaseLanded)
+	b.SetPhase(phaseLanded)
 	if err := b.Save(Continuation{Stage: StageLanded, Commit: commit, AlreadyPresent: alreadyPresent}); err != nil {
 		return "", false, err
 	}
@@ -112,14 +113,14 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 	}
 	b.s.Puts(line)
 	for _, f := range notes {
-		b.s.Puts(fmt.Sprintf("  note: %s:%s: %s", display(f["path"]), display(f["line"]), display(f["message"])))
+		b.s.Puts(fmt.Sprintf("  note: %s:%s: %s", core.Display(f["path"]), core.Display(f["line"]), core.Display(f["message"])))
 	}
 	b.s.Puts(fmt.Sprintf("  repairs: %d · tokens: %s · time: %s", b.Repairs, b.Usage.Total(), duration(b.elapsed())))
 	if x := b.Executor; x != nil && x.Name != executor.Native {
-		b.s.Puts("  executor: " + x.Name + " (" + x.Usage.line() + ")")
+		b.s.Puts("  executor: " + x.Name + " (" + executorUsageLine(x.Usage) + ")")
 	}
 	if x := b.ReviewExecutor; x != nil {
-		b.s.Puts("  review executor: " + x.Name + " (" + x.Usage.line() + ")")
+		b.s.Puts("  review executor: " + x.Name + " (" + executorUsageLine(x.Usage) + ")")
 	}
 	return "", true, nil
 }

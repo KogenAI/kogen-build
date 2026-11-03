@@ -8,7 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-executor/executor"
+	"kogen-loop/tools"
 )
 
 // partsBuilder is a builder round whose candidate is six added files of about 120 KB each: a
@@ -33,13 +36,13 @@ func partOf(t *testing.T, task executor.Task) int {
 	return k
 }
 
-func readMaterial(t *testing.T, e *env, id string, review int) reviewMaterial {
+func readMaterial(t *testing.T, e *env, id string, n int) review.Material {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(e.runPath(id, "executor-review"), fmt.Sprintf("review-%d-material.json", review)))
+	raw, err := os.ReadFile(filepath.Join(e.runPath(id, "executor-review"), fmt.Sprintf("review-%d-material.json", n)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var ev reviewMaterial
+	var ev review.Material
 	if err := json.Unmarshal(raw, &ev); err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +89,11 @@ func TestReviewInPartsLands(t *testing.T) {
 		p := ev.ReviewParts[i]
 		eq(t, "part number", partOf(t, task), i+1)
 		eq(t, "stable text", task.Brief.Stable, string(authority))
-		if prompt := len(task.Brief.Stable) + len(task.Brief.Dynamic); prompt > reviewCeiling || p.PromptBytes != prompt {
-			t.Errorf("part %d: prompt %d bytes, recorded %d, ceiling %d", i+1, prompt, p.PromptBytes, reviewCeiling)
+		if prompt := len(task.Brief.Stable) + len(task.Brief.Dynamic); prompt > tools.InputBudgetBytes || p.PromptBytes != prompt {
+			t.Errorf("part %d: prompt %d bytes, recorded %d, ceiling %d", i+1, prompt, p.PromptBytes, tools.InputBudgetBytes)
 		}
 		text, err := os.ReadFile(filepath.Join(dir, p.File))
-		if err != nil || string(text) != task.Brief.Dynamic || p.Bytes != len(text) || p.SHA256 != hashHex(text) {
+		if err != nil || string(text) != task.Brief.Dynamic || p.Bytes != len(text) || p.SHA256 != core.HashHex(text) {
 			t.Errorf("part %d file %s: %v", i+1, p.File, err)
 		}
 		if st, _ := os.Stat(filepath.Join(dir, p.File)); st.Mode().Perm() != 0o600 {
@@ -108,7 +111,7 @@ func TestReviewInPartsLands(t *testing.T) {
 		}
 		for _, want := range []string{
 			fmt.Sprintf("# Review part %d of 2", i+1), "# Check results of the final pass", "# Every changed path", fmt.Sprintf("# Source part %d of 2", i+1),
-			"SHA-256 " + hashHex(source),
+			"SHA-256 " + core.HashHex(source),
 		} {
 			contains(t, "part text", task.Brief.Dynamic, want)
 		}
@@ -125,7 +128,7 @@ func TestReviewInPartsLands(t *testing.T) {
 	}
 
 	events := e.events(id)
-	want := []map[string]any{{"event": "review_parts", "review": 1.0, "parts": 2.0, "source_bytes": float64(len(source)), "ceiling": float64(reviewCeiling)}}
+	want := []map[string]any{{"event": "review_parts", "review": 1.0, "parts": 2.0, "source_bytes": float64(len(source)), "ceiling": float64(tools.InputBudgetBytes)}}
 	if got := eventsNamed(events, "review_parts"); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("review_parts events %v, want %v", got, want)
 	}

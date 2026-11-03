@@ -79,14 +79,14 @@ func TestPartsSourceOmitsChangedFileTexts(t *testing.T) {
 	if !ok {
 		t.Fatalf("the source has no third section:\n%s", m.Source)
 	}
-	parts, partsTail, ok := strings.Cut(m.partsSource, "# Full text of every added file\n\n")
+	parts, partsTail, ok := strings.Cut(m.PartsSource, "# Full text of every added file\n\n")
 	if !ok {
-		t.Fatalf("the parts source has no third section:\n%s", m.partsSource)
+		t.Fatalf("the parts source has no third section:\n%s", m.PartsSource)
 	}
 	eq(t, "check results and diff", parts, full)
 	contains(t, "tail of the source", tail, "--- app.txt\nline one\nnew marker\nline three\n")
-	contains(t, "tail of the source", m.partsSource, "Newly added files appear here once, with their mode, instead of being repeated in the diff. A changed file's hunks are in the diff above and its full text is in the checkout, so only its heading is listed here.\n\n")
-	lacks(t, "parts source", m.partsSource, "new marker\nline three")
+	contains(t, "tail of the source", m.PartsSource, "Newly added files appear here once, with their mode, instead of being repeated in the diff. A changed file's hunks are in the diff above and its full text is in the checkout, so only its heading is listed here.\n\n")
+	lacks(t, "parts source", m.PartsSource, "new marker\nline three")
 
 	body := partsTail[strings.Index(partsTail, "\n\n")+2:]
 	eq(t, "entries", body, strings.Join([]string{

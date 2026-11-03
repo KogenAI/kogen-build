@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/project"
 )
 
@@ -71,7 +72,7 @@ func reportFor(t *testing.T, feature, text, status string) string {
 	}
 	lines := make([]string, len(events))
 	for i, e := range events {
-		b, err := encodeJSON(e)
+		b, err := core.EncodeJSON(e)
 		if err != nil {
 			t.Fatal(err)
 		}

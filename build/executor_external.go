@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
 	"kogen-loop/sys"
@@ -83,20 +85,20 @@ func selectReviewer(d Deps, role project.Role) (Reviewer, error) {
 	if max == 0 {
 		max = defaultExternalRounds
 	}
-	return reviewExternal{exec: ex, desc: desc, maxRounds: max}, nil
+	return delegate{review.NewExternal(ex, desc, max)}, nil
 }
 
 // task is the Build's task for an executor: the brief and the constraints Kogen keeps (the
 // protected baseline, the excluded paths), never Kogen's own builder prompt.
 func (b *Attempt) task(brief executor.Brief) (executor.Task, error) {
 	role := b.Config.Models["build"]
-	approval, err := decodeBase64(b.ApprovalBytes)
+	approval, err := core.DecodeBase64(b.ApprovalBytes)
 	if err != nil {
 		return executor.Task{}, err
 	}
 	t := executor.Task{
 		Role: executor.RoleBuild, Root: b.Root, Brief: brief, Protected: b.Baseline, Excluded: b.Excluded,
-		Model: role.Model, Effort: role.Effort, Approval: hashHex(approval), StartTree: b.Start, RunID: b.Run.ID,
+		Model: role.Model, Effort: role.Effort, Approval: core.HashHex(approval), StartTree: b.Start, RunID: b.Run.ID,
 		Home: b.s.Getenv("HOME"),
 	}
 	if b.ext != nil {
@@ -122,7 +124,7 @@ func (b *Attempt) startBuilder(ctx context.Context, brief executor.Brief) (execu
 	if b.diag != nil {
 		// An external executor's first prompt is built from the brief alone: the frozen caller
 		// diagnostic follows the authority in it, exactly the message the native builder gets.
-		task.Brief.Stable += diagnosticText(b.diag.message())
+		task.Brief.Stable += core.DiagnosticText(b.diag.message())
 	}
 	task.Dir = filepath.Join(b.Run.Dir, "executor")
 	if err := os.MkdirAll(task.Dir, 0o700); err != nil {
@@ -139,7 +141,7 @@ func (b *Attempt) startBuilder(ctx context.Context, brief executor.Brief) (execu
 	if b.Executor == nil {
 		b.Executor = &ExecutorState{
 			Name: b.ext.desc.Name, Version: b.ext.desc.Version, SessionID: h.SessionID,
-			Usage: ExecutorUsage{Input: count(0), Cached: count(0), Output: count(0), Reasoning: count(0), State: executor.UsageComplete,
+			Usage: ExecutorUsage{Input: core.Count(0), Cached: core.Count(0), Output: core.Count(0), Reasoning: core.Count(0), State: executor.UsageComplete,
 				Source: b.ext.desc.Capabilities.Usage, CostUSD: new(float64)},
 		}
 	} else {
@@ -201,7 +203,7 @@ func (b *Attempt) runGuardedRound(ctx context.Context, sess executor.Session, in
 // itself is only a claim; its verification, review and commit follow (roundEnd).
 func (b *Attempt) afterExternalRound(res executor.RoundResult, rounds int) error {
 	if res.Ending != executor.EndFinish && res.Ending != executor.EndNoCall && res.Ending != executor.EndBlocker {
-		return executor.Fail(executor.ReasonProtocol, "executor "+b.ext.desc.Name+" returned the unknown round ending "+inspectString(string(res.Ending)))
+		return executor.Fail(executor.ReasonProtocol, "executor "+b.ext.desc.Name+" returned the unknown round ending "+core.InspectString(string(res.Ending)))
 	}
 	b.recordExecutor(res, rounds)
 	b.Run.Event(map[string]any{
@@ -244,41 +246,13 @@ func (b *Attempt) recordExecutor(res executor.RoundResult, rounds int) {
 	if res.Handle.SessionID != "" {
 		x.SessionID = res.Handle.SessionID
 	}
-	x.Usage = x.Usage.plus(res.Usage, rounds == 1)
+	x.Usage = x.Usage.Plus(res.Usage, rounds == 1)
 }
 
-// plus adds a round's reported usage. A count is nil as soon as one round lacks it; the cost
-// is the harness's own estimate and unknown the same way. The state is the rounds' own state
-// when they agree and partial when they differ (first: no round was added before).
-func (u ExecutorUsage) plus(r executor.Usage, first bool) ExecutorUsage {
-	out := ExecutorUsage{
-		Input: addCounts(u.Input, r.Input), Cached: addCounts(u.Cached, r.Cached),
-		Output: addCounts(u.Output, r.Output), Reasoning: addCounts(u.Reasoning, r.Reasoning), Source: u.Source,
-	}
-	if r.Source != "" {
-		out.Source = r.Source
-	}
-	if u.CostUSD != nil && r.CostUSD != nil {
-		sum := *u.CostUSD + *r.CostUSD
-		out.CostUSD = &sum
-	}
-	state := r.State
-	if state == "" {
-		state = executor.UsageUnknown
-	}
-	switch {
-	case first || state == u.State:
-		out.State = state
-	default:
-		out.State = executor.UsagePartial
-	}
-	return out
-}
-
-// line is the commit summary's account of an executor's usage: harness-reported figures and
+// executorUsageLine is the commit summary's account of an executor's usage: harness-reported figures and
 // the harness's own cost estimate, never a bill.
-func (u ExecutorUsage) line() string {
-	t := Tokens{u.Input, u.Cached, u.Output, u.Reasoning}
+func executorUsageLine(u ExecutorUsage) string {
+	t := Tokens{Input: u.Input, Cached: u.Cached, Output: u.Output, Reasoning: u.Reasoning}
 	cost := "unknown"
 	if u.CostUSD != nil {
 		cost = "$" + strconv.FormatFloat(*u.CostUSD, 'f', 4, 64)

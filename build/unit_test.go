@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/provider"
@@ -182,13 +183,13 @@ func completePass() verify.Pass {
 
 func encodeState(t *testing.T, st *State, doc *Checkpoint) []byte {
 	t.Helper()
-	state, err := encodeJSON(st)
+	state, err := core.EncodeJSON(st)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := *doc
 	d.State = state
-	b, err := encodeJSON(d)
+	b, err := core.EncodeJSON(d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,14 +263,14 @@ func TestGreenReuseRequiresCompleteRequiredCleanEvidenceNotAStoredBoolean(t *tes
 		t.Fatalf("cache states lost: %v %q", l, why)
 	}
 	// A state without working_context is refused, and an old version is incompatible.
-	state, _ := encodeJSON(st)
+	state, _ := core.EncodeJSON(st)
 	var fields map[string]json.RawMessage
 	json.Unmarshal(state, &fields)
 	delete(fields, "working_context")
 	damaged, _ := json.Marshal(fields)
 	d := *doc
 	d.State = damaged
-	raw, _ := encodeJSON(d)
+	raw, _ := core.EncodeJSON(d)
 	if _, why := decodeCheckpoint(raw, nil); why == "" {
 		t.Fatal("a state without working_context is accepted")
 	}
@@ -334,7 +335,7 @@ func TestTheRunLogCapPreservesUTF8AndFitsInOneMiB(t *testing.T) {
 		if !ok || !strings.HasPrefix(text, head) || !strings.HasSuffix(text, tail) {
 			t.Fatal("the cap does not keep both ends")
 		}
-		b, err := encodeJSON(map[string]any{"output": capped})
+		b, err := core.EncodeJSON(map[string]any{"output": capped})
 		if err != nil {
 			t.Fatal(err)
 		}

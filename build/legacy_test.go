@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
 )
 
@@ -659,7 +661,7 @@ func TestEveryRealCheckpointDecodes(t *testing.T) {
 			eq(t, "acceptance", st.Config.Acceptance.Run+" "+st.Config.Acceptance.StepsDir, "sh accept.sh features/steps")
 			eq(t, "protect", strings.Join(st.Config.Protect, "|"), "accept.sh")
 			eq(t, "build model", st.Config.Models["build"].Model+"/"+st.Config.Models["build"].Effort, "gpt-6.1-sol/medium")
-			eq(t, "usage", st.Usage, Tokens{count(120), count(40), count(31), count(7)})
+			eq(t, "usage", st.Usage, Tokens{Input: core.Count(120), Cached: core.Count(40), Output: core.Count(31), Reasoning: core.Count(7)})
 			eq(t, "attempt usage", st.AttemptUsage, st.Usage)
 			eq(t, "round", st.Round, 1)
 			eq(t, "model active", st.ModelActiveMS, int64(1234))
@@ -752,16 +754,16 @@ func TestTheContinuationsOfRealCheckpoints(t *testing.T) {
 	eq(t, "landed scenario", landed.LastPass.Acceptance.Scenarios[1].Name+" "+landed.LastPass.Acceptance.Scenarios[1].Status, "Second passed")
 	eq(t, "landed steps", len(landed.LastPass.Acceptance.Scenarios[0].Steps), 2)
 
-	// The review stages hold the reviewer's session the way review.go keeps it.
+	// The review stages hold the reviewer's session the way build/review keeps it.
 	rv := load("review")
 	eq(t, "review stage", rv.Continuation.Stage, StageReview)
-	s, err := reviewDecode(rv.Continuation.Review)
+	s, err := review.DecodeSession(rv.Continuation.Review)
 	if err != nil {
 		t.Fatal(err)
 	}
 	eq(t, "review role", s.Role.Model+"/"+s.Role.Effort+"/"+s.Role.Provider, "gpt-6.1-sol/high/")
 	eq(t, "review input", len(s.Input), 1)
-	eq(t, "review usage", s.Usage, zeroTokens())
+	eq(t, "review usage", s.Usage, core.ZeroTokens())
 	if s.Verdict != nil || s.Tree != "" || len(s.Attempts) != 0 || rv.Continuation.Pass == nil || !rv.Continuation.Pass.Green {
 		t.Fatalf("review session %+v", s)
 	}
@@ -770,17 +772,17 @@ func TestTheContinuationsOfRealCheckpoints(t *testing.T) {
 
 	vv := load("review_verify")
 	eq(t, "review_verify stage", vv.Continuation.Stage, StageReviewVerify)
-	s, _ = reviewDecode(vv.Continuation.Review)
+	s, _ = review.DecodeSession(vv.Continuation.Review)
 	eq(t, "verdict", s.Verdict.Verdict, "approve")
 	eq(t, "note", s.Verdict.Findings[0]["message"], any("fine — ✓"))
 	eq(t, "tree", s.Tree, man.Cases["review_verify"].PassTree)
-	eq(t, "verify usage", s.Usage, Tokens{count(9), count(3), count(4), count(1)})
+	eq(t, "verify usage", s.Usage, Tokens{Input: core.Count(9), Cached: core.Count(3), Output: core.Count(4), Reasoning: core.Count(1)})
 	eq(t, "conversation after the verdict", len(s.Input), 2)
 	eq(t, "last review", vv.LastReview == nil, true)
 
 	rr := load("review_retry_verify")
 	eq(t, "retry stage", rr.Continuation.Stage, StageReviewRetry)
-	s, _ = reviewDecode(rr.Continuation.Review)
+	s, _ = review.DecodeSession(rr.Continuation.Review)
 	eq(t, "retry verdict", s.Verdict.Verdict, "changes")
 	eq(t, "retry attempts", len(s.Attempts), 1)
 	eq(t, "retry attempt", s.Attempts[0].Verdict+" "+s.Attempts[0].Tree, "changes "+man.Cases["review_retry_verify"].PassTree)
@@ -790,7 +792,7 @@ func TestTheContinuationsOfRealCheckpoints(t *testing.T) {
 	// A Quint model: the model line's numbers come across as the Intent's own parse gives them.
 	md := load("model")
 	eq(t, "model pass", md.LastPass.Model.State, "ok")
-	in, err := md.intent()
+	in, err := stateIntent(md)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -954,7 +956,7 @@ func newLegacyEnv(t *testing.T, name string, opts ...func(*legacyOptions)) (*env
 
 // legacyResume resumes with the independent review (the core tests' default is a stand-in).
 func legacyResume(e *env, id string) *attempt {
-	return e.resume(id, func(in *ResumeInput) { in.Reviewer = reviewIndependent{} })
+	return e.resume(id, func(in *ResumeInput) { in.Reviewer = nativeReviewer() })
 }
 
 func legacyChild(t *testing.T, e *env, id string) string {

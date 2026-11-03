@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-verification/verify"
 )
@@ -132,14 +134,14 @@ func stateGoldenState() State {
 		StartTree: stateGoldenStartTree,
 		Phase:     "building",
 		T0:        stateGoldenT0,
-		Usage:     zeroTokens(),
+		Usage:     core.ZeroTokens(),
 		Round:     1,
 		Continuation: Continuation{Stage: StageBuilder, Input: []any{
 			stateGoldenUser("Build the approved Intent: Preserve the golden fixture."),
 		}},
 		ApprovalBytes:  encodeBase64([]byte("{\"slug\":\"fixture\"}\n")),
 		ModelActiveMS:  0,
-		AttemptUsage:   zeroTokens(),
+		AttemptUsage:   core.ZeroTokens(),
 		WorkingContext: map[string]*OwnerContext{"build": {Mandatory: []any{stateGoldenUser("Build the approved Intent.")}, Observations: []any{}, History: []HistoryRef{}}},
 		PromptCache:    nil,
 	}
@@ -174,8 +176,8 @@ func stateGoldenRedPass(n int, tree string) *verify.Pass {
 func stateGoldenAttemptsState() State {
 	st := stateGoldenState()
 	st.Round, st.Pass = 3, 2
-	st.Usage = Tokens{count(3200), count(1800), count(410), nil}
-	st.AttemptUsage = Tokens{count(3200), count(1800), count(410), nil}
+	st.Usage = Tokens{Input: core.Count(3200), Cached: core.Count(1800), Output: core.Count(410), Reasoning: nil}
+	st.AttemptUsage = Tokens{Input: core.Count(3200), Cached: core.Count(1800), Output: core.Count(410), Reasoning: nil}
 	st.ModelActiveMS = 42500
 	st.UnknownRequests = 1
 	st.LastPass = stateGoldenRedPass(2, stateGoldenTree2)
@@ -193,19 +195,19 @@ func stateGoldenAttemptsState() State {
 func stateGoldenReviewedState(t *testing.T, path, verdict string, findings []map[string]any) State {
 	t.Helper()
 	pass := stateGoldenGreenPass(1, stateGoldenTree1)
-	session := reviewSession{
+	session := review.Session{
 		Role:     stateGoldenReviewer(),
 		Input:    []any{stateGoldenUser("Review the candidate tree " + stateGoldenTree1 + "."), map[string]any{"type": "function_call", "call_id": "call_r1", "name": "submit_review", "arguments": "{}"}},
-		Usage:    Tokens{count(900), count(300), count(60), count(20)},
-		Attempts: []reviewAttempt{{Pass: pass.N, Tree: stateGoldenTree1, Verdict: verdict, Findings: findings}},
-		Verdict:  &reviewVerdict{Verdict: verdict, Findings: findings},
+		Usage:    Tokens{Input: core.Count(900), Cached: core.Count(300), Output: core.Count(60), Reasoning: core.Count(20)},
+		Attempts: []review.Submitted{{Pass: pass.N, Tree: stateGoldenTree1, Verdict: verdict, Findings: findings}},
+		Verdict:  &review.Verdict{Verdict: verdict, Findings: findings},
 		Tree:     stateGoldenTree1,
 	}
-	raw, err := session.encode()
+	raw, err := session.Encode()
 	stateGoldenMust(t, path, err)
 	st := stateGoldenState()
 	st.Round, st.Pass, st.Review = 1, 1, 1
-	st.Usage = Tokens{count(2100), count(900), count(250), count(0)}
+	st.Usage = Tokens{Input: core.Count(2100), Cached: core.Count(900), Output: core.Count(250), Reasoning: core.Count(0)}
 	st.AttemptUsage = st.Usage
 	st.ModelActiveMS = 18000
 	st.LastPass = pass
@@ -228,7 +230,7 @@ func stateGoldenEnvelope(state json.RawMessage) Checkpoint {
 // stateGoldenPublish publishes st in the envelope Save writes and returns the file's bytes.
 func stateGoldenPublish(t *testing.T, path string, st *State, doc Checkpoint) []byte {
 	t.Helper()
-	state, err := encodeJSON(st)
+	state, err := core.EncodeJSON(st)
 	stateGoldenMust(t, path, err)
 	doc.State = state
 	run := &Run{Dir: t.TempDir()}
@@ -266,7 +268,7 @@ func stateGoldenResumedBytes(t *testing.T, path string, attempts []byte) []byte 
 	st.Run = stateGoldenRun(stateGoldenResumedID)
 	st.Parent, st.RootRun = &parent, &root
 	st.T0 = stateGoldenResumedT0
-	st.AttemptUsage = zeroTokens()
+	st.AttemptUsage = core.ZeroTokens()
 	return stateGoldenPublish(t, path, st, loaded.Doc)
 }
 

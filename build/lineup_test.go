@@ -80,7 +80,7 @@ func TestClaudeLineupNativeCompatibility(t *testing.T) {
 	if _, err := selectReviewer(buildOnly, ext.Models["review"]); err == nil {
 		t.Fatal("a Build-only executor was accepted for Review")
 	}
-	if rev, err := selectReviewer(Deps{Reviewer: reviewIndependent{}}, ext.Models["review"]); err != nil || rev == nil {
+	if rev, err := selectReviewer(Deps{Reviewer: nativeReviewer()}, ext.Models["review"]); err != nil || rev == nil {
 		t.Fatalf("a supplied reviewer seam was refused: %v", err)
 	}
 	if rev, err := selectReviewer(d, explicit.Models["review"]); rev != nil || err != nil {

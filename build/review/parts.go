@@ -1,12 +1,12 @@
-package build
+package review
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
 	"kogen-loop/tools"
@@ -58,7 +58,7 @@ type reviewParter struct {
 	catalog string
 	// blocks are the byte ranges of the source holding one path's material: its block in the diff
 	// and its heading and full text, in source order.
-	blocks []materialSegment
+	blocks []core.MaterialSegment
 	// measure is the executor's exact first-prompt length for the review brief with this dynamic
 	// text and the parts' stable text.
 	measure func(dynamic string) int
@@ -79,8 +79,8 @@ func (c *reviewParter) prompt(k, n, from, to int) int {
 func (c *reviewParter) mandatory() int { return c.prompt(1, 1, 0, 0) }
 
 // hasRoom reports whether the mandatory prompt leaves at least one pinned source part
-// (materialPartBytes) under the ceiling for source.
-func (c *reviewParter) hasRoom() bool { return c.ceiling-c.mandatory() >= materialPartBytes }
+// (core.MaterialPartBytes) under the ceiling for source.
+func (c *reviewParter) hasRoom() bool { return c.ceiling-c.mandatory() >= core.MaterialPartBytes }
 
 // maxTo is the largest end of a part that starts at from such that its complete prompt fits the
 // ceiling (equality fits), or -1 when even an empty slice does not.
@@ -168,27 +168,6 @@ func (c *reviewParter) texts(cuts []reviewCut) []string {
 		out[i] = c.header(i+1, len(cuts), cut.From, cut.To) + c.source[cut.From:cut.To]
 	}
 	return out
-}
-
-// reviewBlocks locates each changed path's material in the review source: its block in the diff
-// (from its `diff --git` line to the next block or the end of the diff) and its `--- <path>`
-// heading with its full text (to the next heading or the end), in source order.
-func (b *Attempt) reviewBlocks(tree string, m materialSet) ([]materialSegment, error) {
-	_, segments, _, err := b.materialManifestAt(tree, m.Files, m.partsTexts, m.partsSource, materialPartsHeading)
-	if err != nil {
-		return nil, err
-	}
-	heading := map[string]int{}
-	for _, t := range m.partsTexts {
-		heading[t.path] = len(t.heading)
-	}
-	for i, seg := range segments {
-		if seg.Kind == "file" {
-			segments[i].Start -= heading[seg.Path]
-		}
-	}
-	slices.SortFunc(segments, func(a, b materialSegment) int { return a.Start - b.Start })
-	return segments, nil
 }
 
 // reviewMeasure is the exact length of the first prompt an executor sends for the review role

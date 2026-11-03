@@ -14,6 +14,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/provider"
@@ -635,14 +637,14 @@ func (c *legacyConv) tokens(t any, lenient bool) Tokens {
 		v, ok := m.atom(name)
 		switch {
 		case !ok && lenient:
-			return count(0)
+			return core.Count(0)
 		case !ok:
 			c.fail()
 			return nil
 		case legacyIsNil(v):
 			return nil
 		}
-		return count(c.count(v))
+		return core.Count(c.count(v))
 	}
 	return Tokens{Input: read("input"), Cached: read("cached"), Output: read("output"), Reasoning: read("reasoning")}
 }
@@ -983,24 +985,24 @@ func (c *legacyConv) stages(b *legacyMap) (plan []stageDef, progress *StageProgr
 
 // ---- the continuation ----
 
-// reviewState is the reviewer's saved session (review.go) for a review stage of a Build read
+// reviewState is the reviewer's saved session (build/review) for a review stage of a Build read
 // from a version 3 checkpoint: Elixir's `Kogen.Review` kept the same things. In the stage
 // review that is the session (role, the conversation to send next, usage and attempts so
 // far); in review_verify and review_retry_verify the continuation's own conversation, usage
 // and verdict (the conversation after it) and the candidate tree it judged, with the
 // attempts of the session.
-func (c *legacyConv) reviewState(m *legacyMap, stage string) reviewSession {
+func (c *legacyConv) reviewState(m *legacyMap, stage string) review.Session {
 	session := c.mp(c.field(m, "session"))
-	rs := reviewSession{
+	rs := review.Session{
 		Tools:    c.jsonList(c.field(session, "tools")),
 		Role:     c.role(c.field(session, "role")),
 		Input:    c.items(c.field(session, "input")),
 		Usage:    c.tokens(c.field(session, "usage"), true),
-		Attempts: []reviewAttempt{},
+		Attempts: []review.Submitted{},
 	}
 	for _, a := range c.list(c.field(session, "attempts")) {
 		am := c.mp(a)
-		rs.Attempts = append(rs.Attempts, reviewAttempt{
+		rs.Attempts = append(rs.Attempts, review.Submitted{
 			Pass: c.count(c.field(am, "pass")), Tree: c.str(c.field(am, "tree")),
 			Verdict: c.str(c.field(am, "verdict")), Findings: c.findings(c.field(am, "findings")),
 		})
@@ -1008,7 +1010,7 @@ func (c *legacyConv) reviewState(m *legacyMap, stage string) reviewSession {
 	if stage != StageReview {
 		verdict := c.mp(c.field(m, "verdict"))
 		if v := c.review(legacyWithN(verdict)); v != nil {
-			rs.Verdict = &reviewVerdict{Verdict: v.Verdict, Findings: v.Findings}
+			rs.Verdict = &review.Verdict{Verdict: v.Verdict, Findings: v.Findings}
 		}
 		rs.Usage = c.tokens(c.field(m, "usage"), true)
 		rs.Input = c.items(c.field(m, "input"))
@@ -1057,7 +1059,7 @@ func (c *legacyConv) continuation(t any) Continuation {
 		}
 		cont.Pass = c.pass(c.field(m, "pass"))
 		if rs := c.reviewState(m, stage); !c.bad {
-			raw, err := rs.encode()
+			raw, err := rs.Encode()
 			if err != nil {
 				c.fail()
 			}
@@ -1196,7 +1198,7 @@ func legacyDefaultMap(m *legacyMap, name string) any {
 // legacyModelMatches is `b.model == Kogen.Intent.model(b.intent)` with a model: the saved
 // model, the title and the model line of the Intent the saved text gives.
 func legacyModelMatches(saved any, st *State, title string) bool {
-	intent, err := st.intent()
+	intent, err := stateIntent(st)
 	if err != nil || intent.Title != title || intent.Model == nil {
 		return false
 	}
@@ -1233,7 +1235,7 @@ func legacyModelMatches(saved any, st *State, title string) bool {
 // also refuses atoms its VM has not seen, which says nothing about the checkpoint's own
 // validity.
 func legacyDecode(raw []byte) (*Loaded, error) {
-	v, err := decodeJSONNumbers(raw)
+	v, err := core.DecodeJSONNumbers(raw)
 	m, ok := v.(map[string]any)
 	if err != nil || !ok {
 		return nil, errors.New(legacyMalformed)
@@ -1245,7 +1247,7 @@ func legacyDecode(raw []byte) (*Loaded, error) {
 	if !ok || len(text) > legacyMaxState || strings.ContainsAny(text, "\r\n") {
 		return nil, errors.New(legacyMalformed)
 	}
-	encoded, err := decodeBase64(text)
+	encoded, err := core.DecodeBase64(text)
 	if err != nil {
 		return nil, errors.New(legacyMalformed)
 	}

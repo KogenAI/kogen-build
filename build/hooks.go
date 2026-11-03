@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/KogenAI/kogen-build/build/core"
+	"github.com/KogenAI/kogen-build/build/review"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-verification/verify"
@@ -43,14 +45,6 @@ type Deps struct {
 	// (`executor: claude-code`). Nil: such a role stops with executor/unavailable ("not
 	// available in this program"). The native builder never uses it.
 	External func(role project.Role) (executor.Executor, error)
-}
-
-// Approved is the result of a review that approves: the green pass whose exact tree was
-// reviewed (the final one, after any repairs the reviewer made and verification repeated)
-// and the review.
-type Approved struct {
-	Pass   verify.Pass
-	Review ReviewRecord
 }
 
 // Reviewer is the independent review and repair of a green pass (chapter 06). The Build
@@ -107,8 +101,8 @@ type Loaded struct {
 }
 
 // newReviewer is the reviewer a Build uses when Deps.Reviewer is nil: the independent
-// review and repair of chapter 06 (review.go).
-func newReviewer(Deps) Reviewer { return reviewIndependent{} }
+// review and repair of chapter 06 (build/review).
+func newReviewer(Deps) Reviewer { return nativeReviewer() }
 
 // newLegacy is the version 3 decoder a resume uses when Deps.Legacy is nil: the reader of
 // the checkpoints the Elixir Kogen wrote (legacy.go).
@@ -135,19 +129,17 @@ type approveWithoutReview struct{}
 
 func (approveWithoutReview) Review(_ context.Context, b *Attempt, pass verify.Pass) (Approved, error) {
 	b.Review++
-	review := ReviewRecord{N: b.Review, Verdict: "approve", Findings: []map[string]any{}, Tree: pass.Tree}
-	b.LastReview = &review
+	record := ReviewRecord{N: b.Review, Verdict: "approve", Findings: []map[string]any{}, Tree: pass.Tree}
+	b.LastReview = &record
 	b.Track()
-	b.Run.Write(reviewFile(review.N), map[string]any{
+	b.Run.Write(review.File(record.N), map[string]any{
 		"verdict": "approve", "findings": []any{}, "tree": pass.Tree, "stub": "no independent review ran",
 	})
-	b.Run.Event(map[string]any{"event": "review", "review": review.N, "pass": pass.N, "tree": pass.Tree,
+	b.Run.Event(map[string]any{"event": "review", "review": record.N, "pass": pass.N, "tree": pass.Tree,
 		"verdict": "approve", "findings": []any{}, "stub": "no independent review ran"})
-	return Approved{Pass: pass, Review: review}, nil
+	return Approved{Pass: pass, Review: record}, nil
 }
 
 func (approveWithoutReview) Resume(context.Context, *Attempt) (Approved, error) {
-	return Approved{}, resumeRefused("no reviewer is available to continue this review")
+	return Approved{}, core.ResumeRefused("no reviewer is available to continue this review")
 }
-
-func reviewFile(n int) string { return "review-" + itoa(n) + ".json" }

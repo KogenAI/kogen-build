@@ -11,6 +11,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	gitpkg "github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-verification/verify"
@@ -107,7 +108,7 @@ func exactSourceDelivery(t *testing.T, role project.Role) {
 	var rebuilt strings.Builder
 	for n, ref := range refs {
 		data, err := os.ReadFile(ref.Path)
-		if err != nil || hashHex(data) != ref.SHA256 {
+		if err != nil || core.HashHex(data) != ref.SHA256 {
 			t.Fatalf("%s: %v", ref.Path, err)
 		}
 		if st, _ := os.Stat(ref.Path); st.Mode().Perm() != 0o600 {
@@ -233,7 +234,7 @@ func TestSourceIsSplitInOrderWithoutLosingAByteOrBreakingAnEncoding(t *testing.T
 		parts := materialChunks(text)
 		eq(t, name+" joined", strings.Join(parts, ""), text)
 		for i, p := range parts {
-			raw, _ := encodeJSON(p)
+			raw, _ := core.EncodeJSON(p)
 			if p == "" || len(p) > materialPartBytes || len(raw) > materialPartJSON || !utf8.ValidString(p) {
 				t.Fatalf("%s part %d: %d bytes, %d encoded", name, i, len(p), len(raw))
 			}
@@ -365,7 +366,7 @@ func TestTheMaterialEqualsTheElixirReference(t *testing.T) {
 	}
 	canon := func(v any) string {
 		t.Helper()
-		b, err := encodeJSON(v)
+		b, err := core.EncodeJSON(v)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -373,7 +374,7 @@ func TestTheMaterialEqualsTheElixirReference(t *testing.T) {
 		if err := json.Unmarshal(b, &back); err != nil {
 			t.Fatal(err)
 		}
-		out, _ := encodeJSON(back)
+		out, _ := core.EncodeJSON(back)
 		return string(out)
 	}
 	if !*update {
@@ -422,7 +423,7 @@ func TestTheMaterialEqualsTheElixirReference(t *testing.T) {
 				}
 				p["parts"] = parts
 				p["first_part"], p["last_part"] = first, last
-				p["source_sha256"] = hashHex([]byte(source))
+				p["source_sha256"] = core.HashHex([]byte(source))
 				return g
 			})
 		})
@@ -443,7 +444,7 @@ func TestTheMaterialEqualsTheElixirReference(t *testing.T) {
 		}
 		eq(t, "part bytes", string(got), want)
 	}
-	eq(t, "source sha256", hashHex([]byte(source)), golden.Prepared.SourceHash)
+	eq(t, "source sha256", core.HashHex([]byte(source)), golden.Prepared.SourceHash)
 }
 
 func TestFittedInlineSourceRelocatesOnPressure(t *testing.T) {
@@ -461,7 +462,7 @@ func TestFittedInlineSourceRelocatesOnPressure(t *testing.T) {
 				strings.Repeat("candidate source Δ🙂\r\n", 15_000)
 			files := []map[string]any{{
 				"path": "app.txt", "status": "changed", "mode": "100644", "git_object": e.gitOut("rev-parse", "HEAD:app.txt"),
-				"bytes": float64(9), "sha256": hashHex([]byte("baseline\n")),
+				"bytes": float64(9), "sha256": core.HashHex([]byte("baseline\n")),
 			}}
 			m := testMaterial(source)
 			m.Files = files
@@ -528,7 +529,7 @@ func TestFittedInlineSourceRelocatesOnPressure(t *testing.T) {
 				t.Fatal(err)
 			}
 			eq(t, "source bytes", catalog["source_bytes"], any(float64(len(source))))
-			eq(t, "source sha", catalog["source_sha256"], any(hashHex([]byte(source))))
+			eq(t, "source sha", catalog["source_sha256"], any(core.HashHex([]byte(source))))
 			eq(t, "start head", catalog["start_head"], any(b.Start))
 			if historical {
 				eq(t, "tree", catalog["candidate_tree"], nil)

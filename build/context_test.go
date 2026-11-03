@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/tools"
@@ -43,7 +44,7 @@ func TestAConversationOverTheBudgetIsResetToALocalWorkingWindow(t *testing.T) {
 		want := filepath.Join(e.root, ".kogen/local/runs", id, "working-context/build", itoa(i+1)+".json")
 		eq(t, "history path", path, want)
 		data, err := os.ReadFile(path)
-		if err != nil || hashHex(data) != ref["sha256"] {
+		if err != nil || core.HashHex(data) != ref["sha256"] {
 			t.Fatalf("%s: %v", path, err)
 		}
 		if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
@@ -179,8 +180,8 @@ func TestTheLocalResetEqualsTheElixirReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _ := encodeJSON(reduced)
-	want, _ := encodeJSON(golden.Reduced)
+	got, _ := core.EncodeJSON(reduced)
+	want, _ := core.EncodeJSON(golden.Reduced)
 	// The Elixir run named its own folder: paths are compared with the root replaced.
 	gotText := strings.ReplaceAll(string(got), run.Dir, "<ROOT>/.kogen/local/runs/abcd1234")
 	// Both sides name the tree of their own repository's candidate.
@@ -197,7 +198,7 @@ func TestTheLocalResetEqualsTheElixirReference(t *testing.T) {
 		t.Fatalf("history %v", state.History)
 	}
 	data, _ := os.ReadFile(state.History[0].Path)
-	gotObs, _ := encodeJSON(state.Observations)
+	gotObs, _ := core.EncodeJSON(state.Observations)
 	if *update {
 		sum := state.History[0].SHA256
 		updateGoldenAfter(t, func() {
@@ -214,7 +215,7 @@ func TestTheLocalResetEqualsTheElixirReference(t *testing.T) {
 	}
 	eq(t, "archive sha256", state.History[0].SHA256, golden.History[0].SHA256)
 	eq(t, "archive bytes", string(data), golden.Archive)
-	wantObs, _ := encodeJSON(golden.Observations)
+	wantObs, _ := core.EncodeJSON(golden.Observations)
 	eq(t, "observations", string(gotObs), string(wantObs))
 }
 
@@ -239,7 +240,7 @@ func windowAttempt(t *testing.T) (*Attempt, *env, string) {
 			Continuation: Continuation{Stage: StageReview}, WorkingContext: map[string]*OwnerContext{},
 			LastPass:      &verify.Pass{Green: true, Tree: tree, Clean: true},
 			LastReview:    &ReviewRecord{Findings: []map[string]any{{"severity": "blocking", "message": "unresolved blocker"}}},
-			ApprovalBytes: encodeBase64([]byte(`{"sha256":"` + hashHex([]byte("exact approval")) + `"}`)),
+			ApprovalBytes: encodeBase64([]byte(`{"sha256":"` + core.HashHex([]byte("exact approval")) + `"}`)),
 		},
 		deps: e.deps(), repo: repo, s: sessionOf(e),
 	}
@@ -335,7 +336,7 @@ func resetRetains(t *testing.T, role project.Role) {
 	for _, part := range []string{"Active stage 2/2", "historical", tree} {
 		contains(t, "stage navigation", navigation, part)
 	}
-	eq(t, "progress kept", b.StageProgress.value()["phase"], any("stage"))
+	eq(t, "progress kept", b.StageProgress.Value()["phase"], any("stage"))
 	eq(t, "evidence kept", len(b.StageEvidence), 1)
 	checks := reset["checks"].(map[string]any)
 	if checks["status"] != "stale" || checks["candidate_tree"] != tree || len(checks["failing"].([]any)) != 0 || len(checks["not_run"].([]any)) != 0 {
@@ -345,14 +346,14 @@ func resetRetains(t *testing.T, role project.Role) {
 		t.Fatalf("findings %v", f)
 	}
 	eq(t, "unfinished", len(reset["unfinished"].([]any)), 3)
-	eq(t, "approval", reset["approval_sha256"], any(hashHex([]byte("exact approval"))))
+	eq(t, "approval", reset["approval_sha256"], any(core.HashHex([]byte("exact approval"))))
 	history := reset["history"].([]any)
 	if len(history) != 1 {
 		t.Fatalf("history %v", history)
 	}
 	ref := history[0].(map[string]any)
 	data, err := os.ReadFile(ref["path"].(string))
-	if err != nil || hashHex(data) != ref["sha256"] {
+	if err != nil || core.HashHex(data) != ref["sha256"] {
 		t.Fatalf("archive: %v", err)
 	}
 	var archived struct{ Input []any }

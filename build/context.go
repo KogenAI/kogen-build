@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/durable"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/thinking"
@@ -56,7 +57,7 @@ func (d *Diagnostic) Validate() error {
 // capture keeps the data privately in the run folder (`diagnostic-context.json`, 0600).
 func (d *Diagnostic) capture(run *Run) error {
 	path := filepath.Join(run.Dir, "diagnostic-context.json")
-	b, err := encodeJSON(map[string]any{"text": d.Text, "source_path": d.SourcePath, "sha256": d.SHA256})
+	b, err := core.EncodeJSON(map[string]any{"text": d.Text, "source_path": d.SourcePath, "sha256": d.SHA256})
 	if err != nil {
 		return err
 	}
@@ -93,15 +94,6 @@ Diagnostic text follows:
 
 const reservedOutputTokens = agent.OutputReserveTokens
 
-func hashHex(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
-}
-
-func resumeRefused(detail string) *sys.Error {
-	return sys.Fail("candidate", "resume_refused", detail, 1)
-}
-
 // validateWorkingContext checks the custody of every archived window: an absolute clean
 // path under the runs folder, private folders and file, bytes equal to the recorded hash.
 func (b *Attempt) validateWorkingContext() error {
@@ -113,10 +105,10 @@ func (b *Attempt) validateWorkingContext() error {
 			ok = ok && safeDirectories(filepath.Dir(path), runs) && safeFile(path)
 			if ok {
 				data, err := os.ReadFile(path)
-				ok = err == nil && hashHex(data) == ref.SHA256
+				ok = err == nil && core.HashHex(data) == ref.SHA256
 			}
 			if !ok {
-				return resumeRefused("working-context history custody missing, changed or unsafe: " + path +
+				return core.ResumeRefused("working-context history custody missing, changed or unsafe: " + path +
 					"; inspect checkpoint and archive before fresh approval")
 			}
 		}
@@ -171,7 +163,7 @@ func safeFile(path string) bool {
 // measure is the complete rendered request against the 524288-byte input budget.
 func (b *Attempt) bodyOf(role project.Role, instructions string, items, tools []any, owner string) map[string]any {
 	return b.deps.Client.Body(provider.Request{
-		Role: providerRole(role), Instructions: instructions, Input: items, Tools: tools, ToolChoice: b.force,
+		Role: core.ProviderRole(role), Instructions: instructions, Input: items, Tools: tools, ToolChoice: b.force,
 		CacheID: b.cacheID(owner), Cache: provider.NewCache(b.PromptCache),
 	})
 }
@@ -219,9 +211,9 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 			}
 			mandatory = append(mandatory, it)
 		}
-		state = &OwnerContext{Mandatory: nonNil(mandatory), Observations: []any{}, History: []HistoryRef{}}
+		state = &OwnerContext{Mandatory: core.NonNil(mandatory), Observations: []any{}, History: []HistoryRef{}}
 	}
-	measured, err := agent.Measure(b.bodyOf(role, instructions, input, tools, owner), providerRole(role))
+	measured, err := agent.Measure(b.bodyOf(role, instructions, input, tools, owner), core.ProviderRole(role))
 	if err != nil {
 		return nil, err
 	}
@@ -253,12 +245,12 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		status = "failed"
 	}
 	if pass := b.LastPass; pass != nil {
-		passTree, failing, notRun = pass.Tree, nonNil(pass.Failing), nonNil(pass.NotRun)
+		passTree, failing, notRun = pass.Tree, core.NonNil(pass.Failing), core.NonNil(pass.NotRun)
 	}
 	path := filepath.Join(b.Run.Dir, "working-context", owner, fmt.Sprintf("%d.json", len(state.History)+1))
 	var findings any = []any{}
 	if b.LastReview != nil {
-		findings = nonNil(b.LastReview.Findings)
+		findings = core.NonNil(b.LastReview.Findings)
 	}
 	approval, err := decodeApprovalSHA(b.ApprovalBytes)
 	if err != nil {
@@ -274,18 +266,18 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 	construct := func(in []any, deferred []int) (resetWindow, agent.Measurement, error) {
 		var w resetWindow
 		w.observations = uniqueItems(append(slices.Clone(state.Observations), observationsOf(in)...))
-		archive, err := encodeJSON(map[string]any{"input": in})
+		archive, err := core.EncodeJSON(map[string]any{"input": in})
 		if err != nil {
 			return w, agent.Measurement{}, err
 		}
 		w.archive = append(archive, '\n')
-		w.history = append(slices.Clone(state.History), HistoryRef{Path: path, SHA256: hashHex(w.archive)})
+		w.history = append(slices.Clone(state.History), HistoryRef{Path: path, SHA256: core.HashHex(w.archive)})
 		refs := make([]any, 0, len(w.history))
 		inCatalog := 0
 		for i, h := range w.history {
 			ref := map[string]any{"path": h.Path, "sha256": h.SHA256}
 			// The new archive is always carried.
-			if encoded, err := encodeJSON(ref); i < len(state.History) && err == nil && listedIn(mandatoryText, string(encoded)) {
+			if encoded, err := core.EncodeJSON(ref); i < len(state.History) && err == nil && listedIn(mandatoryText, string(encoded)) {
 				inCatalog++
 				continue
 			}
@@ -313,7 +305,7 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 				"status": status, "candidate_tree": passTree, "failing": failing, "not_run": notRun,
 			},
 			"unfinished":            w.observations,
-			"stage_navigation":      b.State.navigation(),
+			"stage_navigation":      b.State.Navigation(),
 			"findings":              findings,
 			"history":               refs,
 			"frozen_material":       "Initial check evidence is historical. Only native results for the current candidate authorize eligibility.",
@@ -352,7 +344,7 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		} else {
 			w.reduced = append(slices.Clone(w.mandatory), thinking.Strip(newestExchange(in))...)
 		}
-		next, err := agent.Measure(b.bodyOf(role, instructions, w.reduced, tools, owner), providerRole(role))
+		next, err := agent.Measure(b.bodyOf(role, instructions, w.reduced, tools, owner), core.ProviderRole(role))
 		return w, next, err
 	}
 	var window resetWindow
@@ -379,7 +371,7 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 	} else if window, next, err = construct(input, nil); err != nil {
 		return nil, err
 	}
-	mand, err := agent.Measure(b.bodyOf(role, instructions, window.mandatory, tools, owner), providerRole(role))
+	mand, err := agent.Measure(b.bodyOf(role, instructions, window.mandatory, tools, owner), core.ProviderRole(role))
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +552,7 @@ func mandatoryTexts(mandatory []any) []string {
 			texts = append(texts, content)
 		case []any:
 			for _, block := range content {
-				if text, ok := materialText(block); ok {
+				if text, ok := core.MaterialText(block); ok {
 					texts = append(texts, text)
 				}
 			}
@@ -579,7 +571,7 @@ func listedIn(texts []string, needle string) bool {
 }
 
 func decodeApprovalSHA(encoded string) (string, error) {
-	raw, err := decodeBase64(encoded)
+	raw, err := core.DecodeBase64(encoded)
 	if err != nil {
 		return "", err
 	}

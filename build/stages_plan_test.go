@@ -60,7 +60,7 @@ func TestAnAbsentPlanIsUnchangedAndAnExplicitPlanRetainsOrderedLiterals(t *testi
 	if initialProgress(nil) != nil {
 		t.Fatal("progress without a plan")
 	}
-	eq(t, "initial", canonical(initialProgress(defs).value()), `{"active":"foundation","completed":[],"phase":"stage","total":2}`)
+	eq(t, "initial", canonical(initialProgress(defs).Value()), `{"active":"foundation","completed":[],"phase":"stage","total":2}`)
 }
 
 func TestEverySpecifiedPlanSchemaErrorNamesStages(t *testing.T) {

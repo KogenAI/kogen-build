@@ -311,14 +311,14 @@ func TestStageProgressOwnerClaimsAreCheckedAgainstTheSavedContinuation(t *testin
 	for _, c := range valid {
 		s := *st
 		s.Continuation = c
-		if !s.stagesValid() {
+		if !stagesValid(&s) {
 			t.Fatalf("%+v refused", c)
 		}
 	}
 	for _, c := range invalid {
 		s := *st
 		s.Continuation = c
-		if s.stagesValid() {
+		if stagesValid(&s) {
 			t.Fatalf("%+v accepted", c)
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/KogenAI/kogen-build/build/core"
 	"github.com/KogenAI/kogen-coordinator/durable"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -41,49 +42,6 @@ const (
 	materialPartBytes = 6000
 	materialPartJSON  = 10_000
 )
-
-// materialSet is what the reviewer reads about one green pass.
-type materialSet struct {
-	// Authority is the stable part: the approved contract and the commands.
-	Authority string `json:"authority"`
-	// Source is the dynamic part: the check results, the diff and the file texts.
-	Source string `json:"source"`
-	// Files is the catalog of changed paths: path, status (changed, added or deleted), Git
-	// mode, Git object, byte count and SHA-256 of the content (the commit id for a gitlink).
-	Files []map[string]any `json:"files"`
-	// Checks are the check results of the final pass.
-	Checks string `json:"checks"`
-	// texts are the changed or added text files as they appear in Source (the external
-	// reviewer's parts keep a path's text whole).
-	texts []materialFileText
-	// partsSource is the source of the parts route (an external review whose complete prompt does
-	// not fit one session): Source with the full text of every changed text file left out, and
-	// partsTexts the added text files that remain in it.
-	partsSource string
-	partsTexts  []materialFileText
-}
-
-// materialHunkRange is the lines (1-based, inclusive) of one changed hunk: kind "diff" within
-// its path's diff block (its header and body), kind "file" within the candidate text of its path
-// (the hunk's new lines; a hunk that only deletes has none).
-type materialHunkRange struct {
-	Path  string `json:"path"`
-	Kind  string `json:"kind"`
-	First int    `json:"first_line"`
-	Last  int    `json:"last_line"`
-}
-
-// materialSegment is the byte range [Start, End) of Source holding the diff block (kind
-// "diff") or the text (kind "file") of one path.
-type materialSegment struct {
-	Path  string `json:"path"`
-	Kind  string `json:"kind"`
-	Start int    `json:"start"`
-	End   int    `json:"end"`
-}
-
-// materialFileText is a changed or added text file as it appears in the source.
-type materialFileText struct{ path, heading, content string }
 
 // materialOf gathers the material of the green pass: the changes between the start HEAD and
 // pass.Tree.
@@ -140,7 +98,7 @@ func (b *Attempt) materialOf(pass verify.Pass) (materialSet, error) {
 		}
 		catalog = append(catalog, map[string]any{
 			"path": p, "status": status, "mode": at.Mode, "git_object": at.Object,
-			"bytes": len(content), "sha256": hashHex([]byte(content)),
+			"bytes": len(content), "sha256": core.HashHex([]byte(content)),
 		})
 		if !isThere {
 			parts = append(parts, "--- "+p+" (deleted)")
@@ -157,13 +115,13 @@ func (b *Attempt) materialOf(pass verify.Pass) (materialSet, error) {
 			partsView = append(partsView, heading+"\nSubproject commit "+entry.Object)
 		case utf8.ValidString(content) && !strings.Contains(content, "\x00"):
 			parts = append(parts, heading+"\n"+content)
-			texts = append(texts, materialFileText{p, heading + "\n", content})
+			texts = append(texts, materialFileText{Path: p, Heading: heading + "\n", Content: content})
 			if wasThere {
 				// A changed file's hunks are in the diff and its full text is in the checkout.
 				partsView = append(partsView, heading+" (changed; full text in the checkout)")
 			} else {
 				partsView = append(partsView, heading+"\n"+content)
-				partsTexts = append(partsTexts, materialFileText{p, heading + "\n", content})
+				partsTexts = append(partsTexts, materialFileText{Path: p, Heading: heading + "\n", Content: content})
 			}
 		default:
 			parts = append(parts, heading+" (binary)")
@@ -230,7 +188,7 @@ func (b *Attempt) materialOf(pass verify.Pass) (materialSet, error) {
 		strings.Join(partsView, "\n") + "\n"
 	partsSource = strings.ToValidUTF8(partsSource, "�")
 
-	set := materialSet{Authority: authority, Source: source, Files: catalog, Checks: results, texts: texts, partsSource: partsSource, partsTexts: partsTexts}
+	set := materialSet{Authority: authority, Source: source, Files: catalog, Checks: results, Texts: texts, PartsSource: partsSource, PartsTexts: partsTexts}
 	return set, nil
 }
 
@@ -258,8 +216,8 @@ func (b *Attempt) materialManifestAt(tree string, catalog []map[string]any, text
 		case "added":
 			content := ""
 			for _, t := range texts {
-				if t.path == path {
-					content = t.content
+				if t.Path == path {
+					content = t.Content
 				}
 			}
 			n := strings.Count(content, "\n")
@@ -269,7 +227,7 @@ func (b *Attempt) materialManifestAt(tree string, catalog []map[string]any, text
 			if n > 0 {
 				stat["added"] = n
 				hunks = append(hunks, map[string]any{"old_start": 0, "old_count": 0, "new_start": 1, "new_count": n, "header": fmt.Sprintf("@@ -0,0 +1,%d @@", n)})
-				ranges = append(ranges, materialHunkRange{path, "file", 1, n})
+				ranges = append(ranges, materialHunkRange{Path: path, Kind: "file", First: 1, Last: n})
 			}
 		case "changed", "deleted":
 			// A deleted path's diff block lies in the diff text too: covered, and its hunks are
@@ -280,7 +238,7 @@ func (b *Attempt) materialManifestAt(tree string, catalog []map[string]any, text
 			}
 			diff = strings.ToValidUTF8(diff, "�")
 			if at := strings.Index(source[cursor:], diff); diff != "" && at >= 0 {
-				segments = append(segments, materialSegment{path, "diff", cursor + at, cursor + at + len(diff)})
+				segments = append(segments, materialSegment{Path: path, Kind: "diff", Start: cursor + at, End: cursor + at + len(diff)})
 				cursor += at + len(diff)
 			}
 			lines := strings.Split(diff, "\n")
@@ -302,13 +260,13 @@ func (b *Attempt) materialManifestAt(tree string, catalog []map[string]any, text
 					if open >= 0 {
 						ranges[open].Last = n
 					}
-					ranges = append(ranges, materialHunkRange{path, "diff", n + 1, total})
+					ranges = append(ranges, materialHunkRange{Path: path, Kind: "diff", First: n + 1, Last: total})
 					open = len(ranges) - 1
 					if f["status"] == "deleted" {
 						continue
 					}
 					if newCount > 0 {
-						ranges = append(ranges, materialHunkRange{path, "file", newStart, newStart + newCount - 1})
+						ranges = append(ranges, materialHunkRange{Path: path, Kind: "file", First: newStart, Last: newStart + newCount - 1})
 					}
 					hunks = append(hunks, map[string]any{
 						"old_start": num(m[1], 0), "old_count": num(m[2], 1), "new_start": newStart, "new_count": newCount,
@@ -329,13 +287,13 @@ func (b *Attempt) materialManifestAt(tree string, catalog []map[string]any, text
 	}
 	cursor = strings.Index(source, textsHeading)
 	for _, t := range texts {
-		at := strings.Index(source[cursor:], t.heading+t.content)
-		if at < 0 || t.content == "" {
+		at := strings.Index(source[cursor:], t.Heading+t.Content)
+		if at < 0 || t.Content == "" {
 			continue
 		}
-		start := cursor + at + len(t.heading)
-		segments = append(segments, materialSegment{t.path, "file", start, start + len(t.content)})
-		cursor = start + len(t.content)
+		start := cursor + at + len(t.Heading)
+		segments = append(segments, materialSegment{Path: t.Path, Kind: "file", Start: start, End: start + len(t.Content)})
+		cursor = start + len(t.Content)
 	}
 	return manifest, segments, ranges, nil
 }
@@ -371,7 +329,7 @@ func materialOpening(authority, source string, diagnostic []any) []any {
 // force pins even a source that fits.
 func (b *Attempt) materialPrepare(tree string, m materialSet, role project.Role, instructions string, defs, diagnostic []any, force bool) ([]any, error) {
 	measure := func(items []any) (tools.Measurement, error) {
-		return tools.Measure(b.bodyOf(role, instructions, items, defs, "review"), providerRole(role))
+		return tools.Measure(b.bodyOf(role, instructions, items, defs, "review"), core.ProviderRole(role))
 	}
 	full := materialOpening(m.Authority, m.Source, diagnostic)
 	fit, err := measure(full)
@@ -411,7 +369,7 @@ func (b *Attempt) materialPrepare(tree string, m materialSet, role project.Role,
 	parts := make([]part, len(chunks))
 	refs := make([]any, len(chunks))
 	for i, text := range chunks {
-		raw, err := encodeJSON(map[string]any{
+		raw, err := core.EncodeJSON(map[string]any{
 			"input": []any{},
 			"review_source": map[string]any{
 				"review": b.Review, "part": i + 1, "parts": len(chunks), "text": text,
@@ -421,17 +379,17 @@ func (b *Attempt) materialPrepare(tree string, m materialSet, role project.Role,
 			return nil, err
 		}
 		raw = append(raw, '\n')
-		ref := HistoryRef{Path: filepath.Join(dir, fmt.Sprintf("%d.json", i+1)), SHA256: hashHex(raw)}
+		ref := HistoryRef{Path: filepath.Join(dir, fmt.Sprintf("%d.json", i+1)), SHA256: core.HashHex(raw)}
 		parts[i] = part{ref, raw}
 		refs[i] = map[string]any{"path": ref.Path, "sha256": ref.SHA256}
 	}
-	sourceSum := hashHex([]byte(m.Source))
+	sourceSum := core.HashHex([]byte(m.Source))
 	files := nonNilAny(m.Files)
 	doc := map[string]any{
 		"version": 1, "candidate_tree": treeValue, "binding": binding, "start_head": b.Start, "source_bytes": len(m.Source),
 		"source_sha256": sourceSum, "files": files, "parts": refs,
 	}
-	catalog, err := encodeJSON(doc)
+	catalog, err := core.EncodeJSON(doc)
 	if err != nil {
 		return nil, err
 	}
@@ -492,8 +450,8 @@ func (b *Attempt) materialRelocate(role project.Role, instructions string, defs 
 	if len(blocks) != 2 {
 		return nil
 	}
-	authority, ok1 := materialText(blocks[0])
-	source, ok2 := materialText(blocks[1])
+	authority, ok1 := core.MaterialText(blocks[0])
+	source, ok2 := core.MaterialText(blocks[1])
 	if !ok1 || !ok2 {
 		return nil
 	}
@@ -502,12 +460,12 @@ func (b *Attempt) materialRelocate(role project.Role, instructions string, defs 
 		if err != nil {
 			return err
 		}
-		v, err := decodeJSONNumbers(data)
+		v, err := core.DecodeJSONNumbers(data)
 		if err != nil {
 			return err
 		}
 		doc, _ := v.(map[string]any)
-		if src, ok := doc["review_source"].(map[string]any); ok && display(src["review"]) == itoa(b.Review) {
+		if src, ok := doc["review_source"].(map[string]any); ok && core.Display(src["review"]) == itoa(b.Review) {
 			return nil
 		}
 	}
@@ -524,15 +482,6 @@ func (b *Attempt) materialRelocate(role project.Role, instructions string, defs 
 	}
 	_, err := b.materialPrepare(tree, m, role, instructions, defs, state.Mandatory[1:], true)
 	return err
-}
-
-func materialText(block any) (string, bool) {
-	m, ok := block.(map[string]any)
-	if !ok {
-		return "", false
-	}
-	text, ok := m["text"].(string)
-	return text, ok
 }
 
 func nonNilAny(files []map[string]any) []map[string]any {
@@ -597,7 +546,7 @@ func materialPrefix(text string, n int) int {
 			n--
 			continue
 		}
-		if raw, err := encodeJSON(part); err == nil && len(raw) > materialPartJSON {
+		if raw, err := core.EncodeJSON(part); err == nil && len(raw) > materialPartJSON {
 			n /= 2
 			continue
 		}
@@ -676,14 +625,14 @@ func (b *Attempt) reviewCustody(input []any) (*reviewCustody, error) {
 		if err != nil {
 			return nil, err
 		}
-		v, err := decodeJSONNumbers(data)
+		v, err := core.DecodeJSONNumbers(data)
 		if err != nil {
 			return nil, fmt.Errorf("working-context archive %s: %w", ref.Path, err)
 		}
 		doc, _ := v.(map[string]any)
 		window, _ := doc["input"].([]any)
 		c.windows = append(c.windows, window)
-		if source, ok := doc["review_source"].(map[string]any); ok && display(source["review"]) == itoa(b.Review) {
+		if source, ok := doc["review_source"].(map[string]any); ok && core.Display(source["review"]) == itoa(b.Review) {
 			c.sources[ref.Path] = "1\t" + strings.TrimRight(string(data), "\n")
 			part, _ := source["part"].(json.Number)
 			n, err := part.Int64()
@@ -762,7 +711,7 @@ func isModelOutput(item any) bool {
 
 // prefillMessage is the native user message carrying the given parts of the review.
 func prefillMessage(review int, parts []any) (map[string]any, error) {
-	raw, err := encodeJSON(map[string]any{"version": 1, "review": review, "parts": parts})
+	raw, err := core.EncodeJSON(map[string]any{"version": 1, "review": review, "parts": parts})
 	if err != nil {
 		return nil, err
 	}
@@ -781,12 +730,12 @@ func prefillEntries(item any, review int) map[string]string {
 	if !ok {
 		return nil
 	}
-	v, err := decodeJSONNumbers([]byte(body))
+	v, err := core.DecodeJSONNumbers([]byte(body))
 	if err != nil {
 		return nil
 	}
 	doc, _ := v.(map[string]any)
-	if display(doc["version"]) != "1" || display(doc["review"]) != itoa(review) {
+	if core.Display(doc["version"]) != "1" || core.Display(doc["review"]) != itoa(review) {
 		return nil
 	}
 	list, _ := doc["parts"].([]any)
@@ -875,7 +824,7 @@ func (b *Attempt) prefillSource(role project.Role, instructions string, defs, in
 		if err != nil {
 			return false, err
 		}
-		m, err := tools.Measure(b.bodyOf(role, instructions, candidate, defs, "review"), providerRole(role))
+		m, err := tools.Measure(b.bodyOf(role, instructions, candidate, defs, "review"), core.ProviderRole(role))
 		if err != nil {
 			return false, err
 		}
@@ -948,7 +897,9 @@ func (b *Attempt) reviewDelivery(input, kept []any, tree string) (map[string]any
 		}
 		source = facts
 	}
-	key := func(e tools.ImageEntry) string { return display(e.Meta["path"]) + "\x00" + display(e.Meta["sha256"]) }
+	key := func(e tools.ImageEntry) string {
+		return core.Display(e.Meta["path"]) + "\x00" + core.Display(e.Meta["sha256"])
+	}
 	window := map[string]bool{}
 	for _, e := range tools.ImageEntries(kept) {
 		window[key(e)] = true
