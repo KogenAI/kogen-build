@@ -522,14 +522,21 @@ func TestClaudeLineupReviewRoundLimit(t *testing.T) {
 	}{{"default", nil, 6}, {"one", intp(1), 1}, {"two", intp(2), 2}, {"zero", intp(0), 6}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			e := newEnv(t)
+			e := newEnv(t, func(c *project.Config) {
+				c.Checks = []project.Check{{Name: "app", Run: "if grep -qx unchecked app.txt; then exit 1; fi"}}
+			})
 			e.useLineup("")
 			start := e.head()
 			f := newLineupExec(t)
 			f.reviewMax = tc.caps
-			// Every round approves a tree that verification finds red: the reviewer never gets it green.
+			// The rounds alternate between a tree whose acceptance fails and a tree whose app check fails, so
+			// final verification never fails with the same items twice in a row and the reviewer never gets it green.
 			f.review = func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error) {
-				lineupWriteApp(t, root, "red\n")
+				if n%2 == 1 {
+					lineupWriteApp(t, root, "red\n")
+				} else {
+					lineupWriteApp(t, root, "unchecked\n")
+				}
 				return executor.RoundResult{Structured: verdictJSON("approve")}, nil
 			}
 			a := e.build(withLineup(f))
@@ -541,7 +548,11 @@ func TestClaudeLineupReviewRoundLimit(t *testing.T) {
 				t.Fatal("another role or session was started")
 			}
 			eq(t, "HEAD", e.head(), start)
-			eq(t, "preserved work", e.read("app.txt"), "red\n")
+			last := "unchecked\n"
+			if tc.max%2 == 1 {
+				last = "red\n"
+			}
+			eq(t, "preserved work", e.read("app.txt"), last)
 			if x := e.result(e.onlyRun())["review_executor"].(map[string]any); int(x["rounds"].(float64)) != tc.max {
 				t.Fatalf("recorded rounds %v", x)
 			}
