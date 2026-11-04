@@ -39,6 +39,7 @@ object, also on refusal or stop:
 ## Packages
 
 - `build`: the builder rounds, native and external executors, working context, verification gates, the independent review and repair stage, the commit stage, checkpoints, resume and recovery.
+- `consumes/`: one test suite per Kogen dependency (kogen-coordinator, kogen-executor, kogen-loop, kogen-review, kogen-verification) stating exactly what `build` and `cmd/kogen-build` rely on from that producer, at the version `go.mod` pins; `consumes/README.md` holds the inventory. `contract/` states what this module provides.
 
 `build` owns the builder's model-facing policy: its instructions (`build/prompts/builder.md`, `BuilderInstructions`) and its terminal tools (`finish`, `report_blocker`, `BuilderToolDefinitions`), recorded in `build/testdata/prompts_golden.json` and `defs_golden.json`.
 
