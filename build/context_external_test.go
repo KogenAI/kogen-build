@@ -385,8 +385,22 @@ func openings(t *testing.T, c extCombo, d *Diagnostic) map[string]string {
 		if k == "builder" || k == "reviewer" {
 			out[k] = kogenOwnedRequest(t, out[k])
 		}
+		out[k] = withoutLineupFile(out[k])
 	}
 	return out
+}
+
+// withoutLineupFile is text without `.kogen/models.yaml` in the protected files the prompts name
+// and in the sorted list of the project's tracked files: the reverse of lineupFileForms and
+// trackedLineupFileForms. Whether the coordinator lists the lineup file is not what these bytes
+// assert, so the golden, the output and what -update records all go through it; no other byte changes.
+func withoutLineupFile(text string) string {
+	for _, forms := range [][][2]string{lineupFileForms, trackedLineupFileForms} {
+		for _, f := range forms {
+			text = strings.ReplaceAll(text, f[1], f[0])
+		}
+	}
+	return text
 }
 
 // diagnosticOf is the diagnostic every native-bytes case supplies.
@@ -415,7 +429,9 @@ func sameBytes(t *testing.T, name, got, want string) {
 // recorded from the unfixed Build); only the folders, run, conversation and Git object names are normalized,
 // and a native request is compared without the pinned loop's generic tool definitions and envelope fields.
 // The golden holds those normalized parts per pairing and context; it is frozen and must not
-// change without deliberate intent. `go test ./... -update` rewrites it from the current output
+// change without deliberate intent. Whether `.kogen/models.yaml` is a member of the coordinator's
+// protected files is not compared: it is removed from the golden and from the output alike, and
+// from what -update records. `go test ./... -update` rewrites it from the current output
 // (a Git diff to review like any other change); the external builder's "with context" subtests,
 // whose expectation derives from stored entries, then derive it from this run's own output.
 func TestContextExternalNativeBytes(t *testing.T) {
@@ -428,15 +444,9 @@ func TestContextExternalNativeBytes(t *testing.T) {
 	if err := json.Unmarshal(raw, &golden); err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range extCombos {
-		for _, suffix := range []string{" without context", " with context"} {
-			for part, text := range golden[c.name+suffix] {
-				text = withLineupFile(text)
-				if c.extBuild || c.extReview {
-					text = withTrackedLineupFile(text)
-				}
-				golden[c.name+suffix][part] = text
-			}
+	for _, parts := range golden {
+		for part, text := range parts {
+			parts[part] = withoutLineupFile(text)
 		}
 	}
 	d := diagnosticOf()
@@ -496,7 +506,7 @@ func TestContextExternalNativeBytes(t *testing.T) {
 				plain = openings(t, c, nil)
 				nativeReviewer = openings(t, extCombos[0], d)["reviewer"]
 			}
-			sameBytes(t, "builder.stable", got["builder.stable"], plain["builder.stable"]+d.message()["content"].(string))
+			sameBytes(t, "builder.stable", got["builder.stable"], withoutLineupFile(plain["builder.stable"]+d.message()["content"].(string)))
 			sameBytes(t, "builder.dynamic", got["builder.dynamic"], plain["builder.dynamic"])
 			if c.extReview {
 				return

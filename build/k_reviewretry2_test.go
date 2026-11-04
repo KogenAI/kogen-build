@@ -257,7 +257,7 @@ func TestKReviewRetry2DiscardEdits(t *testing.T) {
 	t.Parallel()
 	edits := func(f *fakeProvider) handler {
 		return f.calls("write_file", map[string]any{"path": "app.txt", "content": "reviewer edit\n"},
-			"shell", map[string]any{"command": "rm README.md && printf 'scratch\\n' > notes.txt"})
+			"shell", map[string]any{"command": "rm README.md && printf 'reviewer-added-note\\n' > notes.txt"})
 	}
 
 	t.Run("uncommitted edits are discarded before review 2", func(t *testing.T) {
@@ -281,7 +281,7 @@ func TestKReviewRetry2DiscardEdits(t *testing.T) {
 		eq(t, "review requests", len(reqs), 4)
 		eq(t, "review 2 opening material", jsonOf(requestInput(reqs[3])[0]), jsonOf(requestInput(reqs[0])[0]))
 		eq(t, "fresh conversation input", len(requestInput(reqs[3])), 1)
-		for _, leaked := range []string{"reviewer edit", "scratch", "function_call"} {
+		for _, leaked := range []string{"reviewer edit", "reviewer-added-note", "function_call"} {
 			lacks(t, "review 2", requestText(reqs[3]), leaked)
 		}
 		if cacheKey(reqs[0]) == "" || cacheKey(reqs[0]) == cacheKey(reqs[3]) || cacheKey(reqs[0]) != cacheKey(reqs[2]) {

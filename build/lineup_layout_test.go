@@ -135,16 +135,3 @@ var trackedLineupFileForms = [][2]string{
 	{`.gitignore\n.kogen/project.yaml\n`, `.gitignore\n.kogen/models.yaml\n.kogen/project.yaml\n`},
 	{`.gitignore\\n.kogen/project.yaml\\n`, `.gitignore\\n.kogen/models.yaml\\n.kogen/project.yaml\\n`},
 }
-
-// withTrackedLineupFile is text recorded with the pinned coordinator, whose project had no
-// `.kogen/models.yaml`, as the Build names its files when the moved coordinator's project
-// committed one (a test that sets a role). With the pinned coordinator it is text itself.
-func withTrackedLineupFile(text string) string {
-	if !lineupMoved {
-		return text
-	}
-	for _, f := range trackedLineupFileForms {
-		text = strings.ReplaceAll(text, f[0], f[1])
-	}
-	return text
-}
