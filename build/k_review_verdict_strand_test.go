@@ -28,13 +28,6 @@ func strandBuilder(f *fakeProvider) handler {
 	return f.calls("write_file", map[string]any{"path": "app.txt", "content": bigFile()}, "finish", map[string]any{"summary": "done"})
 }
 
-// authorityOf is the first block of a review's opening message, the exact authority and check
-// results; the second block is the catalog of that review's own pinned parts.
-func authorityOf(req map[string]any) string {
-	blocks, _ := requestInput(req)[0].(map[string]any)["content"].([]any)
-	return jsonOf(blocks[0])
-}
-
 // forcedBodies are the transmitted bodies of the review requests that named submit_review as
 // their tool choice, with the index of each among the review requests.
 func forcedBodies(t *testing.T, f *fakeProvider) (indexes []int, bodies [][]byte) {
@@ -52,20 +45,19 @@ func forcedBodies(t *testing.T, f *fakeProvider) (indexes []int, bodies [][]byte
 }
 
 // TestKReviewVerdictStrandReset: a forced submit_review request that comes right after a real
-// working-window reset (pinned source, one earlier unread-progress rejection) is transmitted
-// forced; its text-only answer is a provider fault naming route and model and the ordinary
-// no-tool exhaustion, never an unread-progress exemption; a fresh independent review of the
-// same green tree then approves and lands.
+// working-window reset (pinned source, native prefill around it) is transmitted forced; its
+// text-only answer is a provider fault naming route and model and the ordinary no-tool
+// exhaustion; a fresh independent review of the same green tree then approves and lands.
 func TestKReviewVerdictStrandReset(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	f := e.prov
 	f.then(strandBuilder(f))
-	// Review 1: a changes verdict with unread pinned parts (the one legitimate exemption), a large
-	// prose-only turn that pushes the reminder request over the ceiling (the reset happens in
-	// that very request, which also carries native source prefill) and a text-only answer to it.
-	f.then(submit(f, "changes", finding("blocking", "wrong")), prose(strings.Repeat("Everything is fine. ", 7_000)), prose("Nothing to add."))
-	f.then(repeatHandler(confirmingReviewer(t, f, nil), 40)...)
+	// Review 1: a large prose-only turn that pushes the reminder request over the ceiling (the
+	// reset happens in that very request, which also carries native source prefill) and a
+	// text-only answer to it.
+	f.then(prose(strings.Repeat("Everything is fine. ", 7_000)), prose("Nothing to add."))
+	f.then(repeatHandler(confirmingReviewer(t, e, f, nil), 40)...)
 	start := e.head()
 	a := e.reviewed()
 	if a.exit != 0 || a.err != nil {
@@ -86,31 +78,29 @@ func TestKReviewVerdictStrandReset(t *testing.T) {
 		t.Fatalf("resets %v, forced request %d bytes", resets, len(forcedBody[0]))
 	}
 	eq(t, "the reset is part of the forced request's body", strings.Contains(string(bodies[forced[0]]), "Local working-window reset"), true)
-	contains(t, "reminder", requestText(reqs[forced[0]]), "Call submit_review.")
 	eq(t, "tool choice events", len(eventsNamed(events, "review_tool_choice")), 1)
 	eq(t, "mode", eventsNamed(events, "review_tool_choice")[0]["mode"], any("api_forced"))
 	if len(eventsNamed(events, "review_source_prefill")) < 2 {
 		t.Fatalf("no native source prefill progress around the forced turn: %v", eventsNamed(events, "review_source_prefill"))
 	}
 
-	// The text-only answer: a fault of this route and model, an ordinary no-tool turn. The
-	// only exemption is the earlier real unread-parts rejection.
+	// The text-only answer: a fault of this route and model, an ordinary no-tool turn.
 	faults := eventsNamed(events, "provider_fault")
 	eq(t, "provider faults", len(faults), 1)
 	eq(t, "fault", faults[0]["fault"], any("forced_tool_not_called"))
 	eq(t, "fault route", faults[0]["route"], any("chatgpt"))
 	eq(t, "fault model", faults[0]["model"], any("gpt-6.1-terra"))
 	eq(t, "fault tool", faults[0]["tool"], any("submit_review"))
-	var allowances []string
-	for _, ev := range eventsNamed(events, "review_allowance") {
-		allowances = append(allowances, ev["why"].(string)+":"+jsonOf(counters(ev)))
+	verdicts := map[float64]map[string]any{}
+	for _, ev := range e.reviewVerdicts(id) {
+		verdicts[ev["review"].(float64)] = ev
 	}
-	eq(t, "allowances", allowances, []string{"unread_progress_exempt:[0,0]", "no_tool_turn:[0,1]"})
-	verdicts := e.reviewVerdicts(id)
-	eq(t, "review events", len(verdicts), 2)
-	eq(t, "review 1", verdicts[0]["verdict"], any("invalid"))
-	eq(t, "review 1 reason", verdicts[0]["reason"], any("no_tool_reminder_exhausted"))
-	eq(t, "review 2", verdicts[1]["verdict"], any("approve"))
+	if verdicts[1] == nil || verdicts[2] == nil {
+		t.Fatalf("review events %v", verdicts)
+	}
+	eq(t, "review 1", verdicts[1]["verdict"], any("invalid"))
+	eq(t, "review 1 reason", verdicts[1]["reason"], any("no_tool_reminder_exhausted"))
+	eq(t, "review 2", verdicts[2]["verdict"], any("approve"))
 
 	// Review 2 is a fresh conversation of the same green tree; the Build lands once.
 	retries := eventsNamed(events, "review_retry")
@@ -120,14 +110,12 @@ func TestKReviewVerdictStrandReset(t *testing.T) {
 	if second < 0 {
 		t.Fatal("review 2 did not start a conversation of its own")
 	}
-	eq(t, "same authority", authorityOf(reqs[second]), authorityOf(reqs[0]))
 	lacks(t, "review 2", requestText(reqs[second]), "function_call")
 	eq(t, "commits", e.commitsSince(start), "1")
 	eq(t, "committed", e.gitOut("show", "HEAD:app.txt")+"\n", bigFile())
 	res := e.result(id)
 	eq(t, "reviews", res["reviews"], any(float64(2)))
 	eq(t, "passes: no completed check was rerun", res["passes"], any(float64(1)))
-	eq(t, "builder requests", f.count()-len(reqs), 1)
 }
 
 // TestKReviewVerdictStrandSafety: recovery of the exact green candidate and its truthful

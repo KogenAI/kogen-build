@@ -60,26 +60,6 @@ func resetHandoff(t *testing.T, req map[string]any) map[string]any {
 	return nil
 }
 
-// pinnedOf is the pinned source parts a review request's catalog lists, or nil while the
-// source is still inline.
-func pinnedOf(req map[string]any) []string {
-	blocks, _ := requestInput(req)[0].(map[string]any)["content"].([]any)
-	if len(blocks) != 2 {
-		return nil
-	}
-	text, _ := blocks[1].(map[string]any)["text"].(string)
-	_, rest, ok := strings.Cut(text, "# Pinned complete candidate source evidence\n")
-	if !ok {
-		return nil
-	}
-	line, _, _ := strings.Cut(rest, "\n")
-	var catalog map[string]any
-	if json.Unmarshal([]byte(line), &catalog) != nil {
-		return nil
-	}
-	return catalogParts(catalog)
-}
-
 // inWindow is what a request's own window holds: the paths of its completed read_file calls
 // and the number of images it carries.
 func inWindow(req map[string]any) (read map[string]bool, images int) {
@@ -110,7 +90,7 @@ func inWindow(req map[string]any) (read map[string]bool, images int) {
 // confirmingReviewer models the reviewer of Build 543748f1: in every window it reads (four at
 // a time) the pinned parts it cannot confirm were delivered, from the window itself or the
 // reset's native delivery facts, then views every screenshot, then approves.
-func confirmingReviewer(t *testing.T, f *fakeProvider, shots []string) handler {
+func confirmingReviewer(t *testing.T, e *env, f *fakeProvider, shots []string) handler {
 	return func(w http.ResponseWriter, r *http.Request) {
 		reqs := f.reviewRequests()
 		req := reqs[len(reqs)-1]
@@ -119,7 +99,7 @@ func confirmingReviewer(t *testing.T, f *fakeProvider, shots []string) handler {
 		for path := range prefilledParts(t, req) {
 			known[path] = true
 		}
-		parts := pinnedOf(req)
+		parts := latestPinnedParts(e.root)
 		if reset := resetHandoff(t, req); reset != nil {
 			if d, ok := reset["review_delivery"].(map[string]any); ok {
 				if source, ok := d["source"].(map[string]any); ok && source["current"] == true {
@@ -218,7 +198,7 @@ func TestAReviewWhosePartsAndScreenshotsCannotShareAWindowConvergesOnItsDelivere
 	f := e.prov
 	content := strings.Repeat("0123456789abcdef-line\n", 4_100)
 	f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": content}, "finish", map[string]any{"summary": "done"}))
-	confirming := confirmingReviewer(t, f, shots)
+	confirming := confirmingReviewer(t, e, f, shots)
 	// Every read_file path the reviewer is scripted to call, recorded from its own responses.
 	readCalls := make(chan string, 4096)
 	shared := func(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +235,7 @@ func TestAReviewWhosePartsAndScreenshotsCannotShareAWindowConvergesOnItsDelivere
 	}
 	id := e.onlyRun()
 	reqs := f.reviewRequests()
-	parts := pinnedOf(reqs[len(reqs)-1])
+	parts := latestPinnedParts(e.root)
 	if len(parts) < 16 {
 		t.Fatalf("%d pinned parts", len(parts))
 	}

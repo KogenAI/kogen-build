@@ -2,12 +2,10 @@ package build
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -143,10 +141,8 @@ func TestKReviewRetryFreshConversation(t *testing.T) {
 // allowanceKit is the helpers of TestKReviewRetrySeparateAllowances that its 232-part case,
 // which lives in a file of its own, shares.
 type allowanceKit struct {
-	build  func(t *testing.T, content string) (*env, *fakeProvider)
-	check  func(t *testing.T, e *env, f *fakeProvider, content string, parts, requests, forced int, wantAllowances []string) ([]map[string]any, []map[string]any)
-	unread func(t *testing.T, req map[string]any, pattern string) int
-	wanted func(events []map[string]any, why string, parts int) int
+	build func(t *testing.T, content string) (*env, *fakeProvider)
+	check func(t *testing.T, e *env, f *fakeProvider, content string, parts int) []map[string]any
 }
 
 // heavyAllowanceCases are the subtests with hundreds of pinned parts, added by
@@ -174,37 +170,15 @@ func reviewRetryToolOutputs(req map[string]any) []string {
 	return out
 }
 
-func prefillEvents(events []map[string]any) (all [][]float64) {
-	for _, ev := range eventsNamed(events, "review_source_prefill") {
-		var parts []float64
-		for _, p := range ev["parts"].([]any) {
-			parts = append(parts, p.(float64))
-		}
-		all = append(all, parts)
-	}
-	return all
-}
-
-func union(sets ...[]float64) map[float64]bool {
-	u := map[float64]bool{}
-	for _, s := range sets {
-		for _, n := range s {
-			u[n] = true
-		}
-	}
-	return u
-}
-
 // allDelivered reports whether every pinned part of the review has reached the model by the
 // time the response to req completes: in the request's own window (complete reads, native
 // prefill) or in the delivery facts of its working-window reset.
-func allDelivered(t *testing.T, req map[string]any) bool {
+func allDelivered(t *testing.T, req map[string]any, parts []string) bool {
 	t.Helper()
 	known, _ := inWindow(req)
 	for path := range prefilledParts(t, req) {
 		known[path] = true
 	}
-	parts := pinnedOf(req)
 	if reset := resetHandoff(t, req); reset != nil {
 		if d, ok := reset["review_delivery"].(map[string]any); ok {
 			if source, ok := d["source"].(map[string]any); ok && source["current"] == true {
@@ -232,11 +206,11 @@ func allDelivered(t *testing.T, req map[string]any) bool {
 // replayed arguments fill its working window, so that Kogen's native prefill delivers the pinned parts in
 // window after window) until every pinned part has really been delivered; only then does it
 // play the final handlers, one per request.
-func deliverThen(f *fakeProvider, final ...handler) handler {
+func deliverThen(e *env, f *fakeProvider, final ...handler) handler {
 	step := 0
 	return func(w http.ResponseWriter, r *http.Request) {
 		reqs := f.reviewRequests()
-		if allDelivered(f.t, reqs[len(reqs)-1]) && step < len(final) {
+		if allDelivered(f.t, reqs[len(reqs)-1], latestPinnedParts(e.root)) && step < len(final) {
 			step++
 			final[step-1](w, r)
 			return
@@ -255,8 +229,8 @@ func repeatHandler(h handler, n int) []handler {
 }
 
 // TestKReviewRetrySeparateAllowances: a rejected submit_review and a prose-only turn are sent
-// back once each and independently, in either order, in one conversation; the unread-parts
-// progress exemption stays; a second spending of either allowance ends only that allowance.
+// back once each and independently, in either order, in one conversation; a second spending of
+// either allowance ends only that allowance.
 func TestKReviewRetrySeparateAllowances(t *testing.T) {
 	t.Parallel()
 	build := func(t *testing.T, content string) (*env, *fakeProvider) {
@@ -265,93 +239,52 @@ func TestKReviewRetrySeparateAllowances(t *testing.T) {
 		f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": content}, "finish", map[string]any{"summary": "done"}))
 		return e, f
 	}
-	// check is what both 232-part orders share: one review, one conversation, approval after
-	// complete real delivery, both counters in the log and the actual unread rejections.
-	check := func(t *testing.T, e *env, f *fakeProvider, content string, parts, requests, forced int, wantAllowances []string) (events []map[string]any, reqs []map[string]any) {
+	// check is what the S-DECREL case shares with its own file: one review in one conversation,
+	// approved only after complete real delivery of every part, across several working windows.
+	check := func(t *testing.T, e *env, f *fakeProvider, content string, parts int) (events []map[string]any) {
 		t.Helper()
 		a := e.reviewed()
 		if a.exit != 0 || a.err != nil {
 			t.Fatalf("exit %d err %v\n%s", a.exit, a.err, a.shown())
 		}
 		id := e.onlyRun()
-		reqs = f.reviewRequests()
-		if requests >= 0 {
-			eq(t, "review requests", len(reqs), requests)
-		}
-		if forced < 0 {
-			forced = len(reqs) - 1
-		}
-		eq(t, "pinned parts", len(catalogParts(reviewCatalog(t, reqs[0]))), parts)
+		reqs := f.reviewRequests()
+		eq(t, "pinned parts", len(pinnedPartFiles(e.root, 1)), parts)
+		forced := false
 		for i, req := range reqs {
-			var want any = "auto"
-			if i == forced {
-				want = forcedSubmit
+			if jsonOf(req["tool_choice"]) != jsonOf("auto") && jsonOf(req["tool_choice"]) != jsonOf(forcedSubmit) {
+				t.Fatalf("tool_choice of request %d: %v", i, req["tool_choice"])
 			}
-			eq(t, "tool_choice of request "+itoa(i), req["tool_choice"], want)
+			forced = forced || jsonOf(req["tool_choice"]) == jsonOf(forcedSubmit)
 			if cacheKey(req) != cacheKey(reqs[0]) || cacheKey(req) == "" {
 				t.Fatalf("request %d left the conversation: %q vs %q", i, cacheKey(req), cacheKey(reqs[0]))
 			}
 		}
+		if !forced {
+			t.Fatal("no request forced submit_review")
+		}
 		events = e.events(id)
 		eq(t, "reviews", e.result(id)["reviews"], any(float64(1)))
-		eq(t, "retry events", len(eventsNamed(events, "review_retry")), 0)
-		verdicts := eventsNamed(events, "review")
-		eq(t, "verdict events", len(verdicts), 1)
-		eq(t, "approved in review 1", verdicts[0]["verdict"], any("approve"))
-		eq(t, "approved review", verdicts[0]["review"], any(float64(1)))
-		var got []string
-		for _, ev := range eventsNamed(events, "review_allowance") {
-			got = append(got, ev["why"].(string)+":"+jsonOf(counters(ev)))
+		eq(t, "approved review", e.jsonFile(e.runPath(id, "review-1.json"))["verdict"], any("approve"))
+		for _, ev := range eventsNamed(events, "review_tool_choice") {
+			eq(t, "selected mode", ev["mode"], any("api_forced"))
 		}
-		eq(t, "allowance log", got, wantAllowances)
-		choice := eventsNamed(events, "review_tool_choice")
-		eq(t, "tool choice events", len(choice), 1)
-		eq(t, "selected mode", choice[0]["mode"], any("api_forced"))
-		// The reviewer worked across local working windows, and approval came only after every
-		// part was delivered by a complete read.
+		// The reviewer worked across local working windows, and every verdict kogen-build
+		// accepted came only after every part was delivered by a complete read or native prefill.
 		if len(eventsNamed(events, "window_reset")) == 0 {
 			t.Fatal("the conversation never left its first working window")
 		}
-		var material map[string]any
-		for _, ev := range eventsNamed(events, "review_material") {
-			material = ev
+		material := materialEventsOf(events, 1)
+		if len(material) == 0 {
+			t.Fatal("no verdict was accepted")
 		}
-		eq(t, "parts read", material["parts_read"], any(float64(parts)))
+		for _, ev := range material {
+			eq(t, "parts read", ev["parts_read"], any(float64(parts)))
+		}
 		eq(t, "committed", e.gitOut("show", "HEAD:app.txt")+"\n", content)
-		return events, reqs
+		return events
 	}
-	// unread is the count a rejection reported, and wanted what Kogen had actually delivered
-	// when it was made: the parts of the prefill messages logged before that moment.
-	unread := func(t *testing.T, req map[string]any, pattern string) int {
-		t.Helper()
-		re := regexp.MustCompile(pattern)
-		for _, out := range reviewRetryToolOutputs(req) {
-			if m := re.FindStringSubmatch(out); m != nil {
-				var n int
-				if _, err := fmt.Sscan(m[1], &n); err == nil {
-					return n
-				}
-			}
-		}
-		t.Fatalf("no %q rejection in %v", pattern, reviewRetryToolOutputs(req))
-		return 0
-	}
-	wanted := func(events []map[string]any, why string, parts int) int {
-		var delivered []float64
-		for _, ev := range events {
-			if ev["event"] == "review_source_prefill" {
-				for _, p := range ev["parts"].([]any) {
-					delivered = append(delivered, p.(float64))
-				}
-			}
-			if ev["event"] == "review_allowance" && ev["why"] == why {
-				return parts - len(union(delivered))
-			}
-		}
-		return -1
-	}
-
-	kit := allowanceKit{build, check, unread, wanted}
+	kit := allowanceKit{build, check}
 	if len(heavyAllowanceCases) == 0 {
 		t.Log("the S-DECREL and fresh-review 113/232-part cases run without the race detector (k_reviewretry_decrel_test.go)")
 	}

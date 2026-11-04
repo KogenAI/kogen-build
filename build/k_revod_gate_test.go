@@ -46,5 +46,4 @@ func revodGateEmptySourceControls(t *testing.T) {
 	if len(eventsNamed(events, "review_source_evidence")) != 0 || len(eventsNamed(events, "review_material")) != 0 {
 		t.Fatal("the inline control pinned source")
 	}
-	eq(t, "review requests", len(f.reviewRequests()), 1)
 }

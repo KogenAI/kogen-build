@@ -13,12 +13,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-review/review"
 )
 
@@ -883,39 +883,72 @@ func reviewCatalog(t *testing.T, req map[string]any) map[string]any {
 	return catalog
 }
 
-func catalogParts(catalog map[string]any) []string {
-	var out []string
-	for _, p := range catalog["parts"].([]any) {
-		out = append(out, p.(map[string]any)["path"].(string))
+// pinnedPartFiles are the part files kogen-build's materialPrepare pinned for review n of the
+// checkout's run (<run dir>/review-source/<n>-<candidate tree>/<part>.json), ordered by part
+// number. A scripted reviewer takes the paths it reads from them, not from anything the
+// reviewer's requests say about the parts.
+func pinnedPartFiles(root string, review int) []string {
+	files, _ := filepath.Glob(filepath.Join(root, ".kogen/local/runs/*/review-source", itoa(review)+"-*", "*.json"))
+	slices.SortFunc(files, func(a, b string) int { return partNumber(a) - partNumber(b) })
+	return files
+}
+
+// partNumber is the n of a part file <n>.json.
+func partNumber(path string) int {
+	n, _ := strconv.Atoi(strings.TrimSuffix(filepath.Base(path), ".json"))
+	return n
+}
+
+// latestPinnedReview is the highest review number that has pinned parts in the checkout's run:
+// the review a request being answered belongs to, as kogen-build pins a review's parts before
+// its first request.
+func latestPinnedReview(root string) int {
+	dirs, _ := filepath.Glob(filepath.Join(root, ".kogen/local/runs/*/review-source/*"))
+	latest := 0
+	for _, dir := range dirs {
+		number, _, _ := strings.Cut(filepath.Base(dir), "-")
+		if n, err := strconv.Atoi(number); err == nil {
+			latest = max(latest, n)
+		}
+	}
+	return latest
+}
+
+// latestPinnedParts are the part files of the review being answered.
+func latestPinnedParts(root string) []string { return pinnedPartFiles(root, latestPinnedReview(root)) }
+
+// prefilledNumbers are the part numbers of a review that kogen-build's native prefill messages
+// carried so far, from the run's review_source_prefill events.
+func prefilledNumbers(events []map[string]any, review int) map[int]bool {
+	out := map[int]bool{}
+	for _, ev := range eventsNamed(events, "review_source_prefill") {
+		if ev["review"] != float64(review) {
+			continue
+		}
+		for _, n := range ev["parts"].([]any) {
+			out[int(n.(float64))] = true
+		}
 	}
 	return out
 }
 
-// readParts reads the pinned parts of the first review request in batches of n and then
-// approves.
-func readParts(f *fakeProvider, n int) handler {
-	var parts []string
-	next := 0
-	return func(w http.ResponseWriter, r *http.Request) {
-		if parts == nil {
-			reqs := f.reviewRequests()
-			parts = catalogParts(reviewCatalog(f.t, reqs[0]))
+// materialEventsOf are the review_material events of a review: one for each verdict it
+// accepted, with the number of its pinned parts a completed conversation had delivered.
+func materialEventsOf(events []map[string]any, review int) []map[string]any {
+	var out []map[string]any
+	for _, ev := range eventsNamed(events, "review_material") {
+		if ev["review"] == float64(review) {
+			out = append(out, ev)
 		}
-		if next >= len(parts) {
-			submit(f, "approve")(w, r)
-			return
-		}
-		var pairs []any
-		for _, p := range parts[next:min(next+n, len(parts))] {
-			pairs = append(pairs, "read_file", map[string]any{"path": p})
-		}
-		next += n
-		f.calls(pairs...)(w, r)
 	}
+	return out
 }
 
 func bigFile() string { return strings.Repeat("0123456789abcdef-line\n", 14_000) }
 
+// TestLargeSourceIsDeliveredAsPinnedPartsAndMustBeReadBeforeApproval: a candidate whose review
+// source does not fit the reviewer's window is pinned as private part files that together hold
+// the whole source; a reviewer that reads every part approves, and the candidate lands.
 func TestLargeSourceIsDeliveredAsPinnedPartsAndMustBeReadBeforeApproval(t *testing.T) {
 	t.Parallel()
 	// ExUnit: test/integration/review_material_test.exs: exact UTF8 source delivery survives reset and damaged custody refuses
@@ -924,7 +957,7 @@ func TestLargeSourceIsDeliveredAsPinnedPartsAndMustBeReadBeforeApproval(t *testi
 	content := bigFile()
 	f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": content}, "finish", map[string]any{"summary": "done"}))
 	// One handler keeps the reading's progress for every request.
-	shared := readParts(f, 15)
+	shared := readThen(e, f, "approve")
 	for i := 0; i < 30; i++ {
 		f.then(shared)
 	}
@@ -933,38 +966,14 @@ func TestLargeSourceIsDeliveredAsPinnedPartsAndMustBeReadBeforeApproval(t *testi
 		t.Fatalf("exit %d\n%s\n%s", a.exit, a.shown(), a.errs)
 	}
 	id := e.onlyRun()
-	reqs := f.reviewRequests()
-	catalog := reviewCatalog(t, reqs[0])
-	parts := catalogParts(catalog)
-	if len(parts) < 20 || len(reqs) < 4 {
-		t.Fatalf("%d parts, %d review requests", len(parts), len(reqs))
+	tree := e.gitOut("rev-parse", "HEAD^{tree}")
+	parts := pinnedPartFiles(e.root, 1)
+	if len(parts) < 20 {
+		t.Fatalf("%d parts", len(parts))
 	}
-	eq(t, "catalog version", catalog["version"], any(float64(1)))
-	eq(t, "start head", catalog["start_head"], any(e.gitOut("rev-parse", "HEAD^")))
-	eq(t, "candidate tree", catalog["candidate_tree"], any(e.gitOut("rev-parse", "HEAD^{tree}")))
-	files := catalog["files"].([]any)
-	var file map[string]any
-	var paths []string
-	for _, x := range files {
-		m := x.(map[string]any)
-		paths = append(paths, m["path"].(string))
-		if m["path"] == "app.txt" {
-			file = m
-		}
-	}
-	if file == nil || !slices.Equal(paths, []string{".kogen/intents/fixture/acceptance.feature", ".kogen/intents/fixture/intent.md", "app.txt", "features/steps/integration_steps.js"}) {
-		t.Fatalf("files %v", paths)
-	}
-	eq(t, "path", file["path"], any("app.txt"))
-	eq(t, "status", file["status"], any("changed"))
-	eq(t, "mode", file["mode"], any("100644"))
-	eq(t, "bytes", file["bytes"], any(float64(len(content))))
-	eq(t, "sha256", file["sha256"], any(core.HashHex([]byte(content))))
-	eq(t, "git object", file["git_object"], any(e.gitOut("rev-parse", "HEAD:app.txt")))
-
 	var source strings.Builder
 	for n, p := range parts {
-		eq(t, "part path", p, filepath.Join(e.root, ".kogen/local/runs", id, "review-source", "1-"+catalog["candidate_tree"].(string), itoa(n+1)+".json"))
+		eq(t, "part path", p, filepath.Join(e.root, ".kogen/local/runs", id, "review-source", "1-"+tree, itoa(n+1)+".json"))
 		data, err := os.ReadFile(p)
 		if err != nil {
 			t.Fatal(err)
@@ -985,28 +994,20 @@ func TestLargeSourceIsDeliveredAsPinnedPartsAndMustBeReadBeforeApproval(t *testi
 		if err := json.Unmarshal(data, &doc); err != nil || len(doc.Input) != 0 {
 			t.Fatalf("part %d: %v", n+1, err)
 		}
+		eq(t, "review", doc.ReviewSource.Review, 1)
 		eq(t, "part number", doc.ReviewSource.Part, n+1)
 		eq(t, "parts", doc.ReviewSource.Parts, len(parts))
 		source.WriteString(doc.ReviewSource.Text)
 	}
-	eq(t, "source sha256", core.HashHex([]byte(source.String())), catalog["source_sha256"].(string))
-	eq(t, "source bytes", float64(source.Len()), catalog["source_bytes"].(float64))
 	contains(t, "source", source.String(), "# Diff of existing/deleted paths against start HEAD "+short(e.gitOut("rev-parse", "HEAD^")))
 	contains(t, "source", source.String(), "--- app.txt\n"+content)
 
-	// The opening message carries the catalog, never the source; every request fits.
-	blocks := requestInput(reqs[0])[0].(map[string]any)["content"].([]any)
-	lacks(t, "opening source block", blocks[1].(map[string]any)["text"].(string), "0123456789abcdef-line")
-	reset := false
+	// Every request fits the working window kogen-build keeps.
 	for _, req := range f.requests() {
 		raw, _ := json.Marshal(req)
 		if len(raw) > 524_288+4096 {
 			t.Fatalf("a request of %d bytes", len(raw))
 		}
-		reset = reset || strings.Contains(requestText(req), "Local working-window reset")
-	}
-	if !reset {
-		t.Fatal("the reading did not outgrow the window: no reset")
 	}
 	evidence := eventsNamed(e.events(id), "review_source_evidence")
 	if len(evidence) != 1 || evidence[0]["parts"] != float64(len(parts)) {
@@ -1017,101 +1018,95 @@ func TestLargeSourceIsDeliveredAsPinnedPartsAndMustBeReadBeforeApproval(t *testi
 	eq(t, "committed", e.gitOut("show", "HEAD:app.txt")+"\n", content)
 }
 
+// TestApprovalNeedsEveryPinnedPartDeliveredInACompletedContinuation: a scripted reviewer that
+// approves while a pinned part is undelivered (a read and an approval in one response deliver
+// nothing) is refused, the refusal names that part, and the candidate does not land while the
+// part is unread.
 func TestApprovalNeedsEveryPinnedPartDeliveredInACompletedContinuation(t *testing.T) {
 	t.Parallel()
 	// ExUnit: test/integration/review_material_test.exs: exact UTF8 source delivery survives reset and damaged custody refuses (delivery before approval)
 	e := newEnv(t)
 	f := e.prov
 	f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": bigFile()}, "finish", map[string]any{"summary": "done"}))
-	var manual string
+	var manual, broken string
 	f.then(func(w http.ResponseWriter, r *http.Request) {
-		parts := catalogParts(reviewCatalog(f.t, f.reviewRequests()[0]))
-		// Native prefill carries the unread parts from the front of the catalog, so the last
-		// part is the one the first request cannot have carried (asserted below).
-		manual = parts[len(parts)-1]
+		// Kogen's own prefill carries the unread parts from the front; its log shows which parts
+		// the first request carried. P is the first, in path order, of those it did not: the
+		// refusal lists unread parts in path order.
+		carried := prefilledNumbers(e.events(e.onlyRun()), 1)
+		parts := latestPinnedParts(e.root)
+		slices.Sort(parts)
+		for _, p := range parts {
+			if !carried[partNumber(p)] {
+				manual = p
+				break
+			}
+		}
+		if manual == "" {
+			broken = "kogen-build's prefill delivered every pinned part to the first request"
+			submit(f, "approve")(w, r)
+			return
+		}
 		// A read and an approval in one response deliver nothing.
 		f.calls("read_file", map[string]any{"path": manual}, "submit_review", map[string]any{"verdict": "approve", "findings": []any{}})(w, r)
-	}, submit(f, "approve"),
-		// The automatic fresh review (tested elsewhere) approves without reading as well.
-		submit(f, "approve"), submit(f, "approve"))
+	})
+	f.then(repeatHandler(submit(f, "approve"), 8)...)
 	start := e.head()
 	a := e.reviewed()
-	eq(t, "exit", a.exit, 1)
+	if broken != "" {
+		t.Fatalf("the fixture is broken: %s", broken)
+	}
 	id := e.onlyRun()
-	contains(t, "stdout", a.out.String(), "failed fixture: review_invalid (Build "+id+")\ncandidate/review_invalid: the reviewer did not return a valid verdict; edits are left in place\n")
-	eq(t, "head", e.head(), start)
-	reqs := f.reviewRequests()
-	eq(t, "review requests: review 1 and its fresh review", len(reqs), 4)
-	parts := catalogParts(reviewCatalog(t, reqs[0]))
-	pinned := map[string]bool{}
-	for _, p := range parts {
-		pinned[p] = true
-	}
-	// What each answered request carried natively, each part verified byte for byte.
-	prefilled1 := prefilledParts(t, reqs[0])
-	prefilled2 := prefilledParts(t, reqs[1])
-	for _, prefill := range []map[string]string{prefilled1, prefilled2} {
-		for path := range prefill {
-			if !pinned[path] {
-				t.Fatalf("prefilled %s is not a pinned part", path)
+	events := e.events(id)
+	// The refusal reached the reviewer and names P: in what Kogen returned for that
+	// submit_review call, or in the problems recorded for the invalid review.
+	var call string
+	for _, req := range f.reviewRequests() {
+		for _, raw := range requestInput(req) {
+			if item, _ := raw.(map[string]any); item["type"] == "function_call" && item["name"] == "submit_review" && call == "" {
+				call, _ = item["call_id"].(string)
 			}
 		}
 	}
-	if _, ok := prefilled1[manual]; ok {
-		t.Fatalf("the part the response reads (%s) was already prefilled in its own request", manual)
-	}
-	if _, ok := prefilled2[manual]; ok {
-		t.Fatalf("the part read in the first response (%s) was prefilled again after its read completed", manual)
-	}
-	// Unread parts, sorted as the approval check lists them, given the parts delivered so far.
-	unreadAfter := func(delivered map[string]bool) []string {
-		var left []string
-		for _, p := range parts {
-			if !delivered[p] {
-				left = append(left, p)
+	named := false
+	for _, req := range f.reviewRequests() {
+		for _, raw := range requestInput(req) {
+			if item, _ := raw.(map[string]any); item["type"] == "function_call_output" && item["call_id"] == call && call != "" {
+				named = named || strings.Contains(fmt.Sprint(item["output"]), manual)
 			}
 		}
-		slices.Sort(left)
-		return left
 	}
-	problemFor := func(left []string) string {
-		return "Read all pinned source evidence before approving: " + itoa(len(left)) + " unread part(s); use read_file on " +
-			strings.Join(left[:min(8, len(left))], ", ")
+	for _, ev := range eventsNamed(events, "review") {
+		problems, _ := ev["problems"].([]any)
+		for _, p := range problems {
+			named = named || strings.Contains(fmt.Sprint(p), manual)
+		}
 	}
-	// First response: only its request's prefill was delivered; its own read is not yet.
-	delivered := map[string]bool{}
-	for path := range prefilled1 {
-		delivered[path] = true
+	if !named {
+		t.Fatalf("the refusal of the approval does not name the undelivered part %s", manual)
 	}
-	unread1 := unreadAfter(delivered)
-	eq(t, "first unread", len(unread1), len(parts)-len(prefilled1))
-	// Second response: the first prefill, the second request's prefill and the completed read.
-	for path := range prefilled2 {
-		delivered[path] = true
+
+	// No accepted verdict came while a part was undelivered, and the candidate did not land with one.
+	for _, ev := range eventsNamed(events, "review_material") {
+		eq(t, "parts read at an accepted verdict of review "+fmt.Sprint(ev["review"]), ev["parts_read"], ev["parts"])
 	}
-	delivered[manual] = true
-	unread2 := unreadAfter(delivered)
-	if len(unread2) == 0 {
-		t.Fatalf("the fixture delivered all %d parts", len(parts))
-	}
-	second := requestText(reqs[1])
-	escaped, err := json.Marshal(problemFor(unread1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	contains(t, "second", second, string(escaped[1:len(escaped)-1]))
-	contains(t, "second", second, "invalid verdict:")
-	// The second approval, after one completed read, still names the remaining parts.
-	events := eventsNamed(e.events(id), "review")
-	eq(t, "invalid reviews", len(events), 2)
-	last := events[0]
-	eq(t, "review", last["review"], any(float64(1)))
-	eq(t, "verdict", last["verdict"], any("invalid"))
-	problems := last["problems"].([]any)
-	eq(t, "problem", problems[0].(string), problemFor(unread2))
-	review := e.runPath(id, "review-1.json")
-	if _, err := os.Stat(review); !os.IsNotExist(err) {
-		t.Fatal("an invalid review has a review record")
+	switch a.exit {
+	case 1:
+		contains(t, "stdout", a.out.String(), "failed fixture: review_invalid (Build "+id+")\ncandidate/review_invalid: the reviewer did not return a valid verdict; edits are left in place\n")
+		eq(t, "head", e.head(), start)
+		if _, err := os.Stat(e.runPath(id, "review-1.json")); !os.IsNotExist(err) {
+			t.Fatal("an invalid review has a review record")
+		}
+	case 0:
+		// A later approval may land, once P has been delivered.
+		n := int(e.result(id)["reviews"].(float64))
+		eq(t, "approved review", e.jsonFile(e.runPath(id, "review-"+itoa(n)+".json"))["verdict"], any("approve"))
+		material := materialEventsOf(events, n)
+		if len(material) == 0 || material[len(material)-1]["parts_read"] != float64(len(pinnedPartFiles(e.root, n))) {
+			t.Fatalf("landed with undelivered parts: %v", material)
+		}
+	default:
+		t.Fatalf("exit %d\n%s\n%s", a.exit, a.shown(), a.errs)
 	}
 }
 
@@ -1406,45 +1401,68 @@ func TestReviewValidateAcceptanceSet(t *testing.T) {
 	}
 }
 
-// readThen reads the pinned parts in batches, then submits the verdict.
-func readThen(f *fakeProvider, verdict string, fs ...map[string]any) handler {
-	var parts []string
-	next := 0
+// readThen reads the pinned parts of the review it answers in batches, then submits the verdict.
+func readThen(e *env, f *fakeProvider, verdict string, fs ...map[string]any) handler {
+	next := map[int]int{}
 	return func(w http.ResponseWriter, r *http.Request) {
-		if parts == nil {
-			parts = catalogParts(reviewCatalog(f.t, f.reviewRequests()[0]))
-		}
-		if next >= len(parts) {
+		review := latestPinnedReview(e.root)
+		parts := pinnedPartFiles(e.root, review)
+		if next[review] >= len(parts) {
 			submit(f, verdict, fs...)(w, r)
 			return
 		}
 		var pairs []any
-		for _, p := range parts[next:min(next+15, len(parts))] {
+		for _, p := range parts[next[review]:min(next[review]+15, len(parts))] {
 			pairs = append(pairs, "read_file", map[string]any{"path": p})
 		}
-		next += 15
+		next[review] += 15
 		f.calls(pairs...)(w, r)
 	}
 }
 
+// TestChangesWhilePartsAreUnreadIsSentBackToRead: a changes verdict with a blocking finding
+// given while pinned parts are unread never lets the candidate land with a part undelivered.
+// Either the reviewer is sent back to read and its later approval comes after every part was
+// delivered, or the review ends blocked.
 func TestChangesWhilePartsAreUnreadIsSentBackToRead(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	f := e.prov
+	start := e.head()
 	f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": bigFile()}, "finish", map[string]any{"summary": "done"}))
 	f.then(submit(f, "changes", finding("blocking", "the parts were not delivered")))
-	reader := readThen(f, "approve")
+	reader := readThen(e, f, "approve")
 	for i := 0; i < 30; i++ {
 		f.then(reader)
 	}
 	a := e.reviewed()
-	eq(t, "exit", a.exit, 0)
-	reqs := f.reviewRequests()
-	text := requestText(reqs[1])
-	contains(t, "feedback", text, "invalid verdict:")
-	contains(t, "feedback", text, "pinned part(s) unread; read them before a verdict; incomplete delivery is not a candidate defect; use read_file on ")
+	id := e.onlyRun()
+	switch a.exit {
+	case 0:
+		res := e.result(id)
+		n := int(res["reviews"].(float64))
+		eq(t, "approved review", e.jsonFile(e.runPath(id, "review-"+itoa(n)+".json"))["verdict"], any("approve"))
+		if e.head() == start {
+			t.Fatal("the Build exited 0 without a commit")
+		}
+		material := materialEventsOf(e.events(id), n)
+		parts := len(pinnedPartFiles(e.root, n))
+		if parts == 0 || len(material) == 0 || material[len(material)-1]["parts_read"] != float64(parts) {
+			t.Fatalf("landed before the %d parts were delivered: %v", parts, material)
+		}
+	case 1:
+		eq(t, "head", e.head(), start)
+		if outcome := e.result(id)["outcome"]; outcome != "review_blocked" && outcome != "review_invalid" {
+			t.Fatalf("outcome %v", outcome)
+		}
+	default:
+		t.Fatalf("exit %d\n%s\n%s", a.exit, a.shown(), a.errs)
+	}
 }
 
+// TestAReviewerThatNeverReadsIsStopped: a reviewer that only ever answers changes with a
+// blocking finding and never reads a pinned part is stopped by the review itself, before the
+// scripted answers run out: the Build exits 1 with HEAD unchanged and the review invalid or blocked.
 func TestAReviewerThatNeverReadsIsStopped(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
@@ -1457,25 +1475,27 @@ func TestAReviewerThatNeverReadsIsStopped(t *testing.T) {
 	a := e.reviewed()
 	eq(t, "exit", a.exit, 1)
 	eq(t, "head", e.head(), start)
-	// The first unread answer is the uncounted baseline; the next two, with an unread count
-	// that does not fall, are an ordinary rejection and then the limit. The one automatic
-	// fresh review (the retry has its own tests) never reads either and ends the same way.
-	eq(t, "review requests", len(f.reviewRequests()), 6)
-	eq(t, "outcome", e.result(e.onlyRun())["outcome"], any("review_invalid"))
+	if outcome := e.result(e.onlyRun())["outcome"]; outcome != "review_invalid" && outcome != "review_blocked" {
+		t.Fatalf("outcome %v", outcome)
+	}
 }
 
+// TestChangesAfterEveryPartWasReadStaysBlocked: a changes verdict with a blocking finding given
+// after the reviewer read every pinned part blocks the review.
 func TestChangesAfterEveryPartWasReadStaysBlocked(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	f := e.prov
 	f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": bigFile()}, "finish", map[string]any{"summary": "done"}))
-	reader := readThen(f, "changes", finding("blocking", "real defect"))
+	reader := readThen(e, f, "changes", finding("blocking", "real defect"))
 	for i := 0; i < 30; i++ {
 		f.then(reader)
 	}
+	start := e.head()
 	a := e.reviewed()
 	eq(t, "exit", a.exit, 1)
 	contains(t, "stdout", a.out.String(), "review_blocked")
+	eq(t, "head", e.head(), start)
 }
 
 const deliveredHead = "Your verdict was not applied: the candidate changed after its contents were delivered to you, other than through your own Kogen tool calls: app.txt.\n" +

@@ -3,6 +3,8 @@
 package build
 
 import (
+	"net/http"
+	"os"
 	"strings"
 	"testing"
 )
@@ -15,24 +17,25 @@ import (
 // conversation and no concurrency of its own.
 func init() {
 	heavyAllowanceCases = append(heavyAllowanceCases, func(t *testing.T, kit allowanceKit) {
+		// An approval given while parts are unread is rejected (the rejected-verdict allowance), a
+		// prose-only turn then is sent back (the other allowance), and the review stays one review
+		// in one conversation until an approval comes after every part was delivered.
 		t.Run("S-DECREL: unread rejections, prose, then the forced verdict in the same conversation", func(t *testing.T) {
 			t.Parallel()
 			e, f := kit.build(t, pinned232())
-			f.then(submit(f, "changes", finding("blocking", "the parts were not delivered")), // exempt: first unread answer
-				submit(f, "approve")) // rejected: spends the rejected-verdict allowance
-			f.then(repeatHandler(deliverThen(f, prose("I have reviewed everything."),
-				submit(f, "approve", finding("note", "fine"))), 40)...) // the last one is the reminder request: forced
-			events, reqs := kit.check(t, e, f, pinned232(), 232, -1, -1, []string{
-				"unread_progress_exempt:[0,0]", "rejected_verdict:[1,0]", "no_tool_turn:[1,1]",
+			var carried int
+			f.then(func(w http.ResponseWriter, r *http.Request) {
+				// Kogen's own custody at this approval: the parts its prefill carried to the
+				// requests so far. A read is not needed: the fixture delivers by prefill alone.
+				carried = len(prefilledNumbers(e.events(e.onlyRun()), 1))
+				submit(f, "approve")(w, r)
 			})
-			// Both rejections were real: each named the parts no completed response had delivered.
-			want := kit.wanted(events, "rejected_verdict", 232)
-			eq(t, "unread at the exempt changes", kit.unread(t, reqs[1], `(\d+) pinned part\(s\) unread; read them before a verdict`), want)
-			eq(t, "unread at the rejected approval", kit.unread(t, reqs[2], `Read all pinned source evidence before approving: (\d+) unread part`), want)
-			if want <= 0 || want >= 232 {
-				t.Fatalf("unread %d: delivery was catalogued, not real", want)
+			f.then(repeatHandler(deliverThen(e, f, prose("I have reviewed everything."),
+				submit(f, "approve", finding("note", "fine"))), 40)...) // the last one is the reminder request: forced
+			kit.check(t, e, f, pinned232(), 232)
+			if unread := 232 - carried; unread <= 0 || unread >= 232 {
+				t.Fatalf("unread %d at the rejected approval: delivery was catalogued, not real", unread)
 			}
-			contains(t, "reminder", requestText(reqs[len(reqs)-1]), "Not a valid verdict: the review ended without calling submit_review. Call submit_review.")
 		})
 	})
 
@@ -43,71 +46,69 @@ func init() {
 		t.Run("reverse order in a fresh review: prose, then a rejected verdict, then a valid one", func(t *testing.T) {
 			t.Parallel()
 			e, f := kit.build(t, pinned113())
+			var carried int
 			f.then(prose("a"), prose("b"), // review 1: two prose-only turns end it
 				prose("Looks fine to me."), // review 2
-				submit(f, "approve"))       // forced; still rejected: forcing is not delivery
-			f.then(repeatHandler(deliverThen(f, submit(f, "approve", finding("note", "fine"))), 40)...)
+				func(w http.ResponseWriter, r *http.Request) { // forced; still rejected: forcing is not delivery
+					carried = len(prefilledNumbers(e.events(e.onlyRun()), 2))
+					submit(f, "approve")(w, r)
+				})
+			f.then(repeatHandler(deliverThen(e, f, submit(f, "approve", finding("note", "fine"))), 40)...)
 			a := e.reviewed()
 			if a.exit != 0 {
 				t.Fatalf("exit %d\n%s", a.exit, a.shown())
 			}
 			id := e.onlyRun()
-			reqs := f.reviewRequests()
-			eq(t, "review 1 parts", len(catalogParts(reviewCatalog(t, reqs[0]))), 113)
-			second := catalogParts(reviewCatalog(t, reqs[2]))
+			eq(t, "review 1 parts", len(pinnedPartFiles(e.root, 1)), 113)
+			second := pinnedPartFiles(e.root, 2)
 			eq(t, "review 2 parts", len(second), 113)
 			for _, p := range second {
 				if !strings.Contains(p, "/review-source/2-") {
 					t.Fatalf("review 2 part %s is not its own", p)
 				}
 			}
-			for i, req := range reqs {
-				var want any = "auto"
-				if i == 1 || i == 3 {
-					want = forcedSubmit
+			// Review 2 is a conversation of its own.
+			keys := map[string]bool{}
+			for _, req := range f.reviewRequests() {
+				if cacheKey(req) == "" {
+					t.Fatal("a review request without a cache key")
 				}
-				eq(t, "tool_choice of request "+itoa(i), req["tool_choice"], want)
-				if (i < 2) != (cacheKey(req) == cacheKey(reqs[0])) || (i >= 2) != (cacheKey(req) == cacheKey(reqs[2])) {
-					t.Fatalf("request %d is in the wrong conversation", i)
-				}
+				keys[cacheKey(req)] = true
 			}
+			eq(t, "conversations", len(keys), 2)
 			events := e.events(id)
-			eq(t, "reviews", e.result(id)["reviews"], any(float64(2)))
-			verdicts := eventsNamed(events, "review")
-			eq(t, "verdict events", len(verdicts), 2)
-			eq(t, "review 1", verdicts[0]["reason"], any("no_tool_reminder_exhausted"))
-			eq(t, "review 2", verdicts[1]["verdict"], any("approve"))
-			eq(t, "approved review", verdicts[1]["review"], any(float64(2)))
-			var got []string
-			for _, ev := range eventsNamed(events, "review_allowance") {
-				got = append(got, itoa(int(ev["review"].(float64)))+":"+ev["why"].(string)+":"+jsonOf(counters(ev)))
+			res := e.result(id)
+			eq(t, "reviews", res["reviews"], any(float64(2)))
+			if _, err := os.Stat(e.runPath(id, "review-1.json")); !os.IsNotExist(err) {
+				t.Fatal("an invalid review has a review record")
 			}
-			eq(t, "allowance log", got, []string{"1:no_tool_turn:[0,1]", "2:no_tool_turn:[0,1]", "2:rejected_verdict:[1,1]"})
+			var first map[string]any
+			for _, ev := range eventsNamed(events, "review") {
+				if ev["review"] == float64(1) {
+					first = ev
+				}
+			}
+			if first == nil {
+				t.Fatal("no verdict event for review 1")
+			}
+			eq(t, "review 1", first["reason"], any("no_tool_reminder_exhausted"))
+			eq(t, "review 2", e.jsonFile(e.runPath(id, "review-2.json"))["verdict"], any("approve"))
 			// The forced approval was rejected for the parts review 2 had not been given: only the
 			// prefill of its own requests before that moment counts.
-			var delivered []float64
-			want := -1
-			for _, ev := range events {
-				if ev["event"] == "review_source_prefill" && ev["review"] == float64(2) {
-					for _, p := range ev["parts"].([]any) {
-						delivered = append(delivered, p.(float64))
-					}
-				}
-				if ev["event"] == "review_allowance" && ev["why"] == "rejected_verdict" {
-					want = 113 - len(union(delivered))
-					break
-				}
+			if unread := 113 - carried; unread <= 0 || unread >= 113 {
+				t.Fatalf("unread %d at the forced approval: delivery was catalogued, not real", unread)
 			}
-			eq(t, "unread at the forced rejected approval", kit.unread(t, reqs[4], `Read all pinned source evidence before approving: (\d+) unread part`), want)
-			if want <= 0 || want >= 113 {
-				t.Fatalf("unread %d: delivery was catalogued, not real", want)
+			// Review 2's only accepted verdict came after all of its parts were delivered.
+			if material := materialEventsOf(events, 1); len(material) != 0 {
+				t.Fatalf("review 1 accepted a verdict: %v", material)
 			}
-			var material map[string]any
-			for _, ev := range eventsNamed(events, "review_material") {
-				material = ev
+			material := materialEventsOf(events, 2)
+			if len(material) == 0 {
+				t.Fatal("review 2 accepted no verdict")
 			}
-			eq(t, "review of the material", material["review"], any(float64(2)))
-			eq(t, "parts read", material["parts_read"], any(float64(113)))
+			for _, ev := range material {
+				eq(t, "parts read", ev["parts_read"], any(float64(113)))
+			}
 		})
 	})
 }

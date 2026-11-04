@@ -25,7 +25,7 @@ func TestKRevodBPartsReset(t *testing.T) {
 		f.then(f.calls("write_file", map[string]any{"path": ".kogen/local/padding", "content": strings.Repeat("x", 190_000)}))
 	}
 	// Every line of app.txt changes, so every pinned part is read.
-	reader := confirmingReviewer(t, f, nil)
+	reader := confirmingReviewer(t, e, f, nil)
 	for i := 0; i < 40; i++ {
 		f.then(reader)
 	}
