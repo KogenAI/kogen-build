@@ -190,18 +190,33 @@ type budgetObservation struct {
 }
 
 // volatileKeys are the nondeterministic values of a run: its timing, clock, host load and the
-// random run, operation and prompt-cache identities. volatileKey also masks every key that ends
-// in _ms (a millisecond offset or duration) or _at (a timestamp).
+// random run, operation and prompt-cache identities. The plain duration keys ms (a sweep's
+// duration), elapsed, duration and wall (seconds) are volatile as whole keys. volatileKey also
+// masks every key that ends in _ms (a millisecond offset or duration) or _at (a timestamp).
 var volatileKeys = map[string]bool{
 	"wall_ms": true, "model_active_ms": true, "t0": true, "at": true, "timestamp": true, "started_at": true,
 	"operation_id": true, "attempt_id": true, "conversation_id": true, "session_id": true, "prompt_cache_key": true,
 	"cache_id": true, "run_id": true, "approval": true, "approval_bytes": true, "index": true, "identity": true, "request_bytes": true, "ttft_ms": true, "duration_ms": true,
 	"headers_ms": true, "first_byte_ms": true, "last_byte_ms": true, "last_progress_ms": true, "max_gap_ms": true, "gap_hist": true,
 	"load_average": true,
+	"ms":           true, "elapsed": true, "duration": true, "wall": true,
 }
 
 func volatileKey(k string) bool {
 	return volatileKeys[k] || strings.HasSuffix(k, "_ms") || strings.HasSuffix(k, "_at")
+}
+
+func TestVolatileKey(t *testing.T) {
+	for _, k := range []string{"ms", "elapsed", "duration", "wall", "wall_ms", "request_offset_ms", "at", "ended_at"} {
+		if !volatileKey(k) {
+			t.Errorf("volatileKey(%q) = false, want true", k)
+		}
+	}
+	for _, k := range []string{"stopped", "name", "event", "offset", "count", "ms_count", "outcome"} {
+		if volatileKey(k) {
+			t.Errorf("volatileKey(%q) = true, want false", k)
+		}
+	}
 }
 
 var cacheIdentity = regexp.MustCompile(`conversation-[0-9a-f]+`)
