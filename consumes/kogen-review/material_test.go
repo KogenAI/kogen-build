@@ -8,9 +8,9 @@ import (
 	gitpkg "github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/core"
+	"github.com/KogenAI/kogen-loop/provider"
 	"github.com/KogenAI/kogen-review/review"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/provider"
 )
 
 // TestMaterialSetIsMadeByTheReviewFromItsInput pins review.MaterialSet, which build keeps in the

@@ -121,6 +121,28 @@ func legacyReplace(t any, from, to string) any {
 	return t
 }
 
+// legacyAdaptBaseline brings the Baseline an Elixir checkpoint saved up to the coordinator's
+// current one, which lists .kogen/models.yaml right after .kogen/project.yaml. The Elixir fixture
+// projects have no such file, so its digest is the one of a missing file, as a Build started
+// today on the same project records it.
+func legacyAdaptBaseline(m *legacyMap) {
+	list, ok := m.get(latom("baseline"))
+	paths, isList := list.([]any)
+	if !ok || !isList || slices.Contains(paths, any(project.ModelsPath)) {
+		return
+	}
+	at := slices.Index(paths, any(project.ConfigPath))
+	if at < 0 {
+		return
+	}
+	legacyPut(m, latom("baseline"), slices.Insert(slices.Clone(paths), at+1, any(project.ModelsPath)))
+	if digests, ok := m.get(latom("baseline_digests")); ok {
+		if d, ok := digests.(*legacyMap); ok {
+			legacyPut(d, project.ModelsPath, latom("missing"))
+		}
+	}
+}
+
 // legacyEncode is the external term format of a term the way the Erlang runtime writes it
 // (the reader's inverse, to move fixtures and to check the reader against real bytes).
 func legacyEncode(t any) []byte {
@@ -934,6 +956,7 @@ func newLegacyEnv(t *testing.T, name string, opts ...func(*legacyOptions)) (*env
 	doc := legacyDoc(t, file)
 	state := legacyTerm(t, doc)
 	moved := legacyReplace(legacyReplace(state, "/private"+man.Root, e.root), man.Root, e.root).(*legacyMap)
+	legacyAdaptBaseline(moved)
 	if o.state != nil {
 		o.state(moved)
 	}

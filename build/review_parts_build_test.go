@@ -10,8 +10,8 @@ import (
 
 	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-loop/tools"
 	"github.com/KogenAI/kogen-review/review"
-	"kogen-loop/tools"
 )
 
 // partsBuilder is a builder round whose candidate is six added files of about 120 KB each: a

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // lineupMoved reports where the coordinator these tests are compiled against reads the model

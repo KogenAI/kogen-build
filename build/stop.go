@@ -7,8 +7,8 @@ import (
 
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/core"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 // result is `result.json`: the Build's outcome and counts, with extra fields of the outcome.

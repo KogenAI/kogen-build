@@ -20,9 +20,9 @@ import (
 	"strings"
 	"testing"
 
-	"kogen-loop/provider"
-	"kogen-loop/sys"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // definitions are the model-facing definitions of the generic tools the builder sends
@@ -293,7 +293,8 @@ func TestToolsDefinitionsOfTheGenericTools(t *testing.T) {
 // omitted bytes add up to the whole text.
 func TestToolsCutBoundsTextWithAMarkerCountingTheOmission(t *testing.T) {
 	var _ func(string) string = tools.Cut
-	marker := regexp.MustCompile(`\n\[\.\.\. (\d+) bytes omitted \.\.\.\]\n`)
+	// Text cut at complete lines counts the omitted lines as well: "[... N lines, M bytes omitted ...]".
+	marker := regexp.MustCompile(`\n\[\.\.\. (?:\d+ lines?(?: \(\d+-\d+\))?, )?(\d+) bytes omitted \.\.\.\]\n`)
 
 	long := strings.Repeat("0123456789", 7) + "\n"
 	for name, text := range map[string]string{

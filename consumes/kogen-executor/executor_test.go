@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 func TestExecutorConstants(t *testing.T) {
@@ -266,10 +266,10 @@ func TestExecutorRoundResultFields(t *testing.T) {
 
 	// build writes the round's usage into the run log as it is, and an external executor's
 	// structured submission decodes into the blocker claim by these keys.
-	if got, want := encoded(t, "executor.Usage", res.Usage), `{"input":0,"cached":null,"output":0,"reasoning":0,"state":"complete","source":"provider","cost_usd":0.1,"model":"m"}`; got != want {
+	if got, want := encoded(t, "executor.Usage", res.Usage), `{"input":0,"cached":null,"cache_write":null,"output":0,"reasoning":0,"state":"complete","source":"provider","cost_usd":0.1,"model":"m"}`; got != want {
 		t.Errorf("executor.Usage: JSON = %s, want %s", got, want)
 	}
-	if got, want := encoded(t, "executor.Usage", executor.Usage{State: "unknown", Source: "none"}), `{"input":null,"cached":null,"output":null,"reasoning":null,"state":"unknown","source":"none"}`; got != want {
+	if got, want := encoded(t, "executor.Usage", executor.Usage{State: "unknown", Source: "none"}), `{"input":null,"cached":null,"cache_write":null,"output":null,"reasoning":null,"state":"unknown","source":"none"}`; got != want {
 		t.Errorf("executor.Usage: JSON of an unreported round = %s, want %s", got, want)
 	}
 	if got, want := encoded(t, "executor.BlockerClaim", res.Blocker), `{"paths":["a","b"],"reason":"why","evidence":"seen"}`; got != want {

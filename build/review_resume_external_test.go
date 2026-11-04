@@ -9,7 +9,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // An external executor's builder no longer blocks resuming a review stage, and a stopped
@@ -40,7 +40,9 @@ func TestExternalReviewCheckpointsRecordTheGreenBase(t *testing.T) {
 		f.review = redReviewer(t)
 		wantStop(t, e.build(withLineup(f)), "candidate/executor_round_limit")
 		c := cpContinuation(e, e.onlyRun())
-		eq(t, "stage", c["stage"], any("review_verify"))
+		// The review saves the stage `review` after each repair round, so the stopped review is
+		// at `review`, not at `review_verify`.
+		eq(t, "stage", c["stage"], any("review"))
 		base, pass := c["base"].(map[string]any), c["pass"].(map[string]any)
 		if base == nil || base["green"] != true {
 			t.Fatalf("no green base: %v", c)

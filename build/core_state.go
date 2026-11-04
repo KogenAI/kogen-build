@@ -5,8 +5,8 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-coordinator/route"
+	"github.com/KogenAI/kogen-loop/provider"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/provider"
 )
 
 // The persisted Build state: what a checkpoint records (its bytes are pinned by the state

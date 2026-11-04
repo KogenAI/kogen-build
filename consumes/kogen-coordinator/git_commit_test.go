@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-coordinator/git"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // candidateFx is a repository with an edit and a new file: the candidate tree and the HEAD it

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // A request body compared or hashed by these tests is first reduced to what Kogen owns: the

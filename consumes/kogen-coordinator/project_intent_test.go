@@ -63,7 +63,7 @@ func TestLoadIntentAndReadIntent(t *testing.T) {
 		var _ *project.ModelSpec = in.Model
 		equal(t, name+": project.Intent.Slug", in.Slug, fixtureSlug)
 		equal(t, name+": project.Intent.Text", in.Text, fixtureIntent)
-		equal(t, name+": project.Intent.Title", in.Title, "Fixture intent")
+		equal(t, name+": project.Intent.Title", in.Title, "Sample intent")
 		equalList(t, name+": project.Intent.Acceptance", in.Acceptance,
 			[]string{".kogen/intents/fixture/acceptance.feature", "features/steps/fixture_steps.js"})
 		if in.Model == nil || !in.Model.None {
@@ -72,7 +72,7 @@ func TestLoadIntentAndReadIntent(t *testing.T) {
 	}
 
 	// The overlay wins over the disk: the Build's saved text is the contract it started with.
-	saved := strings.Replace(fixtureIntent, "# Fixture intent", "# Saved title", 1)
+	saved := strings.Replace(fixtureIntent, "# Sample intent", "# Saved title", 1)
 	in, err := project.ReadIntent(f.Dir, fixtureSlug, map[string][]byte{project.IntentMDPath(fixtureSlug): []byte(saved)})
 	check(t, err)
 	equal(t, "project.ReadIntent overlay Text", in.Text, saved)

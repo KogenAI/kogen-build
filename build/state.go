@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/provider"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/provider"
 )
 
 // requiredStateKeys are the fields a checkpoint state must carry.

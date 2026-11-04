@@ -13,8 +13,8 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-review/review"
-	"kogen-loop/sys"
 )
 
 // lineupExec is a scripted Claude Code (build and review roles, v2 descriptor): no process and

@@ -10,7 +10,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/core"
-	agent "kogen-loop/tools"
+	agent "github.com/KogenAI/kogen-loop/tools"
 )
 
 // A review whose candidate source is pinned into hundreds of parts has a bounded opening that

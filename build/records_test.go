@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/core"
-	"kogen-loop/provider"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 func TestRequestUsageCarriesCacheWriteOrNull(t *testing.T) {

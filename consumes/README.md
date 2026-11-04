@@ -7,7 +7,7 @@ each Kogen dependency: one suite per producer, at the version `go.mod` pins.
 | --- | --- | --- |
 | `consumes/kogen-coordinator/` | `github.com/KogenAI/kogen-coordinator` | `durable`, `git`, `project` and `route`: the Git custody, the project files, the Intent and approval formats and the verify → review → repair → commit routing |
 | `consumes/kogen-executor/` | `github.com/KogenAI/kogen-executor` | `agent`, `core`, `executor` and `thinking`: the executor contract, the persisted token, review and executor-state records and the builder's agent helpers |
-| `consumes/kogen-loop/` | `kogen-loop` (go.mod replaces it with `github.com/KogenAI/kogen-loop`) | `api`, `loop`, `provider`, `sys` and `tools`: the model loop, the provider client and its cache, the session, errors and exit codes, and the native tools |
+| `consumes/kogen-loop/` | `github.com/KogenAI/kogen-loop` | `api`, `loop`, `provider`, `sys` and `tools`: the model loop, the provider client and its cache, the session, errors and exit codes, and the native tools |
 | `consumes/kogen-review/` | `github.com/KogenAI/kogen-review` | `review`: the independent review's input, its `Env`, sessions, verdicts and material |
 | `consumes/kogen-verification/` | `github.com/KogenAI/kogen-verification` | `verify`: the verification pass, its check and acceptance results and its tools |
 

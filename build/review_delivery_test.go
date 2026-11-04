@@ -17,8 +17,8 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/agent"
+	"github.com/KogenAI/kogen-loop/tools"
 	"github.com/KogenAI/kogen-review/review"
-	"kogen-loop/tools"
 )
 
 // The reviewer's working-window resets keep the native delivery facts of its pinned source

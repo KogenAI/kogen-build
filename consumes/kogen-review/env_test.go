@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-loop/provider"
 	"github.com/KogenAI/kogen-review/review"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/provider"
 )
 
 // TestEnvErrorsStopTheReviewUnchanged pins how a review treats what its Env returns: the

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"kogen-loop/api"
-	"kogen-loop/loop"
-	"kogen-loop/provider"
-	"kogen-loop/sys"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/api"
+	"github.com/KogenAI/kogen-loop/loop"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // scripted is a loop.Requester that answers each request with the next scripted response, as

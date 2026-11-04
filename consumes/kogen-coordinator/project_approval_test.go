@@ -88,7 +88,7 @@ func TestBaselineAndHash(t *testing.T) {
 		".kogen/intents/fixture/intent.md", ".kogen/intents/fixture/acceptance.feature",
 		"features/steps/fixture_steps.js",
 		".kogen/intents/fixture/b.txt", ".kogen/intents/fixture/notes.md",
-		".kogen/project.yaml",
+		".kogen/project.yaml", ".kogen/models.yaml",
 		"guard.cfg", "other/x.cfg",
 	})
 

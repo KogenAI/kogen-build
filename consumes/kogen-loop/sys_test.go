@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"testing"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // kogen-build ends a refusal with sys.Fail and reads it back with sys.AsError and errors.As:

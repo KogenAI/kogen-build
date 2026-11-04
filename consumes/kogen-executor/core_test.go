@@ -9,9 +9,9 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/provider"
-	"kogen-loop/sys"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 func encoded(t *testing.T, item string, v any) string {
@@ -85,7 +85,7 @@ func TestCoreDisplay(t *testing.T) {
 		{"text", "text"},
 		{json.Number("12"), "12"},
 		{json.Number("1.50"), "1.50"},
-		{float64(3), "3"},
+		{float64(3), "3.0"},
 		{float64(2.5), "2.5"},
 		{7, "7"},
 		{true, "true"},

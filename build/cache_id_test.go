@@ -7,7 +7,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/core"
-	"kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/provider"
 )
 
 // Every model conversation of a Build has one prompt-cache identity: created when the

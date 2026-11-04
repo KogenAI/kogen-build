@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/KogenAI/kogen-executor/core"
-	"kogen-loop/provider"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // Run-record measurements (hashes, byte counts, token counts, line numbers only): they are

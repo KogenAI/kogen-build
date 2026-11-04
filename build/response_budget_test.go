@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/provider"
 )
 
 // These tests run the native builder and the independent reviewer with the production settings:

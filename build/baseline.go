@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-executor/core"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 // The check baseline (AUT-5): every configured check, run in configured order on the

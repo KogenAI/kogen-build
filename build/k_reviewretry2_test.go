@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
+	looptools "github.com/KogenAI/kogen-loop/tools"
 	"github.com/KogenAI/kogen-review/review"
 	"github.com/KogenAI/kogen-verification/verify"
-	looptools "kogen-loop/tools"
 )
 
 // Tests of the single fresh review after any verdictless end (Intent k-reviewretry2): the real

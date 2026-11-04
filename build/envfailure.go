@@ -1,8 +1,8 @@
 package build
 
 import (
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 // envMemory is the environment failures (check name to failure text) of the previous builder

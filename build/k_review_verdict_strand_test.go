@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	looptools "kogen-loop/tools"
+	looptools "github.com/KogenAI/kogen-loop/tools"
 )
 
 // Tests of Intent k-review-verdict-strand: a completed green candidate stays reviewable when

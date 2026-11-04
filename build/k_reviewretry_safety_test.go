@@ -11,8 +11,8 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/provider"
-	agent "kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/provider"
+	agent "github.com/KogenAI/kogen-loop/tools"
 )
 
 // useExternalReviewer puts only the review role on the external executor; the builder stays

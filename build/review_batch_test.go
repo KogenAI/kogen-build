@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/core"
-	agent "kogen-loop/tools"
+	agent "github.com/KogenAI/kogen-loop/tools"
 )
 
 // A reviewer that asks for many pinned source parts in ONE response leaves an unsplittable call

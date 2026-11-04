@@ -3,8 +3,8 @@ package build
 import (
 	"strings"
 
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 // noEditWatch is the Build's evidence for rounds that leave the candidate unchanged. It is not

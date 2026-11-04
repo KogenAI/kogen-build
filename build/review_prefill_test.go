@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/core"
-	agent "kogen-loop/tools"
+	agent "github.com/KogenAI/kogen-loop/tools"
 )
 
 // Native deterministic transport of pinned review source: Kogen itself appends the next unread

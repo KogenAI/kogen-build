@@ -9,9 +9,9 @@ import (
 	"github.com/KogenAI/kogen-build/build"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/provider"
-	"kogen-loop/sys"
 )
 
 // These calls mirror the assembled consumer's entry points and compile independently

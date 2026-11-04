@@ -15,9 +15,9 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/thinking"
-	"kogen-loop/provider"
-	"kogen-loop/sys"
-	agent "kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
+	agent "github.com/KogenAI/kogen-loop/tools"
 )
 
 // Diagnostic is the optional diagnostic data of `kogen intent build --context <file>`: bounded

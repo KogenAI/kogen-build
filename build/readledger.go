@@ -6,7 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/KogenAI/kogen-executor/core"
-	agent "kogen-loop/tools"
+	agent "github.com/KogenAI/kogen-loop/tools"
 )
 
 // The read ledger is the continuation a native conversation is re-opened with after a
