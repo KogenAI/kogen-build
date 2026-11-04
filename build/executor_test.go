@@ -651,9 +651,12 @@ func TestExternalBlockerFromADeclaringExecutorGoesThroughTheNativePath(t *testin
 	}
 	t.Run("valid claim stops as native", func(t *testing.T) {
 		t.Parallel()
-		e := newEnv(t)
+		e := newEnv(t, failingCheck(project.ConfigPath))
 		e.useExecutor("")
 		f := declare(newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {
+			if n == 1 {
+				return externalWritesApp("candidate\n", executor.Usage{})(n, ctx, root, in)
+			}
 			return executor.RoundResult{Ending: executor.EndBlocker, Claim: "x",
 				Blocker: &executor.BlockerClaim{Paths: []string{project.ConfigPath}, Reason: "r", Evidence: "e"}}, nil
 		}))
@@ -668,7 +671,52 @@ func TestExternalBlockerFromADeclaringExecutorGoesThroughTheNativePath(t *testin
 		if blocker == nil || blocker["classification"] != "BUILDER-REPORTED" || blocker["reason"] != "r" {
 			t.Fatalf("blocker %v", state["blocker"])
 		}
-		eq(t, "rounds", len(f.seen()), 1)
+		eq(t, "rounds", len(f.seen()), 2)
+	})
+	t.Run("an unbacked claim does not stop and prefixes the next feedback", func(t *testing.T) {
+		t.Parallel()
+		redCheck := func(c *project.Config) {
+			c.Checks = []project.Check{{Name: "app", Run: "if grep -qx red app.txt; then echo 'cannot pass: app.txt' >&2; exit 1; fi"}}
+		}
+		for name, c := range map[string]struct {
+			config  []func(*project.Config)
+			claimAt int // the round that reports the claim; the next feedback carries the message
+			message string
+		}{
+			"no pass": {nil, 1, unbackedBlockerMessage(nil, []string{project.ConfigPath})},
+			"red pass naming another path": {
+				[]func(*project.Config){redCheck}, 2,
+				"blocker not backed by verification: no failure of verification pass 1 names " + project.ConfigPath +
+					"; no protected edit is granted; make the failing items pass, or report again with a protected path that a failure names",
+			},
+		} {
+			e := newEnv(t, c.config...)
+			e.useExecutor("")
+			claim := &executor.BlockerClaim{Paths: []string{project.ConfigPath}, Reason: "r", Evidence: "e"}
+			f := declare(newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {
+				switch {
+				case n == c.claimAt:
+					if n == 1 {
+						writeFile(t, filepath.Join(root, "app.txt"), "red\n", 0o644)
+					}
+					return executor.RoundResult{Ending: executor.EndBlocker, Claim: "x", Blocker: claim}, nil
+				case n < c.claimAt:
+					return externalWritesApp("red\n", executor.Usage{})(n, ctx, root, in)
+				}
+				return externalWritesApp("candidate\n", executor.Usage{})(n, ctx, root, in)
+			}))
+			a := e.build(withExecutor(f, nil))
+			seen := f.seen()
+			if len(seen) <= c.claimAt || !strings.HasPrefix(seen[c.claimAt].Feedback, c.message) {
+				t.Fatalf("%s: exit %d feedback %+v\n%s", name, a.exit, seen, a.shown())
+			}
+			if a.exit != 0 || strings.Contains(a.out.String(), "build_blocked") {
+				t.Fatalf("%s: the claim stopped the Build\n%s", name, a.shown())
+			}
+			if res := e.result(e.onlyRun()); res["blocker"] != nil {
+				t.Fatalf("%s: a blocker was recorded: %v", name, res["blocker"])
+			}
+		}
 	})
 	t.Run("invalid claims are refused with the native feedback", func(t *testing.T) {
 		t.Parallel()

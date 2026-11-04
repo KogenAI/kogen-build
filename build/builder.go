@@ -175,10 +175,17 @@ func (b *Attempt) afterRound(input []any, finish map[string]any, feedback string
 // reportBlocker handles the builder's report_blocker call (LOOP-7). A valid report (exactly
 // nonempty unique current protected paths, a reason and observed evidence) stops the Build
 // as BUILDER-REPORTED build_blocked, provided HEAD and the protected bytes are still the
-// original; anything else is feedback and grants nothing.
+// original and one of its paths is named by a failure of the latest verification pass of the
+// current tree; anything else is feedback and grants nothing.
 func (b *Attempt) reportBlocker(args map[string]any, call tools.Call) (string, error) {
 	if !validBlocker(args, b.Baseline) {
 		return invalidBlockerMessage, nil
+	}
+	if err := b.blockerCustody(); err != nil {
+		return "", err
+	}
+	if msg, err := b.unbackedBlocker(args); err != nil || msg != "" {
+		return msg, err
 	}
 	return "", b.stopBlocked(args, func() {
 		b.Run.Event(map[string]any{
@@ -195,10 +202,7 @@ const invalidBlockerMessage = "invalid blocker: supply exactly nonempty unique c
 // executors: the guards, the record, the events and the build_blocked stop. It always returns
 // an error. recorded runs once the blocker is tracked, before the builder_blocker event.
 func (b *Attempt) stopBlocked(args map[string]any, recorded func()) error {
-	if err := b.BaselineIntact(); err != nil {
-		return err
-	}
-	if err := b.headIntact(); err != nil {
+	if err := b.blockerCustody(); err != nil {
 		return err
 	}
 	blocker := map[string]any{}
@@ -224,6 +228,15 @@ func (b *Attempt) stopBlocked(args map[string]any, recorded func()) error {
 		"evidence: " + tools.Cut(args["evidence"].(string)),
 	}
 	return e
+}
+
+// blockerCustody is the check that the protected bytes and HEAD are still the original, which
+// every well-formed claim passes before its backing is looked at.
+func (b *Attempt) blockerCustody() error {
+	if err := b.BaselineIntact(); err != nil {
+		return err
+	}
+	return b.headIntact()
 }
 
 func validBlocker(args map[string]any, baseline []string) bool {

@@ -20,7 +20,10 @@ import (
 // commands ran; the checkout holds the implementation the builder left.
 func blocked(t *testing.T, commands string) (*env, string) {
 	t.Helper()
-	e := newEnv(t)
+	// The candidate's first round raises the flag that makes the check red; it comes down
+	// once the Build has stopped, so a later Build over the recovered tree is not held back.
+	flag := filepath.Join(physical(t, t.TempDir()), "red")
+	e := newEnv(t, failingWhile(flag, project.FeaturePath(testSlug)))
 	e.write("locked/value", "before\n")
 	e.write("filtered", "before\n")
 	e.write(".gitattributes", "filtered filter=normalize\n")
@@ -30,12 +33,19 @@ func blocked(t *testing.T, commands string) (*env, string) {
 	e.approve()
 	e.write(".git/info/exclude", "ignored/\n")
 	f := e.prov
-	f.then(f.calls("shell", map[string]any{"command": commands}, "report_blocker", blockerReport(project.FeaturePath(testSlug))))
+	// The claim is backed by the red pass over the candidate the commands leave.
+	f.then(
+		f.calls("shell", map[string]any{"command": commands + "\ntouch '" + flag + "'"}, "finish", map[string]any{"summary": "done"}),
+		f.calls("report_blocker", blockerReport(project.FeaturePath(testSlug))),
+	)
 	a := e.build()
 	if a.exit != 1 {
 		t.Fatalf("exit %d\n%s", a.exit, a.shown())
 	}
 	contains(t, "stdout", a.out.String(), "candidate/build_blocked")
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
 	return e, e.onlyRun()
 }
 

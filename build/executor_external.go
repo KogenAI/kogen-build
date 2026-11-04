@@ -226,13 +226,25 @@ func (b *Attempt) afterExternalRound(res executor.RoundResult, rounds int) error
 		}
 		args := map[string]any{"paths": paths, "reason": claim.Reason, "evidence": claim.Evidence}
 		if validBlocker(args, b.Baseline) {
-			// Checkpointed like the native stop, so recovery works on it unchanged.
-			if err := b.Save(Continuation{Stage: StageBuilderVerify}); err != nil {
-				return err
+			// A custody failure and a backed claim stop the Build; an unbacked claim is feedback.
+			unbacked := ""
+			if b.blockerCustody() == nil {
+				var err error
+				if unbacked, err = b.unbackedBlocker(args); err != nil {
+					return err
+				}
 			}
-			return b.stopBlocked(args, func() {})
+			if unbacked == "" {
+				// Checkpointed like the native stop, so recovery works on it unchanged.
+				if err := b.Save(Continuation{Stage: StageBuilderVerify}); err != nil {
+					return err
+				}
+				return b.stopBlocked(args, func() {})
+			}
+			b.blockerNote = unbacked
+		} else {
+			b.blockerNote = invalidBlockerMessage
 		}
-		b.blockerNote = invalidBlockerMessage
 	}
 	// The round's boundary: resume of an external executor's checkpoint is refused.
 	return b.Save(Continuation{Stage: StageBuilderVerify})
