@@ -1,0 +1,13 @@
+{
+  "None": false,
+  "Path": ".kogen/models/k-build-round-limit-outcome/model.qnt",
+  "Invariants": [
+    "NoProgressFollowsNotice",
+    "WriteRoundsAreVerified",
+    "RoundLimitIsExternalThirdIdenticalRed",
+    "NativeKeepsRepairing"
+  ],
+  "Seed": "7",
+  "Samples": "200",
+  "Steps": "12"
+}

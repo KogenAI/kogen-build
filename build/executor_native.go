@@ -172,6 +172,9 @@ func (n *nativeSession) Round(ctx context.Context, in executor.Input) (executor.
 			return loop.Handled{Handled: true, Output: tools.Output{Text: text}}, nil
 		},
 		AfterCall: func(ctx context.Context, call tools.Call, out tools.Output, terminal bool, input []any) error {
+			if call.Name == "write_file" {
+				b.noEdit.wrote = true
+			}
 			if !terminal {
 				if event := tools.ReadEvent(call, out, "build"); event != nil {
 					b.Run.Event(event)

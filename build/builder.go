@@ -126,7 +126,7 @@ func (b *Attempt) drive(ctx context.Context, sess executor.Session, in executor.
 		if err != nil {
 			return err
 		}
-		b.noEdit.roundStart = start
+		b.noEdit.roundStart, b.noEdit.wrote = start, false
 		res, err := b.runRound(ctx, sess, in)
 		if err != nil {
 			if e, ok := sys.AsError(err); ok && e.Class == "executor" && e.Reason == executor.ReasonUsageLimit && b.ext != nil {
@@ -318,6 +318,11 @@ func (b *Attempt) stageGate(ctx context.Context) (string, bool, error) {
 	}
 	if err := b.hostOrBaseStop(pass); err != nil {
 		return "", false, err
+	}
+	if b.ext != nil {
+		if err := b.externalStalled(stage.ID, pass); err != nil {
+			return "", false, err
+		}
 	}
 	b.remember(stage.ID, pass)
 	editedNotice := b.unmovedNotice(stage.ID, pass)

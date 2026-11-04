@@ -135,7 +135,7 @@ func (b *Attempt) startBuilder(ctx context.Context, brief executor.Brief) (execu
 	if err := os.Chmod(task.Dir, 0o700); err != nil {
 		return nil, err
 	}
-	sess, err := b.ext.exec.Start(ctx, task, func(event map[string]any) { b.Run.Event(event) })
+	sess, err := b.ext.exec.Start(ctx, task, b.markExternalWrites(func(event map[string]any) { b.Run.Event(event) }))
 	if err != nil {
 		return nil, err
 	}

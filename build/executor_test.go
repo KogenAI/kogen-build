@@ -33,6 +33,8 @@ type fakeExecutor struct {
 	inputs   []executor.Input
 	closed   int
 	startErr error
+	// reportsWrites makes every round report a Write tool call, as claude-code's adapter does.
+	reportsWrites bool
 }
 
 func newFakeExecutor(t *testing.T, round func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error)) *fakeExecutor {
@@ -77,6 +79,9 @@ func (s *fakeSession) Round(ctx context.Context, in executor.Input) (executor.Ro
 	root := s.f.tasks[0].Root
 	s.f.mu.Unlock()
 	s.emit(map[string]any{"event": "executor_fake_round", "n": s.n})
+	if s.f.reportsWrites {
+		s.emit(map[string]any{"event": "executor_tool", "name": "Write"})
+	}
 	res, err := s.f.round(s.n, ctx, root, in)
 	if err != nil {
 		return executor.RoundResult{}, err

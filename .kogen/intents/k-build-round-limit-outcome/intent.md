@@ -1,0 +1,77 @@
+# Verify builder rounds that call a write tool
+
+Slug: k-build-round-limit-outcome
+Model: .kogen/intents/k-build-round-limit-outcome/model.qnt invariants=NoProgressFollowsNotice,WriteRoundsAreVerified,RoundLimitIsExternalThirdIdenticalRed,NativeKeepsRepairing seed=7 samples=200 steps=12
+Acceptance:
+- .kogen/intents/k-build-round-limit-outcome/acceptance.feature
+- features/steps/k-build-round-limit-outcome__steps.js
+
+Make kogen-build at main end three of kogen's spec scenarios with the outcomes the spec states again. With only kogen-build moved from b9990a3 to 748c085, kogen's acceptance fails (adoption window 102839Z, var-only-kogen-build, logs/adopt/20261104T102839Z-var-only-kogen-build-acceptance.out):
+- spec/features/04-building.feature:105 "Ordinary implementation failures keep repairing until the caller stops it" and :321 "Identical red passes leave the candidate in place and the external checkpoint cannot be resumed": expected `candidate/executor_round_limit`, got `candidate/no_progress: no edits: round 3 made no edits after the builder was told round 2 made none…`.
+- spec/features/06-reviewing.feature:53 "No review while verification is red": the fake ChatGPT server never received "Verification pass 3 is not green." before kogen ended.
+
+The kogen-build commit that changed this is 10f190b "Stop re-verifying builder rounds without edits" (Intent build-no-edit-turns-end-build), between b9990a3 and 748c085. It decides that a round made no edits from the candidate tree alone. In kogen's scenarios the builder writes the same bytes again every round: the native script `build-wrong-forever` calls `write_file` with the same wrong files and then `finish`, and the fake claude script `claude-correct-first-try` writes `calc.py` with its `Write` tool under a check that stays red. 10f190b counts each such round as a round without edits: round 2 gets the no-edit notice instead of a verification, and round 3 stops as `no_progress`. The same commit also removed the external identical-red rule, which ended the second scenario as `executor_round_limit`.
+
+After this change, a round that makes a file-write call is verified, even when the candidate tree is unchanged. The no-edit rule of build-no-edit-turns-end-build stays for rounds without a file-write call: a read-only look or a text-only answer. The external identical-red rule is restored as it was at b9990a3. kogen's spec is not changed; it lives in the kogen repository, not here.
+
+Definitions (package `build`):
+- File-write call:
+  - native builder: a `write_file` tool call in the round, whatever its result.
+  - external executor: an `executor_tool` event, reported during the round through the build executor's event sink, whose `name` is `Write`, `Edit`, `MultiEdit` or `NotebookEdit`. The real claude-code adapter of kogen-executor reports these. Native `shell` calls and claude-code `Bash` calls are not file-write calls.
+- Round without edits, which replaces the definition of build-no-edit-turns-end-build: a builder round that made no file-write call and after which, once the configured fixers have run, the candidate tree (`checkRepo().Tree(b.Start, b.Excluded)`) equals the tree at the start of the round. Everything else in that Intent stays exactly as it is: the remembered red pass, rules 2–4 of `roundEnd`, the notice text, the progress lines, the `no_progress` stop reason and its error lines.
+- A round with a file-write call that leaves the tree unchanged is verified like a round with edits, and its pass becomes the remembered red pass, with no notice given yet. It prints no `kogen: round <R> made no edits` line. It is not counted as a round without edits (`<N>` in `rounds without edits: <N> of <T>`), but it is counted in `<T>`.
+- The flag is set per round. It is cleared where `drive` records `noEdit.roundStart`, set by the native `AfterCall` hook for `write_file`, and set by a wrapper around the sink given to the external executor's `Start` in build/executor_external.go. The wrapper still passes every event to `b.Run.Event` unchanged.
+
+External identical-red rule, restored as at b9990a3 (`externalStalled`, `externalNoProgressPasses = 3`):
+- It applies only to an external Build (`b.ext != nil`). It runs for every verified builder pass: the whole-Intent pass in `steps.Verify` (build/route.go) and the stage gate pass in `stageGate` (build/builder.go). It runs after the host/base check and before `remember` and `unmovedNotice`.
+- A pass that is clean, red, has nothing moved and has a nonempty failing set extends the streak when its signature equals the previous pass's. The signature is the stage, the candidate tree and the fingerprint: sha256 of the stage, the failing items joined by `\x00`, and `PassFeedback` of the pass with `N = 0`, joined by `\x1f`. Any other pass resets the streak, or starts it at 1. Rounds that are not verified (a no-edit notice) neither extend nor reset it.
+- The third consecutive identical pass logs `{"event":"executor_no_progress","rounds":<executor rounds>,"fingerprint":<hex>,"failing":[…]}` and stops with `executor.RoundLimit(b.Executor.Rounds)`. stdout: `candidate/executor_round_limit: the executor used its 3 rounds without a verified, reviewed candidate; the candidate is left in place`, with the existing lines such as `  edited: app.txt`. The checkpoint, and the refused resume of an external checkpoint (`candidate/resume_refused`), stay as they are.
+- Native builders have no identical-red stop for verified rounds. They keep repairing until the caller stops them, as at b9990a3. The removed native tool-free rule and its `missing_items_notice` stay removed.
+
+Precedence example (external): round 1 `Write`s red (pass 1). Round 2 ends with a status message and no write (notice, no pass). Round 3 `Write`s the same bytes (pass 2, streak 2). If round 4 `Write`s the same bytes again, pass 3 stops the Build as `executor_round_limit`. If round 4 is status-only, it gets the notice for pass 2, and a status-only round 5 stops as `no_progress`.
+
+How acceptance observes it: the step file builds a driver program, a `main` package overlaid at `cmd/roundlimitdriver/main.go`, with `go build -overlay`, so the Build must not create `cmd/roundlimitdriver/`. The driver:
+- makes a fresh fixture project: a Git repository with `app.txt` set to `baseline`, an approved Intent `fixture` whose acceptance runs Kogen's real Cucumber (`KOGEN_NODE`, `KOGEN_CUCUMBER`) and is red until `app.txt` says `green`, and a ChatGPT login in its own `HOME`;
+- runs `build.Build`, and for LOOP-14 also `build.Resume`, with a scripted builder: a local HTTP model for the native builder, and an `executor.Executor` passed in `Deps.External` for claude-code. That executor writes `app.txt` and reports `executor_tool` `Write` events through its sink, as the adapter does;
+- uses a reviewer that only records which pass it was asked to review;
+- prints the exit code, stdout, stderr, result outcome and passes, the number of `pass` events, each round's input and the reviewed passes.
+
+The driver uses only exported API: `build.Build`, `build.Resume`, `build.Input`, `build.ResumeInput`, `build.Deps` (`Client`, `Tools`, `Reviewer`, `External`), `build.Attempt`, `build.Approved` and `verify.Pass.N`; kogen-executor's executor contract; and kogen-coordinator's `project` package. Keep these with their current shapes. For the LOOP-14 scenario, the fixture's check `test` (`! grep -qx red app.txt`) fails while acceptance passes, as kogen's `! grep -q is_even calc.py` does. With a red acceptance instead, real Cucumber's output (timings) differs between passes, so the restored fingerprint never repeats. That is also true at b9990a3, where such a Build ran to the executor's 6-round cap.
+
+No change to:
+- the builder's instructions or tool definitions, or the goldens;
+- the persisted State schema;
+- result fields and configuration;
+- go.mod dependencies;
+- `unmovedNotice`.
+
+## Decisions
+- Kogen's spec outcomes are kept, not replaced: the request's synthetic acceptance requires kogen's three scenarios to pass with kogen-build main. (source: request)
+- A builder that writes again, even byte-identical content, is repairing and is verified every round. A round without any file-write call, and an unchanged tree, keeps the no-edit notice and `no_progress` stop of build-no-edit-turns-end-build. (source: request)
+- An external builder that repeats the same red three times stops as `executor_round_limit`. A native builder keeps repairing until the caller stops it. (source: request)
+
+## Source comparison
+- addressed: Problem, 04-building.feature:105 (LOOP-7). A native builder that writes the same wrong file and finishes every round must keep repairing until stopped from outside. Covered by acceptance "Ordinary implementation failures keep repairing until the caller stops it": 25 identical red rounds are each verified (25 passes), pass 25's feedback reaches the 26th model request, and the Build ends only when the scripted model refuses (`provider/refused`, exit 4). There is no `no_progress` and no "made no edits" line. The scripted model's refusal stands in for kogen's SIGINT.
+- addressed: Problem, 04-building.feature:321 (LOOP-14). Covered by acceptance "Identical red passes leave the candidate in place and the external checkpoint cannot be resumed": 3 rounds and 3 passes, then `candidate/executor_round_limit…`, `  edited: app.txt`, no review, and a resume that answers `candidate/resume_refused` without another round.
+- addressed: Problem, 06-reviewing.feature:53 (REV-1), where "Verification pass 3 is not green." was never received. Covered by acceptance "No review while verification is red": round 4 receives that feedback, and no review is requested.
+- addressed: Need, "Find which kogen-build commit since b9990a3 changed it": 10f190b, located from its diff (the tree-only no-edit rule; `externalStalled` removed). The probes show the fixture passing at b9990a3 and failing on current main. Other commits are not claimed to be exhaustively ruled out.
+- addressed: Need, "or the spec is changed by its own Intent if the new outcome is intended": not taken. That would be a kogen Intent, and the synthetic acceptance requires passing with kogen-build main.
+- addressed: Synthetic acceptance, "Reproduce first". Through package build's entry points, the driver's scenarios 1–3 fail on current main with kogen's exact `candidate/no_progress: no edits: round 3 made no edits after the builder was told round 2 made none; …` and pass against kogen-build b9990a3. Running kogen's own spec needs the kogen assembly. That end-to-end rerun, with kogen-build main, is kogen's adoption check outside this repository.
+- addressed: Synthetic acceptance, "kogen-build's own suite passes": the configured checks (format, compile, vet, `GOFLAGS=-trimpath go test ./...`).
+- superseded: build-no-edit-turns-end-build's tree-only definition of a round without edits, and its statement that the third-identical-red `executor_round_limit` rule is superseded. Its own five scenarios stay valid because none of them rewrites identical bytes. Acceptance scenarios 4 and 5 keep its native read-only and external status-only outcomes. Both fail against b9990a3, so a plain revert of 10f190b does not pass.
+
+## Tests
+- A native round with a `write_file` call that leaves the tree unchanged is verified, and the Build keeps repairing (no review while red): acceptance scenarios 1 and 3; add a regression test in build/noprogress_test.go (identical `write_file` rounds, one pass each, then a green round lands) (regression)
+- An external Build whose rounds report a `Write` call of identical bytes stops at the third identical red pass as `executor_round_limit`, with one `executor_no_progress` event and no review: acceptance scenario 2; restore TestExternalNoProgressStopsOnThirdIdenticalRed in build/k19_no_progress_test.go with a fake round that emits an `executor_tool` `Write` event through the session's sink (regression)
+- The external streak resets when the tree changes: keep TestExternalNoProgressResetsWhenTheTreeChanges and assert 0 `executor_no_progress` events (existing)
+- A rewrite round is not counted as a round without edits and gives a new remembered red pass. Round 1 writes red, round 2 rewrites it (pass 2), and rounds 3 and 4 are text only: the stop reads `verification pass 2 is still red` and `rounds without edits: 2 of 4`. Add to build/noprogress_test.go (integration)
+- Rounds without a file-write call and with an unchanged tree keep the notice and the `no_progress` stop, for native and external builders: acceptance scenarios 4 and 5; existing noprogress_test.go and k19_no_progress_test.go tests unchanged (existing)
+- A rewrite round is always verified, `no_progress` follows a notice, `executor_round_limit` is external only and comes after three identical red passes, and native builders keep repairing: model.qnt invariants (unit)
+
+## Feasibility
+- The driver builds with `go build -overlay` in about 1 s once cached; `go build` did not wait on this host's queued `go test` shim. On current main (HEAD 254405b), scenarios 1–3 failed with kogen's reported `candidate/no_progress: no edits: round 3 …` (1 pass and 3 rounds each; for LOOP-14 `failing: test`, and the resume answered `candidate/resume_refused`). Scenarios 4 and 5 passed. (probe: 3–4 s per scenario)
+- Against a scratch copy of kogen-build b9990a3 (module cache `github.com/KogenAI/kogen-build@v0.0.0-20261103154529-b9990a3d0903`, with the driver's kogen-loop imports adapted to that version's `kogen-loop/…` path), scenarios 1–3 passed and scenarios 4 and 5 failed. The b9990a3 results were: 25 passes and the 26th request carrying "Verification pass 25 is not green."; `candidate/executor_round_limit: the executor used its 3 rounds …`, `  edited: app.txt` and the refused resume; and, for scenarios 4 and 5, the old missing-items `no_progress` after 4 passes and the 6-round `executor_round_limit`. (probe: 24 s, 3 s, 4 s, 4 s, 5 s)
+- The Quint model typechecked. `run --invariant='NoProgressFollowsNotice and WriteRoundsAreVerified and RoundLimitIsExternalThirdIdenticalRed and NativeKeepsRepairing' --seed=7 --max-samples=200 --max-steps=12` found no violation. (probe: exit 0, 0.1 s)
+- evidence: {"id":"round-limit-observer","kind":"observer","inputs":["features/steps/k-build-round-limit-outcome__steps.js"],"observers":["features/steps/k-build-round-limit-outcome__steps.js"],"checks":[{"name":"good","command":"\"$KOGEN_NODE\" features/steps/k-build-round-limit-outcome__steps.js control-good","exit":0,"output":"observer accepted\n"},{"name":"bad","command":"\"$KOGEN_NODE\" features/steps/k-build-round-limit-outcome__steps.js control-bad","exit":1,"output":"observer rejected\n"}]}
+
+The controls use builder scripts whose outcome this Intent does not change, so they hold before and after the Build. Each builds and runs the final embedded driver and judges it with the same judge as the scenarios. control-good requires "native-read-only" and "external-status-only" to match their true expectations. control-bad runs "native-read-only" with only the outcome changed to `landed`. It prints `observer rejected` only when the judge's single failure is exactly `mode native-read-only: outcome "no_progress", want "landed"`; any other result exits 2. On current main the controls printed `observer accepted` (exit 0, 7 s) and `observer rejected` (exit 1). They are not evidence that the feature is implemented.

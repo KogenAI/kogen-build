@@ -1,8 +1,12 @@
 package build
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 
+	"github.com/KogenAI/kogen-executor/core"
+	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
 )
@@ -14,10 +18,67 @@ type noEditWatch struct {
 	// roundStart is the candidate tree at the start of the builder round in progress ("" when
 	// the round's start is unknown, as when a Build resumes at the end of a round).
 	roundStart string
+	// wrote is set when the builder round in progress made a file-write call (writeCall).
+	wrote bool
 	// red is the latest clean red pass, nil after a green pass.
 	red *redPass
 	// rounds counts the builder rounds this invocation ran, and noEdits those without edits.
 	rounds, noEdits int
+	// streak counts the consecutive identical red passes of an external Build, identified by
+	// streakSig (stage, candidate tree and failing-set fingerprint).
+	streak    int
+	streakSig string
+}
+
+// externalWriteTools are the executor_tool names of an external executor's file-write calls.
+var externalWriteTools = map[string]bool{"Write": true, "Edit": true, "MultiEdit": true, "NotebookEdit": true}
+
+// markExternalWrites passes every event to sink unchanged and notes a file-write call of the
+// round in progress.
+func (b *Attempt) markExternalWrites(sink func(map[string]any)) func(map[string]any) {
+	return func(event map[string]any) {
+		if event["event"] == "executor_tool" {
+			if name, _ := event["name"].(string); externalWriteTools[name] {
+				b.noEdit.wrote = true
+			}
+		}
+		sink(event)
+	}
+}
+
+// externalNoProgressPasses is the number of consecutive identical red passes that stops an
+// external Build.
+const externalNoProgressPasses = 3
+
+// externalStalled is the external executor's no-progress rule: the third consecutive clean red
+// pass with the same failing-set fingerprint over the same candidate tree records
+// executor_no_progress and stops like the round cap.
+func (b *Attempt) externalStalled(stage string, pass verify.Pass) error {
+	w := &b.noEdit
+	if pass.Green || !pass.Clean || len(pass.Moved) != 0 || len(pass.Failing) == 0 {
+		w.streak, w.streakSig = 0, ""
+		return nil
+	}
+	anon := pass
+	anon.N = 0
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		stage, strings.Join(pass.Failing, "\x00"), b.PassFeedback(anon, "finish"),
+	}, "\x1f")))
+	fingerprint := hex.EncodeToString(sum[:])
+	sig := fingerprint + "\x1f" + pass.Tree
+	if w.streak > 0 && w.streakSig == sig {
+		w.streak++
+	} else {
+		w.streak, w.streakSig = 1, sig
+	}
+	if w.streak < externalNoProgressPasses {
+		return nil
+	}
+	b.Run.Event(map[string]any{
+		"event": "executor_no_progress", "rounds": b.Executor.Rounds,
+		"fingerprint": fingerprint, "failing": core.NonNil(pass.Failing),
+	})
+	return executor.RoundLimit(b.Executor.Rounds)
 }
 
 // redPass is a remembered red verification pass with its stage ("" for the whole Intent) and
@@ -63,15 +124,15 @@ func noEditNotice(round int, pass verify.Pass) string {
 }
 
 // noEditRound decides, after the fixers, what a round that left the candidate tree unchanged
-// means. stage is the active stage ID ("" for the whole Intent). A round with edits, or whose tree
+// without a file-write call means. stage is the active stage ID ("" for the whole Intent). A round with edits, or whose tree
 // no remembered red pass checked, is verified as usual (check true). A round that left the tree
 // of the remembered red pass gets one notice instead of a verification, and a second one stops
 // the Build as no_progress; neither runs a pass, its checks or its acceptance.
 func (b *Attempt) noEditRound(stage string) (feedback string, check bool, err error) {
 	w := &b.noEdit
-	start := w.roundStart
-	w.roundStart = ""
-	if start == "" {
+	start, wrote := w.roundStart, w.wrote
+	w.roundStart, w.wrote = "", false
+	if start == "" || wrote {
 		return "", true, nil
 	}
 	tree, err := b.checkRepo().Tree(b.Start, b.Excluded)

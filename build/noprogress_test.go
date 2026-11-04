@@ -154,6 +154,53 @@ func TestARoundThatEditsIsVerifiedEvenWhenTheFailingSetIsUnchanged(t *testing.T)
 	eq(t, "model requests", f.count(), 3)
 }
 
+// A round with a write_file call is verified even when it writes the bytes the tree already
+// holds, so a builder that rewrites the same wrong file keeps repairing.
+func TestARoundThatRewritesTheSameBytesIsVerifiedAndTheBuildKeepsRepairing(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	f := e.prov
+	rewrite := func() handler {
+		return f.calls("write_file", map[string]any{"path": "app.txt", "content": "red\n"}, "finish", map[string]any{"summary": "again"})
+	}
+	f.then(rewrite(), rewrite(), rewrite(), rewrite(),
+		f.calls("write_file", map[string]any{"path": "app.txt", "content": "green\n"}, "finish", map[string]any{"summary": "repaired"}))
+	a := e.build()
+	if a.exit != 0 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	id := e.onlyRun()
+	eq(t, "passes", e.result(id)["passes"], any(float64(5)))
+	eq(t, "pass events", passEvents(t, e, id), 5)
+	eq(t, "model requests", f.count(), 5)
+	if strings.Contains(a.errs.String(), "made no edits") {
+		t.Fatalf("a rewrite round was reported as made no edits:\n%s", a.errs.String())
+	}
+}
+
+// A rewrite round is not a round without edits and gives the remembered red pass: the text-only
+// rounds after it are measured against pass 2.
+func TestARewriteRoundIsNotCountedAsWithoutEditsAndGivesTheRememberedRedPass(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	f := e.prov
+	f.then(
+		f.calls("write_file", map[string]any{"path": "app.txt", "content": "red\n"}, "finish", map[string]any{"summary": "first"}),
+		f.calls("write_file", map[string]any{"path": "app.txt", "content": "red\n"}, "finish", map[string]any{"summary": "again"}),
+		says("I changed nothing."),
+		says("Still nothing."),
+	)
+	f.then(sayings(5)...)
+	a := e.build()
+	eq(t, "exit", a.exit, 1)
+	id := e.onlyRun()
+	out := a.out.String()
+	contains(t, "stdout", out, "candidate/no_progress: no edits: round 4 made no edits after the builder was told round 3 made none; verification pass 2 is still red and was not run again; edits are left in place\n")
+	contains(t, "stdout", out, "  rounds without edits: 2 of 4\n")
+	eq(t, "model requests", f.count(), 4)
+	eq(t, "pass events", passEvents(t, e, id), 2)
+}
+
 func TestARoundWithoutAToolCallContinuesWhenTheFixersChangedTheCandidate(t *testing.T) {
 	t.Parallel()
 	// Each fixer run changes an untracked candidate file, so every pass verifies a new tree.
