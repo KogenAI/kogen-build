@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-verification/verify"
 )
 
@@ -249,5 +251,41 @@ func TestNamedFeedbackCompatibility(t *testing.T) {
 		if !strings.HasPrefix(o, "Verification pass 1 is not green.") {
 			lacks(t, "a tool output", o, "required tests that did not run")
 		}
+	}
+}
+
+// TestWholeIntentRedFeedbackEndsWithTheFinishReminder: a red whole-Intent pass that goes back to
+// the builder, native or external, ends with a blank line and the reminder; a scoped stage
+// gate's red feedback does not.
+func TestWholeIntentRedFeedbackEndsWithTheFinishReminder(t *testing.T) {
+	suffix := "\n\n" + finishReminder
+	_, native := compatCapture(t)
+	if !strings.HasSuffix(native, suffix) || strings.Count(native, finishReminder) != 1 {
+		t.Fatalf("native feedback %q", native)
+	}
+
+	e := newEnv(t)
+	e.useExecutor("")
+	f := newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {
+		if n == 2 {
+			return externalWritesApp("candidate\n", executor.Usage{})(n, ctx, root, in)
+		}
+		return externalWritesApp("red\n", executor.Usage{})(n, ctx, root, in)
+	})
+	e.build(withExecutor(f, nil))
+	seen := f.seen()
+	if len(seen) < 2 || !strings.HasPrefix(seen[1].Feedback, "Verification pass 1 is not green.") || !strings.HasSuffix(seen[1].Feedback, suffix) || strings.Count(seen[1].Feedback, finishReminder) != 1 {
+		t.Fatalf("external inputs %+v", seen)
+	}
+
+	st, _ := stagedEnv(t, []string{"echo scoped-failure; exit 1"})
+	st.prov.then(st.prov.calls("write_file", map[string]any{"path": "unrelated.txt", "content": "1"}, "finish", map[string]any{"summary": "verify"}), refused())
+	st.build()
+	req := st.prov.requests()
+	if len(req) < 2 {
+		t.Fatalf("requests: %d", len(req))
+	}
+	if got := lastInput(req[1]); !strings.Contains(got, "Stage foundation failed; remain at this stage.") || strings.Contains(got, finishReminder) {
+		t.Fatalf("stage feedback %q", got)
 	}
 }

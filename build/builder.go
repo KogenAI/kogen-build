@@ -384,9 +384,14 @@ func withNotice(notice, feedback string) string {
 
 // verifyAndReview is the whole-Intent pass, review and commit, routed by kogen-coordinator's
 // route (steps). A builder pass (after a builder round) is also checked for a repeated host or
-// base failure; a pass that only restarts verification after a drifted review is not.
+// base failure; a pass that only restarts verification after a drifted review is not. Red
+// feedback that goes back to the builder ends with the finish reminder.
 func (b *Attempt) verifyAndReview(ctx context.Context, builderPass bool) (string, bool, error) {
-	return route.Cycle(ctx, steps{b}, builderPass)
+	feedback, landed, err := route.Cycle(ctx, steps{b}, builderPass)
+	if err != nil || landed {
+		return feedback, landed, err
+	}
+	return feedback + "\n\n" + finishReminder, false, nil
 }
 
 // ---- resume of a conversation stage ----
