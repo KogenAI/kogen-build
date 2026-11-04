@@ -1,0 +1,93 @@
+'use strict';
+// Real `go test -json` rows that qualify the run judge of k-build-reviewer-prompt-bytes-unpinned__steps.js
+// (its good and bad controls). Each list is every row other than the "output" rows, verbatim and in
+// order, of the stdout of `go test -json -count=1 -run '^TestContextExternalNativeBytes$' ./build`
+// on the unchanged checkout (kogen-build 36ce493).
+
+// passing: with the committed go.mod (kogen-review v0.0.0-20261103124347-cfc2fb29917c); go test exited 0.
+const passing = [
+  '{"Time":"2026-11-04T10:15:48.08957+03:00","Action":"start","Package":"github.com/KogenAI/kogen-build/build"}',
+  '{"Time":"2026-11-04T10:15:48.641181+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes"}',
+  '{"Time":"2026-11-04T10:15:48.641435+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes"}',
+  '{"Time":"2026-11-04T10:15:48.641452+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes"}',
+  '{"Time":"2026-11-04T10:15:48.643297+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_without_context"}',
+  '{"Time":"2026-11-04T10:15:48.643456+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_without_context"}',
+  '{"Time":"2026-11-04T10:15:48.643472+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_with_context"}',
+  '{"Time":"2026-11-04T10:15:48.643518+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_with_context"}',
+  '{"Time":"2026-11-04T10:15:48.643536+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_without_context"}',
+  '{"Time":"2026-11-04T10:15:48.643573+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_without_context"}',
+  '{"Time":"2026-11-04T10:15:48.643582+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_with_context"}',
+  '{"Time":"2026-11-04T10:15:48.643633+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_with_context"}',
+  '{"Time":"2026-11-04T10:15:48.643642+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_without_context"}',
+  '{"Time":"2026-11-04T10:15:48.643665+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_without_context"}',
+  '{"Time":"2026-11-04T10:15:48.643672+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_without_context"}',
+  '{"Time":"2026-11-04T10:15:48.643694+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_without_context"}',
+  '{"Time":"2026-11-04T10:15:48.643702+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_with_context"}',
+  '{"Time":"2026-11-04T10:15:48.643881+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_with_context"}',
+  '{"Time":"2026-11-04T10:15:48.643891+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_with_context"}',
+  '{"Time":"2026-11-04T10:15:48.643929+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_with_context"}',
+  '{"Time":"2026-11-04T10:15:48.643939+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_without_context"}',
+  '{"Time":"2026-11-04T10:15:48.643967+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_without_context"}',
+  '{"Time":"2026-11-04T10:15:48.643998+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_with_context"}',
+  '{"Time":"2026-11-04T10:15:48.644016+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_without_context"}',
+  '{"Time":"2026-11-04T10:15:51.030493+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_with_context","Elapsed":2.39}',
+  '{"Time":"2026-11-04T10:15:51.030517+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_with_context"}',
+  '{"Time":"2026-11-04T10:15:51.587705+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_without_context","Elapsed":2.94}',
+  '{"Time":"2026-11-04T10:15:51.587738+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_without_context"}',
+  '{"Time":"2026-11-04T10:15:52.128625+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_without_context","Elapsed":3.48}',
+  '{"Time":"2026-11-04T10:15:52.128637+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_with_context"}',
+  '{"Time":"2026-11-04T10:15:52.376495+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_without_context","Elapsed":3.73}',
+  '{"Time":"2026-11-04T10:15:52.376509+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_with_context"}',
+  '{"Time":"2026-11-04T10:15:53.679061+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_with_context","Elapsed":2.43}',
+  '{"Time":"2026-11-04T10:15:54.327686+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_without_context","Elapsed":2.09}',
+  '{"Time":"2026-11-04T10:15:54.764343+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_with_context","Elapsed":2.2}',
+  '{"Time":"2026-11-04T10:15:54.764411+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_with_context","Elapsed":2.39}',
+  '{"Time":"2026-11-04T10:15:54.764505+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes","Elapsed":0}',
+  '{"Time":"2026-11-04T10:15:54.765612+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Elapsed":6.676}',
+];
+
+// dropDiagnostic: against a copy of kogen-review v0.0.0-20261103124347-cfc2fb29917c whose review/external.go
+// reads `range in.Evidence.Diagnostic[:0] {` instead of `range in.Evidence.Diagnostic {` (the external
+// reviewer drops the caller diagnostic); only native/external_with_context failed; go test exited 1.
+const dropDiagnostic = [
+  '{"Time":"2026-11-04T10:17:36.523409+03:00","Action":"start","Package":"github.com/KogenAI/kogen-build/build"}',
+  '{"Time":"2026-11-04T10:17:37.177276+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes"}',
+  '{"Time":"2026-11-04T10:17:37.177524+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes"}',
+  '{"Time":"2026-11-04T10:17:37.177533+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes"}',
+  '{"Time":"2026-11-04T10:17:37.178854+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_without_context"}',
+  '{"Time":"2026-11-04T10:17:37.179201+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_without_context"}',
+  '{"Time":"2026-11-04T10:17:37.179214+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_with_context"}',
+  '{"Time":"2026-11-04T10:17:37.179243+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_with_context"}',
+  '{"Time":"2026-11-04T10:17:37.179256+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_without_context"}',
+  '{"Time":"2026-11-04T10:17:37.17929+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_without_context"}',
+  '{"Time":"2026-11-04T10:17:37.17932+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_with_context"}',
+  '{"Time":"2026-11-04T10:17:37.179388+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_with_context"}',
+  '{"Time":"2026-11-04T10:17:37.179396+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_without_context"}',
+  '{"Time":"2026-11-04T10:17:37.179425+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_without_context"}',
+  '{"Time":"2026-11-04T10:17:37.179433+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_without_context"}',
+  '{"Time":"2026-11-04T10:17:37.17946+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_without_context"}',
+  '{"Time":"2026-11-04T10:17:37.17947+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_with_context"}',
+  '{"Time":"2026-11-04T10:17:37.179493+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_with_context"}',
+  '{"Time":"2026-11-04T10:17:37.179502+03:00","Action":"run","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_with_context"}',
+  '{"Time":"2026-11-04T10:17:37.179552+03:00","Action":"pause","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_with_context"}',
+  '{"Time":"2026-11-04T10:17:37.179559+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_without_context"}',
+  '{"Time":"2026-11-04T10:17:37.179575+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_without_context"}',
+  '{"Time":"2026-11-04T10:17:37.179621+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_without_context"}',
+  '{"Time":"2026-11-04T10:17:37.179677+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_with_context"}',
+  '{"Time":"2026-11-04T10:17:42.130575+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_without_context","Elapsed":4.95}',
+  '{"Time":"2026-11-04T10:17:42.130616+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_with_context"}',
+  '{"Time":"2026-11-04T10:17:42.379894+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_without_context","Elapsed":5.2}',
+  '{"Time":"2026-11-04T10:17:42.379918+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_with_context"}',
+  '{"Time":"2026-11-04T10:17:42.690678+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/native_with_context","Elapsed":5.51}',
+  '{"Time":"2026-11-04T10:17:42.690691+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_with_context"}',
+  '{"Time":"2026-11-04T10:17:42.939208+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_without_context","Elapsed":5.76}',
+  '{"Time":"2026-11-04T10:17:42.939247+03:00","Action":"cont","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_without_context"}',
+  '{"Time":"2026-11-04T10:17:48.185241+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_without_context","Elapsed":4.58}',
+  '{"Time":"2026-11-04T10:17:48.678563+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/native_with_context","Elapsed":5.81}',
+  '{"Time":"2026-11-04T10:17:48.7758+03:00","Action":"fail","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/native/external_with_context","Elapsed":6.56}',
+  '{"Time":"2026-11-04T10:17:48.775912+03:00","Action":"pass","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes/external/external_with_context","Elapsed":6.09}',
+  '{"Time":"2026-11-04T10:17:48.775936+03:00","Action":"fail","Package":"github.com/KogenAI/kogen-build/build","Test":"TestContextExternalNativeBytes","Elapsed":0}',
+  '{"Time":"2026-11-04T10:17:48.77721+03:00","Action":"fail","Package":"github.com/KogenAI/kogen-build/build","Elapsed":12.254}',
+];
+
+module.exports = { passing, dropDiagnostic };

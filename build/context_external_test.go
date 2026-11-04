@@ -1,11 +1,13 @@
 package build
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/KogenAI/kogen-review/review"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -385,9 +387,62 @@ func openings(t *testing.T, c extCombo, d *Diagnostic) map[string]string {
 		if k == "builder" || k == "reviewer" {
 			out[k] = kogenOwnedRequest(t, out[k])
 		}
+		if k == "reviewer" {
+			out[k] = withoutReviewerWording(t, out[k])
+		}
 		out[k] = withoutLineupFile(out[k])
 	}
 	return out
+}
+
+// reviewerInstructionsPlaceholder and reviewerToolPlaceholder stand for the wording kogen-review owns.
+const reviewerInstructionsPlaceholder = "<review.ReviewerInstructions()>"
+
+var reviewerToolPlaceholder = map[string]any{"review_tool_definition": review.SubmitReviewTool}
+
+// withoutReviewerWording is a native reviewer request (compact JSON from kogenOwnedRequest) with the
+// wording kogen-review owns replaced by placeholders: the instructions, which must equal
+// review.ReviewerInstructions(), and the submit_review definition, which must equal
+// review.ReviewerToolDefinitions(review.SubmitReviewTool)[0] as a decoded JSON value. The tools keep
+// their order and nothing else changes; the request is encoded again with sorted keys.
+func withoutReviewerWording(t *testing.T, wire string) string {
+	t.Helper()
+	var v map[string]any
+	dec := json.NewDecoder(strings.NewReader(wire))
+	dec.UseNumber()
+	if err := dec.Decode(&v); err != nil {
+		t.Fatalf("reviewer request JSON: %v", err)
+	}
+	if got, _ := v["instructions"].(string); got != review.ReviewerInstructions() {
+		t.Fatalf("the reviewer's instructions are not review.ReviewerInstructions()")
+	}
+	v["instructions"] = reviewerInstructionsPlaceholder
+	exported, err := json.Marshal(review.ReviewerToolDefinitions(review.SubmitReviewTool)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := decodeNumbers(t, exported)
+	tools, _ := v["tools"].([]any)
+	found := false
+	for i, tool := range tools {
+		if m, _ := tool.(map[string]any); m["name"] == review.SubmitReviewTool {
+			if !reflect.DeepEqual(tool, want) {
+				t.Fatalf("the %s definition differs from review.ReviewerToolDefinitions(%s)[0]:\n got %v\nwant %v", review.SubmitReviewTool, review.SubmitReviewTool, tool, want)
+			}
+			tools[i] = reviewerToolPlaceholder
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the reviewer's request offers no %s tool", review.SubmitReviewTool)
+	}
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSuffix(out.String(), "\n")
 }
 
 // withoutLineupFile is text without `.kogen/models.yaml` in the protected files the prompts name
@@ -434,6 +489,13 @@ func sameBytes(t *testing.T, name, got, want string) {
 // from what -update records. `go test ./... -update` rewrites it from the current output
 // (a Git diff to review like any other change); the external builder's "with context" subtests,
 // whose expectation derives from stored entries, then derive it from this run's own output.
+//
+// The reviewer's instructions, the `submit_review` definition and the external review task are
+// kogen-review's: they are compared with its exports (review.ReviewerInstructions(),
+// review.ReviewerToolDefinitions(review.SubmitReviewTool), review.LimitRaises) and not stored in the
+// golden. The native reviewer part holds placeholders for the first two; an external reviewer's
+// parts are not stored: they are the native reviewer's authority, diagnostic and review source
+// followed by the review task, which carries review.LimitRaises.
 func TestContextExternalNativeBytes(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile("testdata/context-external-golden.json")
@@ -465,30 +527,55 @@ func TestContextExternalNativeBytes(t *testing.T) {
 			})
 		})
 	}
-	// check compares the parts of one subtest with the golden entry, or records them.
-	check := func(t *testing.T, key string, got map[string]string) {
+	// nativeReviewer is the native reviewer part a subtest derives an external reviewer's expectation
+	// from: the golden's, or with -update this run's own.
+	nativeReviewer := func(t *testing.T, withContext bool) string {
 		t.Helper()
-		if *update {
-			recorded.Store(key, got)
-			return
+		dd, name := (*Diagnostic)(nil), "native/native without context"
+		if withContext {
+			dd, name = d, "native/native with context"
 		}
-		want := golden[key]
-		eq(t, "parts", len(got), len(want))
+		if *update {
+			return openings(t, extCombos[0], dd)["reviewer"]
+		}
+		return golden[name]["reviewer"]
+	}
+	// check compares the parts of one subtest with the golden entry, or records them. The parts of
+	// an external reviewer are not in the golden: they are checked against the native reviewer's.
+	check := func(t *testing.T, key string, c extCombo, withContext bool, got map[string]string) {
+		t.Helper()
+		own := map[string]string{}
 		for part, text := range got {
-			sameBytes(t, part, text, want[part])
+			if !c.extReview {
+				own[part] = text
+			} else if part != "reviewer.stable" && part != "reviewer.dynamic" {
+				own[part] = text
+			}
+		}
+		if *update {
+			recorded.Store(key, own)
+		} else {
+			want := golden[key]
+			eq(t, "parts", len(own), len(want))
+			for part, text := range own {
+				sameBytes(t, part, text, want[part])
+			}
+		}
+		if c.extReview {
+			sameExternalReviewer(t, got, nativeReviewer(t, withContext), withContext)
 		}
 	}
 	for _, c := range extCombos {
 		t.Run(c.name+" without context", func(t *testing.T) {
 			t.Parallel()
-			check(t, c.name+" without context", openings(t, c, nil))
+			check(t, c.name+" without context", c, false, openings(t, c, nil))
 		})
 		if c.extBuild {
 			continue
 		}
 		t.Run(c.name+" with context", func(t *testing.T) {
 			t.Parallel()
-			check(t, c.name+" with context", openings(t, c, d))
+			check(t, c.name+" with context", c, true, openings(t, c, d))
 		})
 	}
 	// An external builder gets exactly the omitted-context brief plus the diagnostic message,
@@ -500,18 +587,61 @@ func TestContextExternalNativeBytes(t *testing.T) {
 		t.Run(c.name+" with context", func(t *testing.T) {
 			t.Parallel()
 			plain, got := golden[c.name+" without context"], openings(t, c, d)
-			nativeReviewer := golden["native/native with context"]["reviewer"]
 			if *update {
 				// The golden may not be rewritten yet: derive the expectation from the output.
 				plain = openings(t, c, nil)
-				nativeReviewer = openings(t, extCombos[0], d)["reviewer"]
 			}
 			sameBytes(t, "builder.stable", got["builder.stable"], withoutLineupFile(plain["builder.stable"]+d.message()["content"].(string)))
 			sameBytes(t, "builder.dynamic", got["builder.dynamic"], plain["builder.dynamic"])
 			if c.extReview {
 				return
 			}
-			sameBytes(t, "reviewer", got["reviewer"], nativeReviewer)
+			sameBytes(t, "reviewer", got["reviewer"], nativeReviewer(t, true))
 		})
+	}
+}
+
+// sameExternalReviewer asserts an external reviewer's parts against the native reviewer's request
+// (nativeWire, as withoutReviewerWording leaves it). reviewer.dynamic is the review source; reviewer.stable
+// begins with the authority, then with context the diagnostic message and a blank line, and the
+// rest is kogen-review's review task, which must carry review.LimitRaises once; its other bytes are not compared.
+func sameExternalReviewer(t *testing.T, got map[string]string, nativeWire string, withContext bool) {
+	t.Helper()
+	var native struct {
+		Input []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(nativeWire), &native); err != nil {
+		t.Fatalf("native reviewer request JSON: %v", err)
+	}
+	var blocks []struct {
+		Text string `json:"text"`
+	}
+	wantMessages := 1
+	if withContext {
+		wantMessages = 2
+	}
+	if len(native.Input) != wantMessages || json.Unmarshal(native.Input[0].Content, &blocks) != nil || len(blocks) != 2 {
+		t.Fatalf("the native reviewer's input is not the authority and the review source (with context %v)", withContext)
+	}
+	authority, source := blocks[0].Text, blocks[1].Text
+	prefix := authority + "\n"
+	if withContext {
+		var diagnostic string
+		if err := json.Unmarshal(native.Input[1].Content, &diagnostic); err != nil {
+			t.Fatalf("the native reviewer's diagnostic message: %v", err)
+		}
+		prefix = authority + "\n" + diagnostic + "\n" + "\n"
+	}
+	sameBytes(t, "reviewer.dynamic", got["reviewer.dynamic"], source)
+	stable := got["reviewer.stable"]
+	sameBytes(t, "reviewer.stable", stable[:min(len(stable), len(prefix))], prefix)
+	task := stable[len(prefix):]
+	if task == "" {
+		t.Fatal("reviewer.stable has no review task after the authority")
+	}
+	if n := strings.Count(task, review.LimitRaises); n != 1 {
+		t.Fatalf("the review task carries review.LimitRaises %d times, want once", n)
 	}
 }
