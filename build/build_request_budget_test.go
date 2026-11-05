@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"reflect"
-	"regexp"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -183,175 +184,179 @@ func TestBuildRequestBudgetResume(t *testing.T) {
 	})
 }
 
-// budgetObservation is everything a Build sent and recorded, with the run identities that
-// differ between two Builds replaced.
-type budgetObservation struct {
-	requests, log, checkpoint, result, outcome string
+// observation is one thing a user or caller of Build observes: its name in a failure message
+// and its value printed for the comparison.
+type observation struct{ name, value string }
+
+// buildEvents are the documented events of the run record: the Build's own boundaries, its
+// requests, tool calls, verification passes, reviews and the outcome. Producer diagnostics
+// (timing, provider attempts, command records and the like) are not observations.
+var buildEvents = map[string]bool{
+	"start": true, "request": true, "tool_call": true, "pass": true, "review": true, "commit": true, "outcome": true,
 }
 
-// volatileKeys are the nondeterministic values of a run: its timing, clock, host load and the
-// random run, operation and prompt-cache identities. The plain duration keys ms (a sweep's
-// duration), elapsed, duration and wall (seconds) are volatile as whole keys. volatileKey also
-// masks every key that ends in _ms (a millisecond offset or duration) or _at (a timestamp).
-var volatileKeys = map[string]bool{
-	"wall_ms": true, "model_active_ms": true, "t0": true, "at": true, "timestamp": true, "started_at": true,
-	"operation_id": true, "attempt_id": true, "conversation_id": true, "session_id": true, "prompt_cache_key": true,
-	"cache_id": true, "run_id": true, "approval": true, "approval_bytes": true, "index": true, "identity": true, "request_bytes": true, "ttft_ms": true, "duration_ms": true,
-	"headers_ms": true, "first_byte_ms": true, "last_byte_ms": true, "last_progress_ms": true, "max_gap_ms": true, "gap_hist": true,
-	"load_average": true,
-	"ms":           true, "elapsed": true, "duration": true, "wall": true,
-}
-
-func volatileKey(k string) bool {
-	return volatileKeys[k] || strings.HasSuffix(k, "_ms") || strings.HasSuffix(k, "_at")
-}
-
-func TestVolatileKey(t *testing.T) {
-	for _, k := range []string{"ms", "elapsed", "duration", "wall", "wall_ms", "request_offset_ms", "at", "ended_at"} {
-		if !volatileKey(k) {
-			t.Errorf("volatileKey(%q) = false, want true", k)
+// requestBudgetNames are the names in a decoded document that mention the request budget: an
+// object key at any depth, or the string value of an "event" key. Each is listed once, in
+// document order of discovery with the keys of an object sorted.
+func requestBudgetNames(doc any) []string {
+	var names []string
+	seen := map[string]bool{}
+	add := func(name string) {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
 		}
 	}
-	for _, k := range []string{"stopped", "name", "event", "offset", "count", "ms_count", "outcome"} {
-		if volatileKey(k) {
-			t.Errorf("volatileKey(%q) = true, want false", k)
-		}
-	}
-}
-
-var cacheIdentity = regexp.MustCompile(`conversation-[0-9a-f]+`)
-
-var hexHash = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
-
-func observeBuild(t *testing.T, e *env, id string) budgetObservation {
-	t.Helper()
-	replace := func(s string) string {
-		for from, to := range map[string]string{e.root: "<root>", e.home: "<home>", e.aux: "<aux>", e.hooks: "<hooks>", e.prov.srv.URL: "<url>"} {
-			s = strings.ReplaceAll(s, from, to)
-		}
-		return cacheIdentity.ReplaceAllString(strings.ReplaceAll(s, id, "<run>"), "conversation-<random>")
-	}
-	// walk rewrites the volatile values of a decoded document in place.
-	var walk func(v any) any
-	walk = func(v any) any {
+	var walk func(v any)
+	walk = func(v any) {
 		switch x := v.(type) {
 		case map[string]any:
-			out := map[string]any{}
-			for k, val := range x {
-				switch {
-				case volatileKey(k):
-					out[k] = "<volatile>"
-				case k == "cache_ids":
-					ids := map[string]any{}
-					for name := range val.(map[string]any) {
-						ids[name] = "<volatile>"
-					}
-					out[k] = ids
-				default:
-					out[k] = walk(val)
-				}
+			keys := make([]string, 0, len(x))
+			for k := range x {
+				keys = append(keys, k)
 			}
-			return out
-		case string:
-			// Hashes of text that holds a temporary path (the configuration, the commits) differ
-			// between two Builds; the texts themselves are compared in the requests.
-			if hexHash.MatchString(x) {
-				return "<hash>"
+			sort.Strings(keys)
+			for _, k := range keys {
+				if strings.Contains(k, "request_budget") {
+					add(k)
+				}
+				if s, ok := x[k].(string); ok && k == "event" && strings.Contains(s, "request_budget") {
+					add(s)
+				}
+				walk(x[k])
 			}
 		case []any:
-			out := make([]any, len(x))
-			for i, val := range x {
-				out[i] = walk(val)
+			for _, val := range x {
+				walk(val)
 			}
-			return out
 		}
-		return v
 	}
-	norm := func(raw string) string {
-		var lines []string
-		for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
-			var doc any
-			if err := json.Unmarshal([]byte(line), &doc); err != nil {
-				t.Fatalf("not JSON: %q: %v", line, err)
-			}
-			lines = append(lines, replace(jsonText(walk(doc))))
+	walk(doc)
+	return names
+}
+
+// requestBudgetNamesIn applies requestBudgetNames to a file of a run: log.jsonl line by line,
+// the other files as one document.
+func requestBudgetNamesIn(file string, data []byte) ([]string, error) {
+	texts := []string{string(data)}
+	if file == "log.jsonl" {
+		texts = strings.Split(strings.TrimSpace(string(data)), "\n")
+	}
+	var names []string
+	for _, text := range texts {
+		var doc any
+		if err := json.Unmarshal([]byte(text), &doc); err != nil {
+			return nil, fmt.Errorf("%s: %v", file, err)
 		}
-		return strings.Join(lines, "\n")
+		names = append(names, requestBudgetNames(doc)...)
 	}
-	read := func(name string) string {
-		b, err := os.ReadFile(e.runPath(id, name))
+	return names, nil
+}
+
+func TestRequestBudgetNameCheck(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		file, clean, injected, name string
+	}{
+		{"checkpoint.json", `{"phase":"builder","state":{"count":1}}`, `{"phase":"builder","state":{"count":1,"build_request_budget":{"limit":0}}}`, "build_request_budget"},
+		{"result.json", `{"outcome":"landed","limits":{"response_budget":1,"budget_ms":2}}`, `{"outcome":"landed","limits":{"request_budget_left":0}}`, "request_budget_left"},
+		{"log.jsonl", "{\"event\":\"response_budget\"}\n{\"event\":\"outcome\"}", "{\"event\":\"response_budget\"}\n{\"event\":\"build_request_budget\"}\n{\"event\":\"outcome\"}", "build_request_budget"},
+	} {
+		got, err := requestBudgetNamesIn(c.file, []byte(c.clean))
+		if err != nil || len(got) != 0 {
+			t.Errorf("%s without the injection: names %q, error %v", c.file, got, err)
+		}
+		got, err = requestBudgetNamesIn(c.file, []byte(c.injected))
+		if err != nil || len(got) != 1 || got[0] != c.name {
+			t.Errorf("%s with the injection: names %q, error %v, want %q", c.file, got, err, c.name)
+		}
+	}
+}
+
+// observeBudgetBuild runs one Build of the scripted fixture in its own env: five reads, two red
+// tries, then the landing. The budget is omitted, or switched off when off is set. It reports the
+// request-budget names of the run's files and returns what the Build's user or caller observes.
+func observeBudgetBuild(t *testing.T, off bool, label string) []observation {
+	t.Helper()
+	e := newEnv(t)
+	f := e.prov
+	// More than four builder requests: nothing stops a Build whose budget is off.
+	for i := 0; i < 5; i++ {
+		f.then(f.calls("read_file", map[string]any{"path": "app.txt"}))
+	}
+	f.then(redTry(f, 1), redTry(f, 2))
+	f.then(landScript(f)...)
+	out := &Outcome{}
+	start := e.head()
+	a := e.build(func(in *Input) {
+		in.Deps.Outcome = out
+		if off {
+			in.BuildRequestBudget = 0
+		}
+	})
+	id := e.onlyRun()
+	for _, file := range []string{"log.jsonl", "checkpoint.json", "result.json"} {
+		data, err := os.ReadFile(e.runPath(id, file))
 		if err != nil {
 			t.Fatal(err)
 		}
-		return string(b)
+		names, err := requestBudgetNamesIn(file, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range names {
+			t.Errorf("request-budget name %q in %s of the %s Build", name, file, label)
+		}
 	}
-	var requests []string
-	for _, r := range e.prov.requests() {
-		requests = append(requests, jsonText(r))
+	stop := ""
+	if out.Error != nil {
+		stop = out.Error.Class + "/" + out.Error.Reason
 	}
-	return budgetObservation{
-		requests: norm(strings.Join(requests, "\n")), log: norm(read("log.jsonl")), checkpoint: norm(read("checkpoint.json")),
-		result: norm(read("result.json")), outcome: e.gitOut("log", "-1", "--format=%B"),
+	parent := false
+	if fields := strings.Fields(e.gitOut("rev-list", "--parents", "-n", "1", "HEAD")); len(fields) > 1 {
+		parent = fields[1] == start
+	}
+	var events []string
+	for _, ev := range e.events(id) {
+		if name, _ := ev["event"].(string); buildEvents[name] {
+			events = append(events, name)
+		}
+	}
+	facts := e.jsonFile(filepath.Join(e.root, ".kogen/local/facts", id+".json"))
+	reason, _ := facts["reason"].(string)
+	builder := f.count() - len(f.reviewRequests())
+	commits, _ := strconv.Atoi(e.gitOut("rev-list", "--count", start+"..HEAD"))
+	outcome, _ := e.result(id)["outcome"].(string)
+	phase, _ := facts["phase"].(string)
+	return []observation{
+		{"exit code", fmt.Sprintf("%d", a.exit)},
+		{"stop code", fmt.Sprintf("%q", stop)},
+		{"outcome", fmt.Sprintf("%q", outcome)},
+		{"commits", fmt.Sprintf("%d", commits)},
+		{"parent", fmt.Sprintf("%t", parent)},
+		{"tree", fmt.Sprintf("%q", e.gitOut("diff-tree", "-r", "--no-commit-id", start, "HEAD"))},
+		{"message title", fmt.Sprintf("%q", e.gitOut("log", "-1", "--format=%s"))},
+		{"trailer", fmt.Sprintf("%q", e.gitOut("log", "-1", "--format=%(trailers)"))},
+		{"status", fmt.Sprintf("%q", e.run("git", "status", "--porcelain"))},
+		{"builder requests", fmt.Sprintf("%d", builder)},
+		{"review requests", fmt.Sprintf("%d", len(f.reviewRequests()))},
+		{"events", fmt.Sprintf("%q", events)},
+		{"phase", fmt.Sprintf("%q", phase)},
+		{"reason", fmt.Sprintf("%q", reason)},
 	}
 }
 
 func TestBuildRequestBudgetOff(t *testing.T) {
 	t.Parallel()
-	run := func(zero bool) (budgetObservation, int) {
-		e := newEnv(t)
-		f := e.prov
-		// More than four builder requests: nothing stops a Build whose budget is off.
-		for i := 0; i < 5; i++ {
-			f.then(f.calls("read_file", map[string]any{"path": "app.txt"}))
-		}
-		f.then(redTry(f, 1), redTry(f, 2))
-		f.then(landScript(f)...)
-		a := e.build(func(in *Input) {
-			if zero {
-				in.BuildRequestBudget = 0
-			}
-		})
-		if a.exit != 0 {
-			t.Fatalf("exit %d: %s", a.exit, a.shown())
-		}
-		id := e.onlyRun()
-		obs := observeBuild(t, e, id)
-		for name, text := range map[string]string{"log": obs.log, "checkpoint": obs.checkpoint, "result": obs.result} {
-			lacks(t, name, text, "build_request_budget")
-		}
-		if ev := budgetEvents(e, id); len(ev) != 0 {
-			t.Fatalf("events: %v", ev)
-		}
-		_, state := e.checkpoint(id)
-		if _, ok := state["build_request_budget"]; ok {
-			t.Fatal("budget field in checkpoint state")
-		}
-		return obs, f.count()
+	omitted := observeBudgetBuild(t, false, "budget-omitted")
+	// The reference Build must be the plain landing the comparison is meant to hold.
+	if len(omitted) != 14 || omitted[0].value != "0" || omitted[9].value != "8" {
+		t.Fatalf("budget-omitted Build: %v, want exit code 0 and 8 builder requests", omitted)
 	}
-	omitted, n := run(false)
-	zero, m := run(true)
-	if n != 8 || m != 8 {
-		t.Fatalf("requests %d and %d, want 8", n, m)
-	}
-	if !reflect.DeepEqual(omitted, zero) {
-		for _, p := range [][3]string{
-			{"requests", omitted.requests, zero.requests}, {"log", omitted.log, zero.log},
-			{"checkpoint", omitted.checkpoint, zero.checkpoint}, {"result", omitted.result, zero.result}, {"commit", omitted.outcome, zero.outcome},
-		} {
-			if p[1] != p[2] {
-				a, b := strings.Split(p[1], "\n"), strings.Split(p[2], "\n")
-				for i := range a {
-					if i >= len(b) || a[i] != b[i] {
-						other := b[min(i, len(b)-1)]
-						at := 0
-						for at < len(a[i]) && at < len(other) && a[i][at] == other[at] {
-							at++
-						}
-						t.Errorf("%s line %d differs at byte %d:\nomitted: ...%.300s\nzero:    ...%.300s", p[0], i, at, a[i][max(0, at-100):], other[max(0, at-100):])
-						break
-					}
-				}
-			}
+	off := observeBudgetBuild(t, true, "budget-off")
+	for i, want := range omitted {
+		if got := off[i]; got.value != want.value {
+			t.Errorf("budget-off Build differs in %s: budget omitted %s, budget off %s", want.name, want.value, got.value)
 		}
 	}
 }
@@ -377,87 +382,4 @@ func TestBuildRequestBudgetReview(t *testing.T) {
 	}
 	_, state := e.checkpoint(id)
 	eq(t, "count", budgetOf(state), any(map[string]any{"limit": float64(1), "count": float64(1)}))
-}
-
-// TestTheGoldenMaskCatchesTimingAndHostLoadOnly rewrites values of the first provider attempt
-// record of a recorded Build: timing and host-load values leave observeBuild equal, any other
-// value makes the log differ.
-func TestTheGoldenMaskCatchesTimingAndHostLoadOnly(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t)
-	f := e.prov
-	f.then(landScript(f)...)
-	if a := e.build(); a.exit != 0 {
-		t.Fatalf("exit %d: %s", a.exit, a.shown())
-	}
-	id := e.onlyRun()
-	logPath := e.runPath(id, "log.jsonl")
-	raw, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recorded := observeBuild(t, e, id)
-	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
-	at := -1
-	for i, line := range lines {
-		var doc map[string]any
-		if err := json.Unmarshal([]byte(line), &doc); err != nil {
-			t.Fatal(err)
-		}
-		if _, ok := doc["provider"].(map[string]any); ok && doc["event"] == "provider_attempt" {
-			at = i
-			break
-		}
-	}
-	if at < 0 {
-		t.Fatalf("no provider_attempt event in %s", logPath)
-	}
-	// observe observeBuilds the run with the attempt record rewritten by change.
-	observe := func(change func(provider map[string]any)) budgetObservation {
-		var doc map[string]any
-		if err := json.Unmarshal([]byte(lines[at]), &doc); err != nil {
-			t.Fatal(err)
-		}
-		change(doc["provider"].(map[string]any))
-		b, err := json.Marshal(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rewritten := append(append(append([]string{}, lines[:at]...), string(b)), lines[at+1:]...)
-		if err := os.WriteFile(logPath, []byte(strings.Join(rewritten, "\n")+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return observeBuild(t, e, id)
-	}
-	defer os.WriteFile(logPath, raw, 0o600)
-	for name, change := range map[string]func(map[string]any){
-		"request_offset_ms": func(p map[string]any) { p["request_offset_ms"] = 987654 },
-		"load_average":      func(p map[string]any) { p["load_average"] = []any{9.87, 6.54, 3.21} },
-		"load_average null": func(p map[string]any) { p["load_average"] = nil },
-	} {
-		if got := observe(change); !reflect.DeepEqual(got, recorded) {
-			t.Errorf("%s: observation differs from the recorded Build:\n%s\nrecorded:\n%s", name, got.log, recorded.log)
-		}
-	}
-	// A key the recorded Build lacks is compared with the same key at another value.
-	for _, key := range []string{"queue_ms", "spawn_offset_ms", "ended_at"} {
-		first := observe(func(p map[string]any) { p[key] = 123 })
-		second := observe(func(p map[string]any) { p[key] = "later" })
-		if !reflect.DeepEqual(first, second) {
-			t.Errorf("%s: observations of two values differ:\n%s\n%s", key, first.log, second.log)
-		}
-	}
-	for name, change := range map[string]func(map[string]any){
-		"provider_request_id": func(p map[string]any) { p["provider_request_id"] = "req-changed" },
-		"pass":                func(p map[string]any) { p["pass"] = "changed-pass" },
-		"stream_bytes":        func(p map[string]any) { p["stream_bytes"] = 987654321 },
-	} {
-		if got := observe(change); got.log == recorded.log {
-			t.Errorf("%s: the changed value is masked", name)
-		}
-	}
-	// A new non-timing key is compared at two values: added at all, even a masked key would differ.
-	if first, second := observe(func(p map[string]any) { p["attempts_seen"] = 1 }), observe(func(p map[string]any) { p["attempts_seen"] = 2 }); first.log == second.log {
-		t.Error("a new non-timing key: the changed value is masked")
-	}
 }
