@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KogenAI/kogen-loop/provider"
 	"github.com/KogenAI/kogen-loop/sys"
@@ -267,6 +268,77 @@ func TestToolsCallFieldsAndArguments(t *testing.T) {
 		}
 	default:
 		t.Errorf("tools.DecodeArguments: start_line is a %T", n)
+	}
+}
+
+// kogen-build's tests drive the shell wait of the native tools on controlled time through
+// tools.Tools.ShellAfter (build/executor_native.go, build/host.go): the wait is passed to it, a value
+// received from the channel it returns is the wait elapsing, a command still running then yields a
+// running result with a handle, and retrieving that handle once the command finished returns the
+// completed result with the command's later output. The loop's own wait values are not relied on.
+func TestToolsShellAfterYieldsARunningCommandAndItsHandleCompletes(t *testing.T) {
+	var _ func(time.Duration) <-chan time.Time = tools.Tools{}.ShellAfter
+
+	s, root, _ := newSession(t)
+	release := filepath.Join(t.TempDir(), "release")
+	var waits []time.Duration
+	tl := &tools.Tools{
+		Root: root, Session: s, Enabled: []string{"shell"},
+		ShellAfter: func(wait time.Duration) <-chan time.Time {
+			waits = append(waits, wait)
+			ch := make(chan time.Time, 1)
+			if len(waits) == 1 {
+				ch <- time.Now()
+			}
+			return ch
+		},
+	}
+	type result struct {
+		Status     string `json:"status"`
+		Handle     string `json:"handle"`
+		Output     string `json:"output"`
+		ExitStatus *int   `json:"exit_status"`
+	}
+	decode := func(what, text string) result {
+		t.Helper()
+		var r result
+		if err := json.Unmarshal([]byte(text), &r); err != nil {
+			t.Fatalf("tools.Tools.ShellAfter: %s = %q, not JSON: %v", what, text, err)
+		}
+		return r
+	}
+
+	command := "while [ ! -e '" + release + "' ]; do sleep 0.05; done; printf 'later\\n'"
+	first := decode("a value on the returned channel", run(t, tl, "shell", map[string]any{"command": command}))
+	if first.Status != "running" || first.Handle == "" || first.Output != "" {
+		t.Fatalf("tools.Tools.ShellAfter: a value on the returned channel gave %+v, want a running result with a handle and no output", first)
+	}
+	if len(waits) != 1 || waits[0] <= 0 {
+		t.Fatalf("tools.Tools.ShellAfter: asked for the waits %v, want one positive wait", waits)
+	}
+
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan string, 1)
+	go func() {
+		out, err := tl.Run("shell", map[string]any{"handle": first.Handle})
+		if err != nil {
+			out.Text = "error: " + err.Error()
+		}
+		done <- out.Text
+	}()
+	select {
+	case text := <-done:
+		got := decode("the retrieval of the handle", text)
+		if got.Status != "completed" || got.Handle != first.Handle || got.ExitStatus == nil || *got.ExitStatus != 0 || got.Output != "later\n" {
+			t.Errorf("tools.Tools.ShellAfter: the retrieval gave %+v, want completed with exit status 0 and output \"later\\n\"", got)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("tools.Tools.ShellAfter: the retrieval did not return when the command completed")
+	}
+	if len(waits) != 2 {
+		t.Errorf("tools.Tools.ShellAfter: asked for the waits %v, want two", waits)
 	}
 }
 

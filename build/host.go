@@ -71,7 +71,7 @@ func (b *Attempt) reviewInput(pass verify.Pass) review.Input {
 	in.Evidence.BaselineFailing = len(b.baselineFailures()) > 0
 	in.Tools = review.Tools{
 		Native: func(enabled []string) *tools.Tools {
-			return &tools.Tools{Root: b.Root, Session: b.s, Repo: agent.Git(b.repo), Enabled: enabled, Protected: b.Baseline, Excluded: b.Excluded}
+			return &tools.Tools{Root: b.Root, Session: b.s, Repo: agent.Git(b.repo), Enabled: enabled, Protected: b.Baseline, Excluded: b.Excluded, ShellAfter: b.deps.shellAfter}
 		},
 		Record: func(call tools.Call, result tools.Output) map[string]any {
 			return b.toolRecordFields(call, result, b.reviewPartID)

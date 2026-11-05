@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/core"
@@ -35,6 +36,11 @@ type Deps struct {
 	// the conversation with a read ledger instead of the newest exchange, and a re-opened review
 	// gets no pinned source prefill (readledger.go).
 	ReadLedger bool
+	// shellAfter is a test seam that production leaves nil. It is passed as the native tools'
+	// tools.Tools.ShellAfter, so a test controls when the loop's shell wait elapses. It is no CLI
+	// flag, project.yaml key, environment variable or checkpoint field; being unexported, only
+	// tests in this package set it.
+	shellAfter func(wait time.Duration) <-chan time.Time
 
 	// BuildBriefMaxFiles and BuildBriefMaxReadmeBytes cap optional native context.
 	// Nonpositive values leave the corresponding context uncapped.

@@ -46,8 +46,8 @@ A use is every identifier in kogen-build's own non-test Go code (the packages `b
 `pkg.Name`, or to a method or field of one of its named types, named `pkg.Type.Member` by the type
 that declares the member. Import aliases, type aliases and re-exports (`build/core_names.go`) and
 members reached through returned values and struct fields are therefore counted. The uses were
-listed per dependency and package with this go/types listing (563 at HEAD: 112 kogen-coordinator,
-139 kogen-executor, 137 kogen-loop, 104 kogen-review, 71 kogen-verification) and compared with
+listed per dependency and package with this go/types listing (564 at HEAD: 112 kogen-coordinator,
+139 kogen-executor, 138 kogen-loop, 104 kogen-review, 71 kogen-verification) and compared with
 the identifiers each suite's tests name inside their bodies, using the same go/types resolution.
 The inventory below holds one row per use, under its suite: the use and the tests whose bodies name
 it (the tests that assert it, and any that only arrange another assertion with it).
@@ -449,13 +449,14 @@ it (the tests that assert it, and any that only arrange another assertion with i
 | `tools.ReadEvent` | TestToolsReadEventOfAnImageAndOfText |
 | `tools.ReadFileTool` | TestToolsRunsTheBuildersCalls |
 | `tools.Replay` | TestToolsReplayKeepsWhatTheProviderAcceptsBack |
-| `tools.Tools` | TestLoopRunEngineOrderAndHookArguments, TestLoopRunReturnsTheInterruptOfAShellCall, TestLoopRunStopsTheProcessGroupsOfTheRound, TestToolsDeliverReportsWhatBecameOfTheImages, TestToolsReadEventOfAnImageAndOfText, TestToolsRunsTheBuildersCalls |
+| `tools.Tools` | TestLoopRunEngineOrderAndHookArguments, TestLoopRunReturnsTheInterruptOfAShellCall, TestLoopRunStopsTheProcessGroupsOfTheRound, TestToolsDeliverReportsWhatBecameOfTheImages, TestToolsReadEventOfAnImageAndOfText, TestToolsRunsTheBuildersCalls, TestToolsShellAfterYieldsARunningCommandAndItsHandleCompletes |
 | `tools.Tools.Enabled` | TestLoopRunReturnsTheInterruptOfAShellCall, TestLoopRunStopsTheProcessGroupsOfTheRound, TestToolsDeliverReportsWhatBecameOfTheImages, TestToolsReadEventOfAnImageAndOfText, TestToolsRunsTheBuildersCalls |
 | `tools.Tools.Excluded` | TestToolsReadEventOfAnImageAndOfText, TestToolsRunsTheBuildersCalls |
 | `tools.Tools.Protected` | TestToolsRunsTheBuildersCalls |
 | `tools.Tools.Repo` | TestToolsReadEventOfAnImageAndOfText, TestToolsRunsTheBuildersCalls |
-| `tools.Tools.Root` | TestLoopRunReturnsTheInterruptOfAShellCall, TestLoopRunStopsTheProcessGroupsOfTheRound, TestToolsDeliverReportsWhatBecameOfTheImages, TestToolsReadEventOfAnImageAndOfText, TestToolsRunsTheBuildersCalls |
-| `tools.Tools.Session` | TestLoopRunReturnsTheInterruptOfAShellCall, TestLoopRunStopsTheProcessGroupsOfTheRound, TestToolsDeliverReportsWhatBecameOfTheImages, TestToolsReadEventOfAnImageAndOfText, TestToolsRunsTheBuildersCalls |
+| `tools.Tools.Root` | TestLoopRunReturnsTheInterruptOfAShellCall, TestLoopRunStopsTheProcessGroupsOfTheRound, TestToolsDeliverReportsWhatBecameOfTheImages, TestToolsReadEventOfAnImageAndOfText, TestToolsRunsTheBuildersCalls, TestToolsShellAfterYieldsARunningCommandAndItsHandleCompletes |
+| `tools.Tools.Session` | TestLoopRunReturnsTheInterruptOfAShellCall, TestLoopRunStopsTheProcessGroupsOfTheRound, TestToolsDeliverReportsWhatBecameOfTheImages, TestToolsReadEventOfAnImageAndOfText, TestToolsRunsTheBuildersCalls, TestToolsShellAfterYieldsARunningCommandAndItsHandleCompletes |
+| `tools.Tools.ShellAfter` | TestToolsShellAfterYieldsARunningCommandAndItsHandleCompletes |
 
 ### kogen-review
 
