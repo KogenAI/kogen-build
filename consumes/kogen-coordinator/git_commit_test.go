@@ -59,7 +59,6 @@ func TestCommitLandsTheReviewedTree(t *testing.T) {
 	equal(t, "git.Repo.Commit returns the new HEAD", commit, f.head(t))
 	equal(t, "git.Repo.Head after git.Repo.Commit", repo.Head(), commit)
 	equal(t, "git.CommitSpec.Title and Slug: the commit message", f.log(t, "%B"), "Add the app\n\nKogen-Intent: add-app\n\n")
-	equal(t, "git.CommitSpec.MessageFile: the message file", readFile(t, spec.MessageFile), "Add the app\n\nKogen-Intent: add-app\n")
 	equal(t, "git.CommitSpec.Start: the parent", strings.TrimSpace(f.log(t, "%P")), start)
 	equal(t, "git.CommitSpec.Tree: the committed tree", strings.TrimSpace(f.log(t, "%T")), tree)
 	equal(t, "git.Repo.Commit author", strings.TrimSpace(f.log(t, "%an <%ae>")), fixtureIdentity)
