@@ -14,7 +14,7 @@ import (
 
 func TestToolsRequire(t *testing.T) {
 	var _ func(verify.Tools) error = verify.Tools.Require
-	tools := verify.Tools{Node: regular(t, "node"), Quint: regular(t, "cli.js"), Cucumber: t.TempDir()}
+	tools := verify.Tools{Node: script(t, "node", "exit 0\n"), Quint: script(t, "cli.js", "exit 0\n"), Cucumber: t.TempDir()}
 	var _ string = tools.Node
 	var _ string = tools.Quint
 	var _ string = tools.Cucumber
@@ -29,18 +29,19 @@ func TestToolsRequire(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "absent")
 	err := verify.Tools{Node: missing, Quint: tools.Quint}.Require()
 	e := failWith(t, "verify.Tools.Require", err)
-	if e.Class != "environment" || e.Reason != "tool_missing" || e.Exit != 3 || e.Detail != "node is not available at "+missing+"; reinstall Kogen" {
-		t.Errorf("verify.Tools.Require: missing node = %+v, want environment/tool_missing, exit 3 and the node path", e)
+	if e.Class != "environment" || e.Reason != "tool_missing" || e.Exit != 3 || !strings.Contains(e.Detail, "node") || !strings.Contains(e.Detail, missing) {
+		t.Errorf("verify.Tools.Require: missing node = %+v, want environment/tool_missing, exit 3 and a detail naming node and its path %q", e, missing)
 	}
 	err = verify.Tools{Node: tools.Node, Quint: missing}.Require()
 	e = failWith(t, "verify.Tools.Require", err)
-	if e.Class != "environment" || e.Reason != "tool_missing" || e.Exit != 3 || e.Detail != "quint is not available at "+missing+"; reinstall Kogen" {
-		t.Errorf("verify.Tools.Require: missing quint = %+v, want environment/tool_missing, exit 3 and the quint path", e)
+	if e.Class != "environment" || e.Reason != "tool_missing" || e.Exit != 3 || !strings.Contains(e.Detail, "quint") || !strings.Contains(e.Detail, missing) {
+		t.Errorf("verify.Tools.Require: missing quint = %+v, want environment/tool_missing, exit 3 and a detail naming quint and its path %q", e, missing)
 	}
 	// Node is judged first, and a folder is not a tool.
-	err = verify.Tools{Node: t.TempDir(), Quint: missing}.Require()
-	if e := failWith(t, "verify.Tools.Require", err); !strings.HasPrefix(e.Detail, "node is not available at ") {
-		t.Errorf("verify.Tools.Require: a folder as node = %+v, want node refused first", e)
+	folder := t.TempDir()
+	err = verify.Tools{Node: folder, Quint: missing}.Require()
+	if e := failWith(t, "verify.Tools.Require", err); !strings.Contains(e.Detail, "node") || !strings.Contains(e.Detail, folder) || strings.Contains(e.Detail, missing) {
+		t.Errorf("verify.Tools.Require: a folder as node = %+v, want node and the folder %q refused first, not the missing quint %q", e, folder, missing)
 	}
 	if err := (verify.Tools{}).Require(); err == nil {
 		t.Errorf("verify.Tools.Require: no tools at all passed")

@@ -160,16 +160,6 @@ func script(t *testing.T, name, body string) string {
 	return path
 }
 
-// regular writes a regular file in a new temporary folder and returns its path.
-func regular(t *testing.T, name string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte("// stand-in\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
 // writeReport writes a Cucumber Messages report with one case per expected scenario, every
 // step PASSED, or all of them with the given status (FAILED carries a message), and returns
 // its path.
