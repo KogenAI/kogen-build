@@ -13,8 +13,8 @@ import (
 	"github.com/KogenAI/kogen-verification/verify"
 )
 
-// The parts source is today's source with only its third section changed: a changed text file is
-// listed by its heading alone, and every other kind of path stays as in the source of one session.
+// The parts source is the source of one session: a changed text file is listed by its heading alone
+// (its hunks are in the diff), and every other kind of path is listed once.
 func TestPartsSourceOmitsChangedFileTexts(t *testing.T) {
 	t.Parallel()
 	root := physical(t, t.TempDir())
@@ -74,18 +74,14 @@ func TestPartsSourceOmitsChangedFileTexts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const third = "# Full text of every changed or added file\n\n"
-	full, tail, ok := strings.Cut(m.Source, third)
-	if !ok {
-		t.Fatalf("the source has no third section:\n%s", m.Source)
-	}
-	parts, partsTail, ok := strings.Cut(m.PartsSource, "# Full text of every added file\n\n")
+	eq(t, "source and parts source", m.Source, m.PartsSource)
+	const third = "# Full text of every added file\n\n"
+	parts, partsTail, ok := strings.Cut(m.PartsSource, third)
 	if !ok {
 		t.Fatalf("the parts source has no third section:\n%s", m.PartsSource)
 	}
-	eq(t, "check results and diff", parts, full)
-	contains(t, "tail of the source", tail, "--- app.txt\nline one\nnew marker\nline three\n")
-	contains(t, "tail of the source", m.PartsSource, "Newly added files appear here once, with their mode, instead of being repeated in the diff. A changed file's hunks are in the diff above and its full text is in the checkout, so only its heading is listed here.\n\n")
+	contains(t, "check results and diff", parts, "-old marker\n+new marker\n")
+	contains(t, "parts source", m.PartsSource, "Added files appear here with their mode; changed files have hunks in the diff.\n\n")
 	lacks(t, "parts source", m.PartsSource, "new marker\nline three")
 
 	body := partsTail[strings.Index(partsTail, "\n\n")+2:]
@@ -93,7 +89,7 @@ func TestPartsSourceOmitsChangedFileTexts(t *testing.T) {
 		"--- .kogen/intents/fixture/acceptance.feature (added; mode 100644)",
 		"Feature: Gen",
 		"",
-		"--- app.txt (changed; full text in the checkout)",
+		"--- app.txt (changed; hunks in diff)",
 		"--- gone.txt (deleted)",
 		"--- new.bin (added; mode 100644) (binary)",
 		"--- new.txt (added; mode 100644)",

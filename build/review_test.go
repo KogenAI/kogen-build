@@ -137,7 +137,7 @@ func TestTheReviewerApprovesUnchangedCodeWithoutRepairs(t *testing.T) {
 		t.Fatalf("%d review requests", len(reqs))
 	}
 	req := reqs[0]
-	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Replace(requestInstructions(req), "\n"+review.LimitRaises+"\n", "", 1)))); got != "be749a3351e36364c3b4254e1df7b8545523684741a5702a4109263308392d95" {
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Replace(requestInstructions(req), "\n"+review.LimitRaises+"\n", "", 1)))); got != "345eb0281e2330ba1bf3de62528693cf34d7b3963e91bf332231c94492c4d2bb" {
 		t.Fatalf("emitted reviewer prompt hash = %s", got)
 	}
 	// A fresh conversation: one opening message, the reviewer's tools, no builder replay.
@@ -166,8 +166,8 @@ func TestTheReviewerApprovesUnchangedCodeWithoutRepairs(t *testing.T) {
 	}
 	for _, part := range []string{
 		"# Check results of the final pass\n\nacceptance: passed (2 scenarios)\nmodel: not applicable\n\n# Diff of existing/deleted paths against start HEAD " + short(start),
-		"-baseline\n+candidate\n", "# Full text of every changed or added file\n\nNewly added files appear here once, with their mode, instead of being repeated in the diff.\n\n--- .kogen/intents/fixture/acceptance.feature (added; mode 100644)\nFeature: Integration fixture\n",
-		"\n--- app.txt\ncandidate\n\n--- features/steps/integration_steps.js (added; mode 100644)\n// steps\n",
+		"-baseline\n+candidate\n", "# Full text of every added file\n\nAdded files appear here with their mode; changed files have hunks in the diff.\n\n--- .kogen/intents/fixture/acceptance.feature (added; mode 100644)\nFeature: Integration fixture\n",
+		"\n--- app.txt (changed; hunks in diff)\n--- features/steps/integration_steps.js (added; mode 100644)\n// steps\n",
 	} {
 		contains(t, "source", source, part)
 	}
@@ -874,16 +874,18 @@ func TestTheReviewerReadsTheFullSourceAndNewFilesAppearOnce(t *testing.T) {
 	eq(t, "new-source-sentinel", count("new-source-sentinel"), 1)
 	contains(t, "material", material, "100755")
 	contains(t, "material", material, "--- new-data.bin (added; mode 100644) (binary)")
-	contains(t, "material", material, "deleted file mode 100644")
-	contains(t, "material", material, "--- rename-from.txt (deleted)")
-	contains(t, "material", material, "--- rename-to.txt (added; mode 100644)\nrenamed-source-sentinel")
+	contains(t, "material", material, "rename from rename-from.txt\nrename to rename-to.txt")
+	contains(t, "material", material, "--- rename-to.txt (from rename-from.txt) (changed; hunks in diff)")
+	lacks(t, "material", material, "--- rename-from.txt (deleted)")
+	eq(t, "renamed-source-sentinel", count("renamed-source-sentinel"), 0)
 	submodule := strings.TrimSpace(e.run("git", "-C", "new-submodule", "rev-parse", "HEAD"))
 	contains(t, "material", material, "--- new-submodule (added; mode 160000)\nSubproject commit "+submodule)
 	lacks(t, "material", material, "--- new-submodule (deleted)")
 	contains(t, "material", material, "-old marker")
 	contains(t, "material", material, "+new marker")
-	contains(t, "material", material, after)
-	eq(t, "outside-diff-sentinel", count("outside-diff-sentinel"), 1)
+	// A changed file is in the source by its hunks: its full text is read in the checkout.
+	lacks(t, "material", material, after)
+	eq(t, "outside-diff-sentinel", count("outside-diff-sentinel"), 0)
 }
 
 // readPinned reads, one per response, the source parts pinned in the run folders, then approves.
@@ -1034,7 +1036,9 @@ func materialEventsOf(events []map[string]any, review int) []map[string]any {
 	return out
 }
 
-func bigFile() string { return strings.Repeat("0123456789abcdef-line\n", 14_000) }
+// bigFile is a candidate whose diff alone, a changed file's text no longer being repeated in the
+// review source, does not fit the reviewer's working window and is pinned as private parts.
+func bigFile() string { return strings.Repeat("0123456789abcdef-line\n", 28_000) }
 
 // TestLargeSourceIsDeliveredAsPinnedPartsAndMustBeReadBeforeApproval: a candidate whose review
 // source does not fit the reviewer's window is pinned as private part files that together hold
@@ -1090,7 +1094,7 @@ func TestLargeSourceIsDeliveredAsPinnedPartsAndMustBeReadBeforeApproval(t *testi
 		source.WriteString(doc.ReviewSource.Text)
 	}
 	contains(t, "source", source.String(), "# Diff of existing/deleted paths against start HEAD "+short(e.gitOut("rev-parse", "HEAD^")))
-	contains(t, "source", source.String(), "--- app.txt\n"+content)
+	contains(t, "source", source.String(), "+"+strings.ReplaceAll(strings.TrimSuffix(content, "\n"), "\n", "\n+"))
 
 	// Every request fits the working window kogen-build keeps.
 	for _, req := range f.requests() {

@@ -65,7 +65,7 @@ func TestMaterialSetIsMadeByTheReviewFromItsInput(t *testing.T) {
 	if !strings.HasPrefix(m.Source, "# Check results of the final pass\n\n"+m.Checks+"\n\n# Diff of existing/deleted paths against start HEAD "+f.start[:8]+"\n\n") {
 		t.Errorf("review.MaterialSet.Source starts: %q", m.Source[:min(len(m.Source), 200)])
 	}
-	for _, want := range []string{"diff --git a/app.txt b/app.txt", "-start\n+candidate\n", "deleted file mode 100644", "--- app.txt\ncandidate\n", "--- deleted.txt (deleted)"} {
+	for _, want := range []string{"diff --git a/app.txt b/app.txt", "-start\n+candidate\n", "deleted file mode 100644", "--- app.txt (changed; hunks in diff)", "--- deleted.txt (deleted)"} {
 		if !strings.Contains(m.Source, want) {
 			t.Errorf("review.MaterialSet.Source lacks %q", want)
 		}
@@ -74,8 +74,8 @@ func TestMaterialSetIsMadeByTheReviewFromItsInput(t *testing.T) {
 	appObject := git(t, f.root, "rev-parse", f.green+":app.txt")
 	deletedObject := git(t, f.root, "rev-parse", f.start+":deleted.txt")
 	deepEq(t, "review.MaterialSet.Files", m.Files, []map[string]any{
-		{"path": "app.txt", "status": "changed", "mode": "100644", "git_object": appObject, "bytes": 10, "sha256": core.HashHex([]byte("candidate\n"))},
-		{"path": "deleted.txt", "status": "deleted", "mode": "100644", "git_object": deletedObject, "bytes": 5, "sha256": core.HashHex([]byte("gone\n"))},
+		{"path": "app.txt", "status": "changed", "origin": "", "rename": false, "mode": "100644", "git_object": appObject, "bytes": 10, "sha256": core.HashHex([]byte("candidate\n"))},
+		{"path": "deleted.txt", "status": "deleted", "origin": "", "rename": false, "mode": "100644", "git_object": deletedObject, "bytes": 5, "sha256": core.HashHex([]byte("gone\n"))},
 	})
 }
 

@@ -152,11 +152,11 @@ var heavyAllowanceCases []func(t *testing.T, kit allowanceKit)
 // pinned232 is a changed file whose review source pins exactly 232 source parts (the S-DECREL
 // shape): Kogen carries the parts in native prefill messages that count only once a completed
 // response follows them.
-func pinned232() string { return strings.Repeat("0123456789abcdef-line\n", 30_800) }
+func pinned232() string { return strings.Repeat("0123456789abcdef-line\n", 60_240) }
 
 // pinned113 pins 113 parts: still more than the native prefill of one request carries, at a
 // fraction of the cost (every tool call and request rescans every part's custody).
-func pinned113() string { return strings.Repeat("0123456789abcdef-line\n", 15_000) }
+func pinned113() string { return strings.Repeat("0123456789abcdef-line\n", 29_280) }
 
 func reviewRetryToolOutputs(req map[string]any) []string {
 	var out []string

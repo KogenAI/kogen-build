@@ -196,7 +196,7 @@ func TestAReviewWhosePartsAndScreenshotsCannotShareAWindowConvergesOnItsDelivere
 		imageBytes += base64.StdEncoding.EncodedLen(len(data))
 	}
 	f := e.prov
-	content := strings.Repeat("0123456789abcdef-line\n", 4_100)
+	content := strings.Repeat("0123456789abcdef-line\n", 8_200)
 	f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": content}, "finish", map[string]any{"summary": "done"}))
 	confirming := confirmingReviewer(t, e, f, shots)
 	// Every read_file path the reviewer is scripted to call, recorded from its own responses.

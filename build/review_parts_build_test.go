@@ -321,8 +321,9 @@ func TestReviewInPartsMandatoryMaterialStopsBeforeSending(t *testing.T) {
 	}
 }
 
-// A one-line change in a large changed file is reviewed in one part carrying its hunk and not the
-// file's unchanged lines: the file's full text is read in the checkout.
+// A one-line change in a large changed file is reviewed in parts carrying its hunk once and not the
+// file's unchanged lines: the file's full text is read in the checkout. The added files are what
+// make the source exceed the ceiling, since the changed file contributes only its hunk.
 func TestReviewInPartsOmitsAChangedFilesFullText(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
@@ -343,10 +344,10 @@ func TestReviewInPartsOmitsAChangedFilesFullText(t *testing.T) {
 	e.approve()
 	start := e.head()
 	f := newLineupExec(t)
+	added := partsBuilder(t)
 	f.build = func(n int, root string, in executor.Input) (executor.RoundResult, error) {
-		lineupWriteApp(t, root, "candidate\n")
 		writeFile(t, filepath.Join(root, "golden.json"), changed.String(), 0o644)
-		return executor.RoundResult{Claim: "done"}, nil
+		return added(n, root, in)
 	}
 	f.review = func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error) {
 		return executor.RoundResult{Structured: verdictJSON("approve")}, nil
@@ -357,18 +358,18 @@ func TestReviewInPartsOmitsAChangedFilesFullText(t *testing.T) {
 	}
 	eq(t, "commits", e.commitsSince(start), "1")
 	tasks := f.starts[executor.RoleReview]
-	if len(tasks) != 1 {
-		t.Fatalf("%d review sessions, want one part", len(tasks))
+	if len(tasks) != 2 {
+		t.Fatalf("%d review sessions, want one per part of two", len(tasks))
 	}
-	text := tasks[0].Brief.Dynamic
-	contains(t, "part", text, "--- golden.json (changed; full text in the checkout)")
-	contains(t, "part", text, "+"+strings.TrimSuffix(line(7500, "regenerated value"), "\n"))
+	text := tasks[0].Brief.Dynamic + "\n" + tasks[1].Brief.Dynamic
+	contains(t, "part", tasks[0].Brief.Dynamic, "+"+strings.TrimSuffix(line(7500, "regenerated value"), "\n"))
+	contains(t, "parts", text, "--- golden.json (changed; hunks in diff)")
 	if n := strings.Count(text, strings.TrimSuffix(line(7500, "regenerated value"), "\n")); n != 1 {
 		t.Errorf("the regenerated line is sent %d times, want once", n)
 	}
 	if n := strings.Count(text, strings.TrimSuffix(line(1, "golden value"), "\n")); n > 1 {
 		t.Errorf("an unchanged line is sent %d times", n)
 	}
-	contains(t, "progress", a.out.String()+a.errs.String(), "kogen: reviewing (review 1) in 1 part: the complete review prompt would be ")
+	contains(t, "progress", a.out.String()+a.errs.String(), "kogen: reviewing (review 1) in 2 parts: the complete review prompt would be ")
 	contains(t, "task", tasks[0].Brief.Stable, "a changed file's full text is not repeated there: read it in the checkout")
 }

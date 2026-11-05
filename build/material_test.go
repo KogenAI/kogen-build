@@ -587,7 +587,7 @@ func TestTheAuthorityReadmeIsTheStartHeadsAndACheckoutEditIsOnlyCandidateData(t 
 		contains(t, "authority", authority, section("# Fixture project\n"))
 		lacks(t, "authority", authority, injected)
 		contains(t, "source", source, "+"+injected)
-		contains(t, "source", source, "--- README.md\n# Fixture project\n"+injected)
+		contains(t, "source", source, "--- README.md (changed; hunks in diff)")
 	})
 
 	t.Run("no README in the start HEAD", func(t *testing.T) {

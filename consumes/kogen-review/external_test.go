@@ -79,7 +79,7 @@ func TestExternalReviewApprovesInItsOwnSession(t *testing.T) {
 			t.Errorf("review.NewExternal brief stable lacks %q", want)
 		}
 	}
-	for _, want := range []string{"# Check results of the final pass", "diff --git a/app.txt b/app.txt", "--- app.txt\ncandidate\n"} {
+	for _, want := range []string{"# Check results of the final pass", "diff --git a/app.txt b/app.txt", "--- app.txt (changed; hunks in diff)"} {
 		if !strings.Contains(task.Brief.Dynamic, want) {
 			t.Errorf("review.NewExternal brief dynamic lacks %q", want)
 		}
