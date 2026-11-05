@@ -143,6 +143,14 @@ func TestBaselinePerBaseIdentity(t *testing.T) {
 	}
 	git(root, "add", ".")
 	git(root, "commit", "-qm", "base")
+	// Git gives a checkout modes of 0666/0777 &^ umask, so the main checkout's files are
+	// remade by git too: both checkouts then carry the modes of the umask the test runs under.
+	for _, name := range []string{"tracked", ".gitignore"} {
+		if err := os.Remove(filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(root, "checkout", "--", ".")
 	other := filepath.Join(t.TempDir(), "worktree")
 	git(root, "worktree", "add", "-q", "--detach", other, "HEAD")
 	checks := []project.Check{{Name: "a", Run: ":"}, {Name: "b", Run: "true"}}
@@ -177,11 +185,15 @@ func TestBaselinePerBaseIdentity(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "ignored")); err != nil {
 		t.Fatal(err)
 	}
+	trackedInfo, err := os.Stat(filepath.Join(root, "tracked"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(filepath.Join(root, "tracked"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	changed()
-	if err := os.Chmod(filepath.Join(root, "tracked"), 0644); err != nil {
+	if err := os.Chmod(filepath.Join(root, "tracked"), trackedInfo.Mode().Perm()); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(root, "link")); err != nil {
@@ -372,6 +384,11 @@ func TestBaselinePerBaseCustody(t *testing.T) {
 	}
 	git(root, "add", ".")
 	git(root, "commit", "-qm", "base")
+	// Remake the committed tree through git so its modes match a git checkout under the process umask.
+	if err := os.RemoveAll(filepath.Join(root, ".kogen")); err != nil {
+		t.Fatal(err)
+	}
+	git(root, "checkout", "--", ".")
 	other := filepath.Join(t.TempDir(), "worktree")
 	git(root, "worktree", "add", "-q", "--detach", other, "HEAD")
 	child := func(dir string) string {
