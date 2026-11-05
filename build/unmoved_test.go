@@ -73,6 +73,7 @@ func TestUnmovedSequence(t *testing.T) {
 }
 
 func TestUnmovedScopedFeedback(t *testing.T) {
+	t.Parallel()
 	e, _ := stagedEnv(t, []string{"echo scoped-failure; exit 1"})
 	for i := 1; i <= 3; i++ {
 		e.prov.then(e.prov.calls("write_file", map[string]any{"path": "unrelated.txt", "content": fmt.Sprint(i)}, "finish", map[string]any{"summary": "verify"}))
@@ -90,6 +91,7 @@ func TestUnmovedScopedFeedback(t *testing.T) {
 }
 
 func TestUnmovedExternalFeedback(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.useExecutor("")
 	f := newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {

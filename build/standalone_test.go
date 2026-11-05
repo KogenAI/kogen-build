@@ -15,6 +15,7 @@ import (
 )
 
 func TestStandaloneBuildEvidence(t *testing.T) {
+	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "kogen-build")
 	cmd := exec.Command("go", "build", "-o", bin, "../cmd/kogen-build")
 	if b, err := cmd.CombinedOutput(); err != nil {

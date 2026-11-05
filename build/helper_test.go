@@ -235,13 +235,10 @@ func newEnvIn(t *testing.T, root, home, aux string, gitEnv []string, mutate ...f
 	writeFile(t, filepath.Join(e.root, "app.txt"), "baseline\n", 0o644)
 	writeFile(t, filepath.Join(e.root, ".gitignore"), ".kogen/local/\n", 0o644)
 
-	green := filepath.Join(e.aux, "green.ndjson")
-	red := filepath.Join(e.aux, "red.ndjson")
-	feature := project.FeaturePath(testSlug)
-	writeFile(t, green, reportFor(t, feature, testFeature, "PASSED"), 0o644)
-	writeFile(t, red, reportFor(t, feature, testFeature, "FAILED"), 0o644)
 	accept := filepath.Join(e.aux, "accept.sh")
-	writeFile(t, accept, "#!/bin/sh\nif grep -qx red app.txt; then cp '"+red+"' \"$KOGEN_ACCEPTANCE_REPORT\"; echo actual-case-red; exit 1; fi\ncp '"+green+"' \"$KOGEN_ACCEPTANCE_REPORT\"\n", 0o755)
+	if err := os.Link(sharedAccept, accept); err != nil {
+		t.Fatal(err)
+	}
 	cfg := &project.Config{Acceptance: &project.Acceptance{Run: accept, StepsDir: "features/steps"}}
 	for _, m := range mutate {
 		m(cfg)
@@ -268,7 +265,7 @@ Acceptance:
 ## Feasibility
 - none
 `, 0o644)
-	writeFile(t, filepath.Join(e.root, feature), testFeature, 0o644)
+	writeFile(t, filepath.Join(e.root, project.FeaturePath(testSlug)), testFeature, 0o644)
 	writeFile(t, filepath.Join(e.root, stepsFile), "// steps\n", 0o644)
 	e.approve()
 	return e

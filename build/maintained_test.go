@@ -14,6 +14,7 @@ import (
 )
 
 func TestSuccessiveModelIntentsKeepIndependentSpecifications(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	original := e.read(project.IntentMDPath(testSlug))
 	model := "module fixture { val Safe = true }\n"
@@ -48,6 +49,10 @@ func TestSuccessiveModelIntentsKeepIndependentSpecifications(t *testing.T) {
 	e.write(project.FeaturePath(slug), testFeature)
 	green := filepath.Join(e.aux, "later.ndjson")
 	writeFile(t, green, reportFor(t, project.FeaturePath(slug), testFeature, "PASSED"), 0644)
+	// accept.sh is a link to the read-only script every fixture shares: replace it, never write through it.
+	if err := os.Remove(filepath.Join(e.aux, "accept.sh")); err != nil {
+		t.Fatal(err)
+	}
 	writeFile(t, filepath.Join(e.aux, "accept.sh"), "#!/bin/sh\ncp '"+green+"' \"$KOGEN_ACCEPTANCE_REPORT\"\n", 0755)
 	cfg, err := project.LoadConfig(e.root)
 	if err != nil {

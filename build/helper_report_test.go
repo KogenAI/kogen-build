@@ -62,9 +62,18 @@ func caseMessages(s project.Scenario, index int, feature string, results []obj) 
 // reportFor is the report of running every scenario of feature with the given step status.
 func reportFor(t *testing.T, feature, text, status string) string {
 	t.Helper()
-	scenarios, err := project.ParseGherkin(text)
+	report, err := reportText(feature, text, status)
 	if err != nil {
 		t.Fatal(err)
+	}
+	return report
+}
+
+// reportText is reportFor without a test, for TestMain.
+func reportText(feature, text, status string) (string, error) {
+	scenarios, err := project.ParseGherkin(text)
+	if err != nil {
+		return "", err
 	}
 	events := []obj{documentMessage(feature, scenarios)}
 	for i, s := range scenarios {
@@ -74,11 +83,11 @@ func reportFor(t *testing.T, feature, text, status string) string {
 	for i, e := range events {
 		b, err := core.EncodeJSON(e)
 		if err != nil {
-			t.Fatal(err)
+			return "", err
 		}
 		lines[i] = string(b)
 	}
-	return strings.Join(lines, "\n") + "\n"
+	return strings.Join(lines, "\n") + "\n", nil
 }
 
 func repeat(s string, n int) []string {

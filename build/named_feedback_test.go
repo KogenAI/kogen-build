@@ -258,6 +258,7 @@ func TestNamedFeedbackCompatibility(t *testing.T) {
 // the builder, native or external, ends with a blank line and the reminder; a scoped stage
 // gate's red feedback does not.
 func TestWholeIntentRedFeedbackEndsWithTheFinishReminder(t *testing.T) {
+	t.Parallel()
 	suffix := "\n\n" + finishReminder
 	_, native := compatCapture(t)
 	if !strings.HasSuffix(native, suffix) || strings.Count(native, finishReminder) != 1 {
