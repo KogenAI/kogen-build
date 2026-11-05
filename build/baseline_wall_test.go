@@ -120,8 +120,7 @@ func TestInterruptedBaselineCheckNamesTheBaseline(t *testing.T) {
 	e, marker, command := baselineStopEnv(t)
 	a, done := e.start()
 	t.Cleanup(func() { a.s.Interrupt("SIGTERM"); <-done })
-	waitForRunning(t, marker, done, a, 15*time.Second)
-	time.Sleep(200 * time.Millisecond)
+	waitForRunning(t, marker, done, a)
 	a.s.Interrupt("SIGTERM")
 	<-done
 	eq(t, "exit", a.exit, 143)
@@ -141,15 +140,17 @@ func TestErrorStopDuringBaselineCheckNamesTheBaseline(t *testing.T) {
 	go func() {
 		done <- buildRun(context.Background(), s, Input{Deps: e.deps(), Project: e.root, Slug: testSlug}, &b)
 	}()
-	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+	for {
 		if _, err := os.Stat(marker); err == nil {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("the baseline check never started")
+		select {
+		case err := <-done:
+			t.Fatalf("buildRun returned before %s appeared: %v", marker, err)
+		default:
 		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	time.Sleep(200 * time.Millisecond)
 	// The check is still running when the Build ends on an error stop (as command_no_progress does).
 	s.Interrupt("SIGTERM")
 	<-done

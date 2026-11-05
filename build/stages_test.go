@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 )
@@ -269,7 +268,7 @@ func TestInterruptingAStageGateRetainsNoCompletedEvidenceAndResumeRerunsSetupAnd
 	f.then(f.calls(stageWrite(f, "candidate")...), f.calls(stageFinish()...), refused())
 	a, done := e.start()
 	t.Cleanup(func() { a.s.Interrupt("SIGINT"); <-done })
-	waitForRunning(t, marker, done, a, 15*time.Second)
+	waitForRunning(t, marker, done, a)
 	a.s.Interrupt("SIGINT")
 	<-done
 	eq(t, "exit", a.exit, 130)

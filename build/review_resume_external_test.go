@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
@@ -200,7 +199,7 @@ func TestExternalBuilderReviewStageResumes(t *testing.T) {
 		in.Reviewer = nil
 	})
 	t.Cleanup(func() { a.s.Interrupt("SIGTERM"); <-done })
-	waitForRunning(t, paused, done, a, 120*time.Second)
+	waitForRunning(t, paused, done, a)
 	a.s.Interrupt("SIGTERM")
 	<-done
 	id := e.onlyRun()

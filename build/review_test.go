@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-review/review"
@@ -454,7 +453,7 @@ func TestAnInterruptedTargetedRepairReportsPendingReviewAndChangedVerification(t
 	)
 	a, done := e.startReviewed()
 	t.Cleanup(func() { a.s.Interrupt("SIGINT"); <-done })
-	waitForRunning(t, waiting, done, a, 30*time.Second)
+	waitForRunning(t, waiting, done, a)
 	a.s.Interrupt("SIGINT")
 	<-done
 	eq(t, "exit", a.exit, 130)
@@ -1273,7 +1272,7 @@ func TestAnInterruptedVerificationOfAReviewerRepairResumesWithoutANewRequest(t *
 	f.then(f.calls(append(writeApp("reviewer repair\n"), "submit_review", map[string]any{"verdict": "approve", "findings": []any{}})...))
 	a, done := e.startReviewed()
 	t.Cleanup(func() { a.s.Interrupt("SIGINT"); <-done })
-	waitForRunning(t, paused, done, a, 30*time.Second)
+	waitForRunning(t, paused, done, a)
 	a.s.Interrupt("SIGINT")
 	<-done
 	eq(t, "exit", a.exit, 130)

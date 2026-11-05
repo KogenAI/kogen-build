@@ -436,7 +436,8 @@ func TestNativeRoundMapsCancellationButKeepsTheSessionsInterrupt(t *testing.T) {
 	seedLogin(t, home)
 	prov := newFakeProvider(t)
 	marker := filepath.Join(t.TempDir(), "started")
-	prov.then(respondWith([]map[string]any{prov.call("shell", map[string]any{"command": "touch '" + marker + "'; sleep 30"}), prov.call("finish", map[string]any{"summary": "x"})}, nil))
+	release := releaseOnCleanup(t)
+	prov.then(respondWith([]map[string]any{prov.call("shell", map[string]any{"command": holdScript("touch '"+marker+"'", release)}), prov.call("finish", map[string]any{"summary": "x"})}, nil))
 	b := newConformanceAttempt(t, root, home, prov, true)
 	sess, _ := nativeExecutor{b: b}.Start(context.Background(), executor.Task{Brief: executor.Brief{Stable: "s", Dynamic: "d"}}, nil)
 	// The caller interrupts the Session once the shell child is running: the round returns the
@@ -450,7 +451,10 @@ func TestNativeRoundMapsCancellationButKeepsTheSessionsInterrupt(t *testing.T) {
 			<-done
 		}
 	})
-	waitFor(t, marker)
+	if err, ended := waitForRound(marker, done); ended {
+		finished = true
+		t.Fatalf("the round returned before %s appeared: %v", marker, err)
+	}
 	b.s.Interrupt("SIGTERM")
 	err := <-done
 	finished = true
@@ -467,7 +471,8 @@ func TestNativeShellContextCancellationStops(t *testing.T) {
 	seedLogin(t, home)
 	prov := newFakeProvider(t)
 	marker := filepath.Join(t.TempDir(), "started")
-	prov.then(respondWith([]map[string]any{prov.call("shell", map[string]any{"command": "echo started > '" + marker + "'; sleep 30"})}, nil))
+	release := releaseOnCleanup(t)
+	prov.then(respondWith([]map[string]any{prov.call("shell", map[string]any{"command": holdScript("echo started > '"+marker+"'", release)})}, nil))
 	b := newConformanceAttempt(t, root, home, prov, true)
 	sess, _ := nativeExecutor{b: b}.Start(context.Background(), executor.Task{Brief: executor.Brief{Stable: "s", Dynamic: "d"}}, nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -481,16 +486,10 @@ func TestNativeShellContextCancellationStops(t *testing.T) {
 			<-done
 		}
 	})
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(marker); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			cancel()
-			t.Fatal("shell did not start")
-		}
-		time.Sleep(10 * time.Millisecond)
+	if err, ended := waitForRound(marker, done); ended {
+		finished = true
+		cancel()
+		t.Fatalf("the round returned before %s appeared: %v", marker, err)
 	}
 	cancel()
 	err := <-done
@@ -523,7 +522,8 @@ func TestChecktimeClockReadiness(t *testing.T) {
 			seedLogin(t, home)
 			prov := newFakeProvider(t)
 			marker := filepath.Join(t.TempDir(), "started")
-			prov.then(respondWith([]map[string]any{prov.call("shell", map[string]any{"command": "touch '" + marker + "'; sleep 30"})}, nil))
+			release := releaseOnCleanup(t)
+			prov.then(respondWith([]map[string]any{prov.call("shell", map[string]any{"command": holdScript("touch '"+marker+"'", release)})}, nil))
 			b := newConformanceAttempt(t, root, home, prov, true)
 			sess, _ := nativeExecutor{b: b}.Start(context.Background(), executor.Task{Brief: executor.Brief{Stable: "s", Dynamic: "d"}}, nil)
 			done := make(chan error, 1)
@@ -539,7 +539,10 @@ func TestChecktimeClockReadiness(t *testing.T) {
 					t.Errorf("cleanup did not end the held round with the interrupt: %v", err)
 				}
 			})
-			waitFor(t, marker)
+			if err, ended := waitForRound(marker, done); ended {
+				finished = true
+				t.Fatalf("the round returned before %s appeared: %v", marker, err)
+			}
 			select {
 			case err := <-done:
 				finished = true

@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/KogenAI/kogen-executor/core"
 )
@@ -256,7 +255,7 @@ func TestResumeRefusesAnUncertainToolBoundary(t *testing.T) {
 	f.then(f.calls("shell", map[string]any{"command": "touch waiting; sleep 600"}))
 	a, done := e.start()
 	t.Cleanup(func() { a.s.Interrupt("SIGINT"); <-done })
-	waitForRunning(t, filepath.Join(e.root, "waiting"), done, a, 10*time.Second)
+	waitForRunning(t, filepath.Join(e.root, "waiting"), done, a)
 	a.s.Interrupt("SIGINT")
 	<-done
 	eq(t, "exit", a.exit, 130)

@@ -22,33 +22,61 @@ func (e *env) stageOtherIntent() {
 
 func (e *env) staged() string { return e.gitOut("diff", "--cached", "--name-only") }
 
-func waitFor(t *testing.T, path string) {
-	t.Helper()
-	for i := 0; i < 750; i++ {
+// waitForRound waits for the marker of a native round's held child. It returns the round's
+// error and true when the round returned first, and nil and false once the marker exists. There
+// is no deadline: the polling interval only rechecks those two events.
+func waitForRound(path string, done <-chan error) (error, bool) {
+	for {
 		if _, err := os.Stat(path); err == nil {
-			return
+			return nil, false
+		}
+		select {
+		case err := <-done:
+			return err, true
+		default:
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s", path)
 }
 
-// waitForRunning waits up to limit (each caller's unchanged failure deadline) for the marker of
-// a background Build's held child; a Build that ends first is a failure, and the caller's
-// cleanup interrupts and joins one that is still held.
-func waitForRunning(t *testing.T, path string, done <-chan struct{}, a *attempt, limit time.Duration) {
+// releaseOnCleanup returns the release file that a held shell child waits for, outside the
+// checkout root. The file is created by a cleanup, so register it before the test's own
+// interrupt-and-join cleanup: cleanups run last-registered-first, and the child is released only
+// after the round has been stopped and joined.
+func releaseOnCleanup(t *testing.T) string {
+	release := filepath.Join(t.TempDir(), "release")
+	t.Cleanup(func() {
+		if err := os.WriteFile(release, nil, 0o600); err != nil {
+			t.Errorf("release the held child: %v", err)
+		}
+	})
+	return release
+}
+
+// holdScript is the shell command of a held child: it runs setup, then waits for release.
+func holdScript(setup, release string) string {
+	return setup + "; while [ ! -e '" + release + "' ]; do sleep 0.05; done"
+}
+
+// waitForRunning waits, with no deadline, for the marker of a background Build's held child; a
+// Build that ends first is a failure, and the caller's cleanup interrupts and joins one that is
+// still held.
+func waitForRunning(t *testing.T, path string, done <-chan struct{}, a *attempt) {
 	t.Helper()
-	for deadline := time.Now().Add(limit); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+	for {
 		if _, err := os.Stat(path); err == nil {
 			return
 		}
 		select {
 		case <-done:
+			if _, err := os.Stat(path); err == nil {
+				return
+			}
 			t.Fatalf("build ended before %s appeared: %s", path, a.shown())
 		default:
 		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s", path)
 }
 
 func TestACommitHookThatRejectsLeavesEditsAndRestoresTheStagedIntentIndex(t *testing.T) {
@@ -214,7 +242,7 @@ func TestAnInterruptedStartupRestoresTheIndexAndCannotResume(t *testing.T) {
 	index := e.state()["index"]
 	a, done := e.start()
 	t.Cleanup(func() { a.s.Interrupt("SIGINT"); <-done })
-	waitForRunning(t, marker, done, a, 15*time.Second)
+	waitForRunning(t, marker, done, a)
 	a.s.Interrupt("SIGINT")
 	<-done
 	eq(t, "exit", a.exit, 130)
@@ -275,7 +303,7 @@ func TestACommitInterruptedDuringPostcommitIsUndone(t *testing.T) {
 	start := e.head()
 	a, done := e.start()
 	t.Cleanup(func() { a.s.Interrupt("SIGINT"); <-done })
-	waitForRunning(t, marker, done, a, 15*time.Second)
+	waitForRunning(t, marker, done, a)
 	a.s.Interrupt("SIGINT")
 	<-done
 	eq(t, "exit", a.exit, 130)
