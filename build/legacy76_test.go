@@ -179,7 +179,7 @@ func newLegacy76Env(t *testing.T, name string, opts ...func(*legacy76Options)) (
 		t.Fatal(err)
 	}
 	moved := legacyReplace(legacyReplace(term, "/private"+man.Root, e.root), man.Root, e.root).(*legacyMap)
-	legacyAdaptBaseline(moved)
+	legacyAdaptBaseline(t, e.root, moved)
 	if o.state != nil {
 		o.state(moved)
 	}

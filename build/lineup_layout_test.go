@@ -114,19 +114,6 @@ var lineupFileForms = [][2]string{
 	{`- .kogen/project.yaml\\n`, `- .kogen/project.yaml\\n- .kogen/models.yaml\\n`},
 }
 
-// withLineupFile is text recorded with the pinned coordinator as the moved coordinator makes it:
-// exactly the recorded bytes with `.kogen/models.yaml` added after `.kogen/project.yaml` in the
-// protected files the prompts name. With the pinned coordinator it is text itself.
-func withLineupFile(text string) string {
-	if !lineupMoved {
-		return text
-	}
-	for _, f := range lineupFileForms {
-		text = strings.ReplaceAll(text, f[0], f[1])
-	}
-	return text
-}
-
 // trackedLineupFileForms are the forms of the sorted list of the project's files in a prompt, in
 // which a project that holds `.kogen/models.yaml` lists it between `.gitignore` and
 // `.kogen/project.yaml`.

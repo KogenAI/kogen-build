@@ -156,10 +156,13 @@ func toolOutputsOf(req map[string]any) []string {
 
 // compatCapture is the first rendered request of a passing Build, reduced to what Kogen owns
 // (kogenOwnedRequest), and the feedback of a red pass with an ordinary assertion failure, with
-// this run's paths and cache identity replaced.
+// this run's paths and cache identity replaced. The passing Build's repository tracks
+// .kogen/models.yaml (trackLineup), so every coordinator lists it in the baseline and the request
+// names it among the project's files; the red Build's repository does not.
 func compatCapture(t *testing.T) (map[string]any, string) {
 	t.Helper()
 	pass := newEnv(t)
+	pass.trackLineup()
 	pass.prov.then(landScript(pass.prov)...)
 	if a := pass.build(); a.exit != 0 {
 		t.Fatalf("exit %d\n%s", a.exit, a.shown())
@@ -227,7 +230,6 @@ func TestNamedFeedbackCompatibility(t *testing.T) {
 		eq(t, "ordinary assertion feedback", feedback, want.Feedback)
 		got, _ := json.Marshal(request)
 		exp, _ := json.Marshal(want.Request)
-		exp = []byte(withLineupFile(string(exp)))
 		if string(got) != string(exp) {
 			t.Fatalf("the passing Build's first request changed:\n got %s\nwant %s", got, exp)
 		}

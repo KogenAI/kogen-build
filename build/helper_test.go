@@ -271,6 +271,17 @@ Acceptance:
 	return e
 }
 
+// trackLineup commits .kogen/models.yaml with the default roles (project.ModelsTemplate) and
+// approves the Intent again, before any Build starts: every coordinator lists the file in the
+// baseline, whether it lists an absent lineup file or only an existing one.
+func (e *env) trackLineup() {
+	e.t.Helper()
+	e.write(project.ModelsPath, project.ModelsTemplate())
+	e.run("git", "add", project.ModelsPath)
+	e.run("git", "commit", "-qm", "fixture lineup")
+	e.approve()
+}
+
 func (e *env) writeConfig(cfg *project.Config) {
 	writeFile(e.t, filepath.Join(e.root, ".kogen/project.yaml"), project.RenderConfig(cfg), 0o644)
 }

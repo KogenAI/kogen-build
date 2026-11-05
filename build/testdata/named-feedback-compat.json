@@ -9,7 +9,7 @@
       "type": "input_text"
      },
      {
-      "text": "# Files\n\n.kogen/intents/fixture/acceptance.feature\n.kogen/intents/fixture/intent.md\nfeatures/steps/integration_steps.js\n.gitignore\n.kogen/project.yaml\nREADME.md\napp.txt\n",
+      "text": "# Files\n\n.kogen/intents/fixture/acceptance.feature\n.kogen/intents/fixture/intent.md\nfeatures/steps/integration_steps.js\n.gitignore\n.kogen/models.yaml\n.kogen/project.yaml\nREADME.md\napp.txt\n",
       "type": "input_text"
      }
     ],

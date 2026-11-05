@@ -31,7 +31,8 @@ func (e *env) firstReviewWire(start string) string {
 }
 
 // sameWireFixture compares the request (reduced by kogenOwnedRequest) with the golden
-// testdata/reviewretry/<name>, which holds exactly that string. With -update the golden is
+// testdata/reviewretry/<name>, which holds exactly that string. The captured repositories track
+// .kogen/models.yaml, so the golden names it whatever the coordinator. With -update the golden is
 // instead rewritten with it once the test has passed.
 func sameWireFixture(t *testing.T, name, got string) {
 	t.Helper()
@@ -44,14 +45,16 @@ func sameWireFixture(t *testing.T, name, got string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eq(t, name+" request bytes", got, withLineupFile(string(b)))
+	eq(t, name+" request bytes", got, string(b))
 }
 
 // TestKReviewRetryUnchangedValidRequests: a review whose first verdict is valid sends exactly
 // the requests it always sent (baseline wire fixtures recorded before the retry/forcing change)
 // and ends as it always ended, with no retry, no reminder and no forcing field.
 // testdata/reviewretry/approve.wire.json and changes.wire.json hold the first review request of
-// each subtest as kogenOwnedRequest reduces it; they are frozen goldens that must not change
+// each subtest as kogenOwnedRequest reduces it, from a repository that tracks .kogen/models.yaml
+// (trackLineup), so that a coordinator which lists the file only when it exists and one that
+// always lists it build the same request; they are frozen goldens that must not change
 // without deliberate intent. `go test ./... -update` rewrites them from the current output (a Git
 // diff to review like any other change).
 func TestKReviewRetryUnchangedValidRequests(t *testing.T) {
@@ -59,6 +62,7 @@ func TestKReviewRetryUnchangedValidRequests(t *testing.T) {
 	t.Run("approve lands", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t)
+		e.trackLineup()
 		f := e.prov
 		f.then(landScript(f)...)
 		f.then(submit(f, "approve", finding("note", "harmless preference")))
@@ -91,6 +95,7 @@ func TestKReviewRetryUnchangedValidRequests(t *testing.T) {
 	t.Run("changes is a substantive blocker, not an invalid review", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t)
+		e.trackLineup()
 		f := e.prov
 		f.then(landScript(f)...)
 		f.then(submit(f, "changes", finding("blocking", "app.txt is wrong")))

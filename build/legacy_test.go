@@ -121,11 +121,21 @@ func legacyReplace(t any, from, to string) any {
 	return t
 }
 
-// legacyAdaptBaseline brings the Baseline an Elixir checkpoint saved up to the coordinator's
-// current one, which lists .kogen/models.yaml right after .kogen/project.yaml. The Elixir fixture
-// projects have no such file, so its digest is the one of a missing file, as a Build started
-// today on the same project records it.
-func legacyAdaptBaseline(m *legacyMap) {
+// legacyAdaptBaseline brings the Baseline an Elixir checkpoint saved up to what a Build started
+// today on the same project records. The Elixir fixture projects have no .kogen/models.yaml and
+// the Elixir Kogen never listed it. A coordinator that lists the file whether or not it exists
+// lists it right after .kogen/project.yaml, with the digest of a missing file; one that leaves an
+// absent file out lists nothing for these projects, and the checkpoint stays as recorded. The
+// coordinator in use decides: project.Baseline of the fixture repository at root.
+func legacyAdaptBaseline(t *testing.T, root string, m *legacyMap) {
+	t.Helper()
+	current, err := project.Baseline(root, "fixture", &project.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(current, project.ModelsPath) {
+		return
+	}
 	list, ok := m.get(latom("baseline"))
 	paths, isList := list.([]any)
 	if !ok || !isList || slices.Contains(paths, any(project.ModelsPath)) {
@@ -956,7 +966,7 @@ func newLegacyEnv(t *testing.T, name string, opts ...func(*legacyOptions)) (*env
 	doc := legacyDoc(t, file)
 	state := legacyTerm(t, doc)
 	moved := legacyReplace(legacyReplace(state, "/private"+man.Root, e.root), man.Root, e.root).(*legacyMap)
-	legacyAdaptBaseline(moved)
+	legacyAdaptBaseline(t, e.root, moved)
 	if o.state != nil {
 		o.state(moved)
 	}
