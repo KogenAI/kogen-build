@@ -2,9 +2,13 @@ package build
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/KogenAI/kogen-review/review"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -267,7 +271,10 @@ printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"ses
 `
 }
 
-// withClaudeProcess provides the real Claude Code adapter on the scripted process.
+// withClaudeProcess provides the real Claude Code adapter on the scripted process. The
+// executor checks the managed runtime before every start; a local test origin that supplies
+// its own manifest (claudecode.SeamEnv) leaves the pinned size unknown, so the stand-in is
+// not padded to it. The stand-in is owned by the current user with mode exactly 0755.
 func withClaudeProcess(t *testing.T) (func(*Input), string) {
 	t.Helper()
 	dir := physical(t, t.TempDir())
@@ -276,7 +283,34 @@ func withClaudeProcess(t *testing.T) (func(*Input), string) {
 		t.Fatal(err)
 	}
 	home := filepath.Join(dir, "home")
-	writeFile(t, claudecode.RuntimePath(home), fakeClaudeScript(state), 0o755)
+	script := []byte(fakeClaudeScript(state))
+	runtime := claudecode.RuntimePath(home)
+	writeFile(t, runtime, string(script), 0o755)
+	if err := os.Chmod(runtime, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	platform, ok := claudecode.Supported()
+	if !ok {
+		t.Fatalf("Claude Code is not supported on this platform")
+	}
+	sum := sha256.Sum256(script)
+	manifest, err := json.Marshal(map[string]any{"platforms": map[string]any{
+		platform: map[string]any{"checksum": hex.EncodeToString(sum[:]), "size": len(script)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := "/" + claudecode.Version
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+root+"/manifest.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(manifest)
+	})
+	mux.HandleFunc("GET "+root+"/"+platform+"/claude", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(script)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	t.Setenv(claudecode.SeamEnv, server.URL)
 	return func(in *Input) {
 		in.External = func(project.Role) (executor.Executor, error) {
 			return claudecode.New(claudecode.Options{Home: home, HookCommand: []string{"/bin/true"}}), nil
@@ -285,12 +319,11 @@ func withClaudeProcess(t *testing.T) (func(*Input), string) {
 }
 
 func TestContextExternalFirstPrompt(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel: the subtests set the process environment with t.Setenv.
 	text := "Previous candidate failed at line 3 — \xf0\x9f\x99\x82\nnot approval, a plan or current proof\n"
 	text = strings.ToValidUTF8(text, "")
 	for _, withContext := range []bool{true, false} {
 		t.Run(fmt.Sprintf("context %v", withContext), func(t *testing.T) {
-			t.Parallel()
 			e := newEnv(t)
 			e.useRoles(true, false)
 			provide, state := withClaudeProcess(t)
