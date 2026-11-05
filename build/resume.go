@@ -18,6 +18,7 @@ import (
 	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-loop/provider"
 	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-review/review"
 )
 
 var buildID = regexp.MustCompile(`^[a-f0-9]{8}$`)
@@ -109,6 +110,21 @@ func inspectScalar(v any) string {
 	}
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// reviewBlocked is whether the checkpoint is a blocked independent review: the terminal blocking
+// verdict at review_verify, or its explicit reopening that stopped before its decision. Such a
+// review is resumed against the checkout as it is, so an external repair of the candidate is not
+// drift: the resume verifies it fresh and returns the finding to the same reviewer.
+func (b *Attempt) reviewBlocked() bool {
+	switch c := b.Continuation; c.Stage {
+	case StageReviewRetry:
+		return true
+	case StageReviewVerify:
+		sess, err := review.DecodeSession(c.Review)
+		return err == nil && sess.Verdict != nil && sess.Verdict.Verdict == "changes"
+	}
+	return false
 }
 
 func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git.Repo, out **Attempt) error {
@@ -240,7 +256,7 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	if err != nil {
 		return err
 	}
-	if candidate != doc.Candidate {
+	if candidate != doc.Candidate && !b.reviewBlocked() {
 		paths, err := repo.Changed(doc.Candidate, candidate)
 		if err != nil {
 			return err

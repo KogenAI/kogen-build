@@ -576,6 +576,96 @@ func TestABlockedReviewStopsAndAnExplicitResumeReopensItUnderTheSameReviewer(t *
 	}
 }
 
+// blockedReviewOfAnExternalRepair stops a Build at a blocking review verdict and returns its id.
+func blockedReviewOfAnExternalRepair(t *testing.T) (*env, string, string) {
+	e := newEnv(t)
+	f := e.prov
+	f.then(landScript(f)...)
+	f.then(submit(f, "changes", finding("blocking", "Original unresolved requirement")))
+	start := e.head()
+	a := e.reviewed()
+	eq(t, "exit", a.exit, 1)
+	return e, e.onlyRun(), start
+}
+
+func TestAnExternallyRepairedBlockedReviewIsVerifiedFreshAndAsksTheSameReviewer(t *testing.T) {
+	t.Parallel()
+	for _, approve := range []bool{true, false} {
+		name := "maintained"
+		if approve {
+			name = "cleared"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			e, id, start := blockedReviewOfAnExternalRepair(t)
+			f := e.prov
+			e.write("app.txt", "repaired\n")
+			e.write("extra.txt", "new untracked file\n")
+			if approve {
+				f.then(submit(f, "approve"))
+			} else {
+				f.then(submit(f, "changes", finding("blocking", "Original unresolved requirement")))
+			}
+			r := e.resumeReviewed(id)
+			if !approve {
+				eq(t, "exit", r.exit, 1)
+				contains(t, "stdout", r.out.String(), "candidate/review_blocked: ")
+				eq(t, "head", e.head(), start)
+				eq(t, "app.txt", e.read("app.txt"), "repaired\n")
+				eq(t, "extra.txt", e.read("extra.txt"), "new untracked file\n")
+				cont, session := sessionOfRun(t, e, e.otherRun(id))
+				eq(t, "stage", cont["stage"], any("review_verify"))
+				if v := session["verdict"].(map[string]any); v["verdict"] != "changes" {
+					t.Fatalf("verdict %v", v)
+				}
+			}
+			reqs := f.reviewRequests()
+			eq(t, "review requests", len(reqs), 2)
+			feedback := requestInput(reqs[1])
+			text := feedback[len(feedback)-1].(map[string]any)["content"].(string)
+			contains(t, "feedback", text, "Original unresolved requirement")
+			contains(t, "feedback", text, "repaired")
+			contains(t, "feedback", text, "Fresh verification:\nacceptance: passed")
+			res := e.result(e.otherRun(id))
+			eq(t, "passes", res["passes"], any(float64(2)))
+			if approve {
+				if r.exit != 0 {
+					t.Fatalf("exit %d\n%s", r.exit, r.shown())
+				}
+				eq(t, "commits", e.gitOut("rev-list", "--count", start+"..HEAD"), "1")
+				eq(t, "committed app", e.gitOut("show", "HEAD:app.txt"), "repaired")
+			}
+		})
+	}
+}
+
+func TestARepairThatChangesCustodyOfABlockedReviewIsStillRefusedAsDrift(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		prep func(e *env)
+		want string
+	}{
+		{"protected file", func(e *env) { e.write(stepsFile, "// changed\n") }, "baseline changed: " + stepsFile},
+		{"staged index", func(e *env) { e.gitOut("add", "app.txt") }, "index/staged custody changed"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			e, id, start := blockedReviewOfAnExternalRepair(t)
+			f := e.prov
+			before := f.count()
+			e.write("app.txt", "repaired\n")
+			c.prep(e)
+			r := e.resumeReviewed(id)
+			eq(t, "exit", r.exit, 1)
+			contains(t, "stdout", r.shown(), "candidate/resume_refused: Build "+id+": "+c.want)
+			eq(t, "requests", f.count(), before)
+			eq(t, "runs", len(e.runIDs()), 1)
+			eq(t, "head", e.head(), start)
+		})
+	}
+}
+
 func (e *env) otherRun(except ...string) string {
 	e.t.Helper()
 	for _, id := range e.runIDs() {

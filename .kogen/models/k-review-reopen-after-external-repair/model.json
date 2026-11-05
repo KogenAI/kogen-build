@@ -1,0 +1,13 @@
+{
+  "None": false,
+  "Path": ".kogen/models/k-review-reopen-after-external-repair/model.qnt",
+  "Invariants": [
+    "CommittedWasVerified",
+    "ReopenedVerifiesCurrentTree",
+    "RefusalOnlyForCustodyOrVersion",
+    "CustodyDriftNeverReopens"
+  ],
+  "Seed": "7",
+  "Samples": "500",
+  "Steps": "12"
+}

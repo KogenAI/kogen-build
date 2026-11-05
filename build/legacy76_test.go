@@ -546,3 +546,44 @@ func TestMain76StagedResumeRefusesInconsistentProgressAndEvidence(t *testing.T) 
 		})
 	}
 }
+
+func TestMain76ExternallyRepairedBlockedReviewReopensUnderTheSameReviewer(t *testing.T) {
+	t.Parallel()
+	for _, stage := range []string{"review_retry_verify", "review_verify"} {
+		t.Run(stage, func(t *testing.T) {
+			t.Parallel()
+			e, id := newLegacy76Env(t, "review_retry_verify", func(o *legacy76Options) {
+				if stage == "review_verify" {
+					o.state = func(m *legacyMap) {
+						legacyPut(legacyDigMap(t, m, latom("continuation")), latom("stage"), latom("review_verify"))
+						legacyPut(legacyDigMap(t, m, latom("last_review")), latom("verdict"), "changes")
+					}
+				}
+			})
+			e.write("app.txt", "repaired\n")
+			f := e.prov
+			f.then(f.calls("submit_review", approveVerdict()))
+			r := legacyResume(e, id)
+			if r.exit != 0 || r.err != nil {
+				t.Fatalf("exit %d err %v\n%s", r.exit, r.err, r.shown())
+			}
+			contains(t, "stdout", r.out.String(), "landed fixture ")
+			reqs := f.requests()
+			eq(t, "requests", len(reqs), 1)
+			legacyContinues(t, reqs[0], "# Intent\n\nPreserve the fixture\n# acceptance.feature", "Final verification passed.",
+				"The caller explicitly resumed this blocked Build", "Original unresolved requirement")
+			eq(t, "passes", e.result(legacyChild(t, e, id))["passes"], any(float64(2)))
+			eq(t, "committed app", e.gitOut("show", "HEAD:app.txt"), "repaired")
+		})
+	}
+
+	// A repair that also changes a protected file is custody drift, before any run or request.
+	e, id := newLegacy76Env(t, "review_retry_verify")
+	e.write("app.txt", "repaired\n")
+	e.write("accept.sh", "# changed\n")
+	r := legacyResume(e, id)
+	eq(t, "exit", r.exit, 1)
+	contains(t, "stdout", r.shown(), "candidate/resume_refused: Build "+id+": baseline changed: accept.sh;")
+	eq(t, "requests", e.prov.count(), 0)
+	eq(t, "runs", len(e.runIDs()), 1)
+}
