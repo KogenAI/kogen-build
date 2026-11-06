@@ -992,17 +992,18 @@ func legacyResume(e *env, id string) *attempt {
 	return e.resume(id, func(in *ResumeInput) { in.Reviewer = nativeReviewer() })
 }
 
-// legacyMovedLineupRefusal checks, for the moved coordinator, what resuming an Elixir Build does
-// when the project's .kogen/project.yaml still has models: (the Elixir fixtures keep it): the
-// configuration is refused with environment/models_moved, exit 3, before any run, request or
-// change of the Elixir Build's files or of the checkout.
-func legacyMovedLineupRefusal(t *testing.T, e *env, id string) {
+// legacyLineupRefusal checks what resuming an Elixir Build does when the project's
+// .kogen/project.yaml still has models: (the Elixir fixtures keep it at line 17): the
+// configuration is refused with environment/project_config_invalid, exit 3, before any run,
+// request or change of the Elixir Build's files or of the checkout.
+func legacyLineupRefusal(t *testing.T, e *env, id string) {
 	t.Helper()
 	before, files, runs, requests := e.state(), e.runFiles(id), e.runIDs(), e.prov.count()
 	r := legacyResume(e, id)
 	eq(t, "exit", r.exit, 3)
 	text := r.shown()
-	contains(t, "output", text, "environment/models_moved: .kogen/project.yaml still has models:; move that lineup to .kogen/models.yaml")
+	contains(t, "output", text, "environment/project_config_invalid: "+filepath.Join(e.root, ".kogen/project.yaml")+"\n")
+	contains(t, "output", text, "  line 17: models is no longer read from .kogen/project.yaml; move the model lineup to .kogen/models.yaml\n")
 	contains(t, "output", text, "  no newly created Build run;")
 	if !reflect.DeepEqual(e.state(), before) {
 		t.Fatalf("custody changed:\n%v\n%v", before, e.state())
@@ -1026,245 +1027,39 @@ func legacyChild(t *testing.T, e *env, id string) string {
 	return ""
 }
 
-// legacyTexts are the texts of a request's conversation, the developer policy left out: the
-// message blocks, tool arguments and tool outputs.
-func legacyTexts(req map[string]any) []string {
-	var out []string
-	items, _ := req["input"].([]any)
-	for _, it := range items {
-		m, _ := it.(map[string]any)
-		if m["role"] == "developer" {
-			continue
-		}
-		switch c := m["content"].(type) {
-		case string:
-			out = append(out, c)
-		case []any:
-			for _, b := range c {
-				if bm, ok := b.(map[string]any); ok {
-					if s, ok := bm["text"].(string); ok {
-						out = append(out, s)
-					}
-				}
-			}
-		}
-		for _, k := range []string{"arguments", "output"} {
-			if s, ok := m[k].(string); ok {
-				out = append(out, s)
-			}
-		}
-	}
-	return out
-}
-
-// legacyContinues checks that the texts the Elixir Build saved reach the provider in this
-// order, each in the message it was saved in or a later one (nothing else is asserted about
-// what the Go engine adds around them).
-func legacyContinues(t *testing.T, req map[string]any, want ...string) {
-	t.Helper()
-	texts := legacyTexts(req)
-	at := 0
-	for _, w := range want {
-		found := false
-		for ; at < len(texts); at++ {
-			if strings.Contains(texts[at], w) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("the request lacks %q (in order); it has %q", w, texts)
-		}
-	}
-}
-
-func approveVerdict() map[string]any {
-	return map[string]any{"verdict": "approve", "findings": []any{}}
-}
-
-// legacyLanded checks the end of a resumed Build: one commit on the start, the message, the
-// resumed run's result, and the Elixir run's files exactly as they were.
-func legacyLanded(t *testing.T, e *env, id string, r *attempt, before map[string]string) string {
-	t.Helper()
-	man := legacyLoadManifest(t)
-	if r.exit != 0 || r.err != nil {
-		t.Fatalf("exit %d err %v\n%s", r.exit, r.err, r.shown())
-	}
-	child := legacyChild(t, e, id)
-	contains(t, "stdout", r.out.String(), "resuming Build "+id+" as "+child+" (root "+id+")\n")
-	contains(t, "stdout", r.out.String(), "landed fixture ")
-	eq(t, "commits", e.gitOut("rev-list", "--count", man.Start+"..HEAD"), "1")
-	eq(t, "parent", e.gitOut("rev-parse", "HEAD^"), man.Start)
-	eq(t, "message", e.gitOut("log", "-1", "--format=%B"), "Preserve the fixture\n\nKogen-Intent: fixture")
-	res := e.result(child)
-	eq(t, "outcome", res["outcome"], any("landed"))
-	eq(t, "resumed_from", res["resumed_from"], any(id))
-	eq(t, "root_build", res["root_build"], any(id))
-	if !reflect.DeepEqual(e.runFiles(id), before) {
-		t.Fatal("the files of the Elixir Build changed")
-	}
-	doc, state := e.checkpoint(child)
-	eq(t, "child version", doc["version"], any(float64(4)))
-	eq(t, "child stage", state["continuation"].(map[string]any)["stage"], any("landed"))
-	// The conversation the Elixir Build had keeps its prompt-cache state.
-	cache, _ := state["prompt_cache_states"].(map[string]any)
-	kept := false
-	for _, v := range cache {
-		if v.(map[string]any)["id"] == "conversation-fixture-1" && v.(map[string]any)["response"] == "resp_fixture_1" {
-			kept = true
-		}
-	}
-	if !kept {
-		t.Fatalf("prompt cache states %v", cache)
-	}
-	return child
-}
-
 func TestALegacyBuilderCheckpointResumesTheSameConversationAndLandsOnce(t *testing.T) {
 	t.Parallel()
 	// ExUnit: test/integration/build_context_files_test.exs: cancelled initial request freezes conversation; test/integration/build_boundaries_test.exs: resuming pending reviewer verification keeps repairs with the reviewer
 	e, id := newLegacyEnv(t, "builder")
-	if lineupMoved {
-		legacyMovedLineupRefusal(t, e, id)
-		return
-	}
-	f := e.prov
-	f.then(f.calls("finish", map[string]any{"summary": "nothing to change"}), f.calls("submit_review", approveVerdict()))
-	before := e.runFiles(id)
-	checkpoint := e.read(".kogen/local/runs/" + id + "/checkpoint.json")
-	r := legacyResume(e, id)
-	child := legacyLanded(t, e, id, r, before)
-	if e.read(".kogen/local/runs/"+id+"/checkpoint.json") != checkpoint {
-		t.Fatal("checkpoint.json of the Elixir Build changed")
-	}
-	reqs := f.requests()
-	eq(t, "requests", len(reqs), 2)
-	legacyContinues(t, reqs[0], "# Intent: Preserve the fixture\n\nThe stable authority — naïve ✓\n", "# Files\n\nREADME.md\napp.txt\n",
-		`{"command":"cat app.txt"}`, "baseline\n")
-	legacyContinues(t, reqs[1], "Preserve the fixture")
-	// The request is the saved conversation, item for item: the policy is the request's own
-	// instructions and no cache marker rides on any block.
-	var want []any
-	if err := json.Unmarshal([]byte(`[
- {"role":"user","content":[
-  {"type":"input_text","text":"# Intent: Preserve the fixture\n\nThe stable authority — naïve ✓\n"},
-  {"type":"input_text","text":"# Files\n\nREADME.md\napp.txt\n"}]},
- {"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Look at app.txt first."}],"encrypted_content":"gAAAAABfixture==","status":"completed"},
- {"type":"function_call","id":"fc_1","call_id":"call_1","name":"shell","arguments":"{\"command\":\"cat app.txt\"}","status":"completed"},
- {"type":"function_call_output","call_id":"call_1","output":"baseline\n"}]`), &want); err != nil {
-		t.Fatal(err)
-	}
-	got, _ := reqs[0]["input"].([]any)
-	if _, own := reqs[0]["instructions"].(string); !own || !reflect.DeepEqual(got, want) {
-		t.Fatalf("the resumed request is not the saved conversation:\n%v", got)
-	}
-	res := e.result(child)
-	eq(t, "passes", res["passes"], any(float64(1)))
-	eq(t, "reviews", res["reviews"], any(float64(1)))
-	eq(t, "usage", res["usage"].(map[string]any)["input"], any(float64(122)))
-	eq(t, "attempt usage", res["attempt_usage"].(map[string]any)["input"], any(float64(2)))
-	if res["model_active_ms"].(float64) < 1234 {
-		t.Fatalf("model_active_ms %v", res["model_active_ms"])
-	}
-	_, state := e.checkpoint(child)
-	eq(t, "round", state["round"], any(float64(1)))
-	events := e.events(child)
-	if ev := eventsNamed(events, "resume"); len(ev) != 1 || ev[0]["parent"] != id || ev[0]["root"] != id {
-		t.Fatalf("resume event %v", ev)
-	}
-	// The conversation scope of the requests is the root run.
-	attempt := eventsNamed(events, "provider_attempt")[0]["provider"].(map[string]any)
-	eq(t, "lineage", attempt["lineage"], any(id))
-	// Resuming the child, which landed, is a no-op.
-	commit := e.head()
-	again := legacyResume(e, child)
-	eq(t, "again exit", again.exit, 0)
-	eq(t, "again stdout", again.out.String(), "Build "+child+" already landed "+commit+"\n")
-	eq(t, "requests", f.count(), 2)
-	// The Elixir run cannot be resumed any more: HEAD moved.
-	old := legacyResume(e, id)
-	eq(t, "old exit", old.exit, 1)
-	contains(t, "old", old.shown(), "candidate/resume_refused: Build "+id+": HEAD moved or uncertain commit; inspect git log;")
+	legacyLineupRefusal(t, e, id)
 }
 
 func TestALegacyBuilderVerifyCheckpointRunsTheFixersAndThePassThenLands(t *testing.T) {
 	t.Parallel()
 	// ExUnit: lib/kogen/build.ex resume_locked: stage builder_verify (round_end/1, then Shape.output of the saved finish call)
 	e, id := newLegacyEnv(t, "builder_verify")
-	if lineupMoved {
-		legacyMovedLineupRefusal(t, e, id)
-		return
-	}
-	f := e.prov
-	f.then(f.calls("submit_review", approveVerdict()))
-	before := e.runFiles(id)
-	r := legacyResume(e, id)
-	child := legacyLanded(t, e, id, r, before)
-	eq(t, "requests", f.count(), 1)
-	legacyContinues(t, f.requests()[0], "Preserve the fixture")
-	eq(t, "passes", e.result(child)["passes"], any(float64(1)))
-	eq(t, "round", e.result(child)["repairs"], any(float64(0)))
+	legacyLineupRefusal(t, e, id)
 }
 
 func TestALegacyReviewCheckpointContinuesTheSameReviewerConversation(t *testing.T) {
 	t.Parallel()
 	// ExUnit: test/integration/build_boundaries_test.exs: resuming pending reviewer verification keeps repairs with the reviewer
 	e, id := newLegacyEnv(t, "review")
-	if lineupMoved {
-		legacyMovedLineupRefusal(t, e, id)
-		return
-	}
-	f := e.prov
-	f.then(f.calls("submit_review", approveVerdict()))
-	before := e.runFiles(id)
-	r := legacyResume(e, id)
-	child := legacyLanded(t, e, id, r, before)
-	man := legacyLoadManifest(t)
-	eq(t, "committed tree", e.gitOut("rev-parse", "HEAD^{tree}"), man.Cases["review"].PassTree)
-	eq(t, "candidate", e.gitOut("show", "HEAD:app.txt"), "candidate")
-	reqs := f.requests()
-	eq(t, "requests", len(reqs), 1)
-	legacyContinues(t, reqs[0], "# Intent\n\nPreserve the fixture\n# acceptance.feature", "acceptance: passed (2 scenarios)")
-	eq(t, "model", reqs[0]["model"], any("gpt-6.1-sol"))
-	eq(t, "reviews", e.result(child)["reviews"], any(float64(1)))
-	eq(t, "passes", e.result(child)["passes"], any(float64(1)))
+	legacyLineupRefusal(t, e, id)
 }
 
 func TestALegacyReviewVerifyCheckpointJudgesTheSavedVerdictWithoutAskingAgain(t *testing.T) {
 	t.Parallel()
 	// ExUnit: lib/kogen/review.ex resume/2: stage review_verify with an approve verdict (evaluate/8)
 	e, id := newLegacyEnv(t, "review_verify")
-	if lineupMoved {
-		legacyMovedLineupRefusal(t, e, id)
-		return
-	}
-	before := e.runFiles(id)
-	r := legacyResume(e, id)
-	child := legacyLanded(t, e, id, r, before)
-	eq(t, "requests", e.prov.count(), 0)
-	contains(t, "stdout", r.out.String(), "review: approved, 1 note(s)")
-	contains(t, "stdout", r.out.String(), "note: app.txt:1: fine — ✓")
-	eq(t, "reviews", e.result(child)["reviews"], any(float64(1)))
+	legacyLineupRefusal(t, e, id)
 }
 
 func TestALegacyRetryCheckpointSendsTheBlockerAndTheFreshResultsToTheSameReviewer(t *testing.T) {
 	t.Parallel()
 	// ExUnit: test/integration/build_boundaries_test.exs: blocked #{retry_outcome} retry provider failure retains fresh evidence and the saved reviewer
 	e, id := newLegacyEnv(t, "review_retry_verify")
-	if lineupMoved {
-		legacyMovedLineupRefusal(t, e, id)
-		return
-	}
-	f := e.prov
-	f.then(f.calls("submit_review", approveVerdict()))
-	before := e.runFiles(id)
-	r := legacyResume(e, id)
-	child := legacyLanded(t, e, id, r, before)
-	reqs := f.requests()
-	eq(t, "requests", len(reqs), 1)
-	legacyContinues(t, reqs[0], "# Intent\n\nPreserve the fixture\n# acceptance.feature", "Final verification passed.",
-		"The caller explicitly resumed this blocked Build", "Original unresolved requirement")
-	eq(t, "passes", e.result(child)["passes"], any(float64(2)))
+	legacyLineupRefusal(t, e, id)
 }
 
 func TestALegacyLandedBuildIsANoOpThatNamesTheCommit(t *testing.T) {
@@ -1306,8 +1101,8 @@ func TestLegacyResumeRefusals(t *testing.T) {
 		prep     func(e *env, id string)
 		want     string
 		kind     string
-		// config marks a case refused only after the configuration is loaded: the moved
-		// coordinator refuses the Elixir fixtures' models: there instead.
+		// config marks a case refused only after the configuration is loaded: the coordinator
+		// refuses the Elixir fixtures' models: there instead.
 		config bool
 	}
 	runDir := func(m *legacyMap) *legacyMap { return legacyDigMap(t, m, latom("run")) }
@@ -1381,8 +1176,8 @@ func TestLegacyResumeRefusals(t *testing.T) {
 			if c.prep != nil {
 				c.prep(e, id)
 			}
-			if c.config && lineupMoved {
-				legacyMovedLineupRefusal(t, e, id)
+			if c.config {
+				legacyLineupRefusal(t, e, id)
 				return
 			}
 			before, files, runs, requests := e.state(), e.runFiles(id), e.runIDs(), e.prov.count()

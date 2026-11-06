@@ -9,8 +9,8 @@ import (
 )
 
 // build/build.go, build/resume.go and build/recover.go read the project configuration of the
-// checkout, build/builder.go and build/host.go the commands, the acceptance and the models in
-// it, build/build.go and build/executor_external.go the roles.
+// checkout, build/builder.go and build/host.go the commands and the acceptance in it and the
+// models in .kogen/models.yaml, build/build.go and build/executor_external.go the roles.
 func TestLoadConfigReadsTheProjectConfiguration(t *testing.T) {
 	var _ func(string) (*project.Config, error) = project.LoadConfig
 	equal(t, "project.ConfigPath", project.ConfigPath, ".kogen/project.yaml")

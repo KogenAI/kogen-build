@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -23,10 +22,6 @@ import (
 //	testdata/state/review-changes/checkpoint.json the checkpoint of a run whose independent review asked for changes
 //	testdata/state/review-changes/review-1.json   the review record the real reviewer writes for a changes verdict
 //	testdata/state/resumed/checkpoint.json        the checkpoint of the attempts run resumed as a new run
-//
-// With the coordinator that reads the lineup from .kogen/models.yaml, the two review records
-// are compared with review-1-moved.json beside them: their fixture project.yaml has no models:
-// block, so the candidate tree id differs, and nothing else.
 //
 // They pin the format that existing runs and resumes read, so they must not change without
 // deliberate intent. A checkpoint golden is exactly what (*Run).PublishCheckpoint writes for the
@@ -337,24 +332,14 @@ func stateGoldenReviewRecord(t *testing.T, path, verdict string, findings ...map
 	return got
 }
 
-// stateGoldenRecordPath is the golden of a review record: the moved lineup layout's fixture
-// project.yaml has no models: block, so its candidate tree differs and the record is its own
-// file; nothing else in it differs.
-func stateGoldenRecordPath(path string) string {
-	if lineupMoved {
-		return strings.TrimSuffix(path, ".json") + "-moved.json"
-	}
-	return path
-}
-
 func TestStateGoldenReviewApproveRecord(t *testing.T) {
 	t.Parallel()
-	path := stateGoldenRecordPath("testdata/state/review-approve/review-1.json")
+	path := "testdata/state/review-approve/review-1.json"
 	stateGoldenCheck(t, path, stateGoldenReviewRecord(t, path, "approve"))
 }
 
 func TestStateGoldenReviewChangesRecord(t *testing.T) {
 	t.Parallel()
-	path := stateGoldenRecordPath("testdata/state/review-changes/review-1.json")
+	path := "testdata/state/review-changes/review-1.json"
 	stateGoldenCheck(t, path, stateGoldenReviewRecord(t, path, "changes", finding("blocking", "app.txt does not hold the requested content")))
 }

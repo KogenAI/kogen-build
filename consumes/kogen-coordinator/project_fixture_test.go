@@ -1,13 +1,9 @@
 package consumes
 
-import (
-	"testing"
-
-	"github.com/KogenAI/kogen-coordinator/project"
-)
+import "testing"
 
 // The Intent `fixture` of a project, as kogen-build's tests write one: an Intent with a feature
-// and a step file, and a project configuration.
+// and a step file, a project configuration and the model lineup in .kogen/models.yaml.
 const (
 	fixtureSlug    = "fixture"
 	fixtureFeature = "Feature: Fixture\n  Scenario: First\n    Then the candidate succeeds\n  Scenario: Later\n    Then the candidate succeeds\n"
@@ -32,7 +28,8 @@ commands:
     steps_dir: features/steps/
 protect:
   - guard.cfg
-models:
+`
+	fixtureModels = `models:
   build: {provider: anthropic, model: build-model, effort: high}
   review: {executor: claude-code, model: review-model, effort: max}
 `
@@ -44,7 +41,7 @@ func newProject(t *testing.T) *repoFx {
 	f := newBareRepo(t)
 	f.write(t, ".gitignore", ".kogen/local/\n")
 	f.write(t, ".kogen/project.yaml", fixtureConfig)
-	f.write(t, ".kogen/models.yaml", project.ModelsTemplate())
+	f.write(t, ".kogen/models.yaml", fixtureModels)
 	f.write(t, ".kogen/intents/fixture/intent.md", fixtureIntent)
 	f.write(t, ".kogen/intents/fixture/acceptance.feature", fixtureFeature)
 	f.write(t, "features/steps/fixture_steps.js", "// steps\n")

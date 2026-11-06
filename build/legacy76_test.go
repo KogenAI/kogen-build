@@ -338,88 +338,14 @@ func TestMain76RecoveryIdentityOfABlockerIsRecorded(t *testing.T) {
 func TestMain76BuildsResumeAndLand(t *testing.T) {
 	t.Parallel()
 	// ExUnit: test/integration/stages_test.exs: stage scratch mutations are red, ordered red stops commands, fresh setup and milestone custody survive Resume
-	type scenario struct {
-		name   string
-		script func(e *env)
-		check  func(t *testing.T, e *env, id, child string, r *attempt)
-	}
-	approve := func(e *env) {
-		f := e.prov
-		f.then(f.calls("submit_review", approveVerdict()))
-	}
-	scenarios := []scenario{
-		{name: "builder", script: func(e *env) {
-			f := e.prov
-			f.then(f.calls("finish", map[string]any{"summary": "done"}), f.calls("submit_review", approveVerdict()))
-		}},
-		{name: "builder_verify", script: approve},
-		{name: "review", script: approve},
-		{name: "review_verify", script: approve},
-		{name: "nullable_usage", script: func(e *env) {
-			f := e.prov
-			f.then(f.calls("finish", map[string]any{"summary": "done"}), f.calls("submit_review", approveVerdict()))
-		}, check: func(t *testing.T, e *env, id, child string, r *attempt) {
-			res := e.result(child)
-			usage := res["usage"].(map[string]any)
-			// Unknown stays unknown: the saved nil counts are not counted as zero.
-			eq(t, "input", usage["input"], nil)
-			eq(t, "cached", usage["cached"], nil)
-			eq(t, "output", usage["output"], any(float64(3)))
-			contains(t, "stdout", r.out.String(), "tokens: unknown")
-		}},
-		{name: "staged_builder_second", script: func(e *env) {
-			f := e.prov
-			f.then(f.calls("finish", map[string]any{"summary": "stage two"}), f.calls("submit_review", approveVerdict()))
-		}, check: func(t *testing.T, e *env, id, child string, r *attempt) {
-			lacks(t, "stdout", r.out.String(), "stage foundation gate")
-			contains(t, "progress", r.errs.String(), "kogen: stage surface gate passed")
-			events := e.events(child)
-			stages := eventsNamed(events, "stage_pass")
-			eq(t, "stage records", len(stages), 1)
-			eq(t, "stage", stages[0]["stage_id"], any("surface"))
-			_, state := e.checkpoint(child)
-			p := state["stage_progress"].(map[string]any)
-			eq(t, "phase", p["phase"], any("landed"))
-			eq(t, "completed", p["completed"], any([]any{"foundation", "surface"}))
-			eq(t, "evidence", len(state["stage_evidence"].([]any)), 3)
-		}},
-		{name: "staged_builder_second_verify", script: func(e *env) {
-			f := e.prov
-			f.then(f.calls("submit_review", approveVerdict()))
-		}, check: func(t *testing.T, e *env, id, child string, r *attempt) {
-			contains(t, "progress", r.errs.String(), "kogen: stage surface gate passed")
-		}},
-		{name: "staged_builder_final", script: approve},
-		{name: "staged_review_final", script: approve},
-	}
-	for _, sc := range scenarios {
-		t.Run(sc.name, func(t *testing.T) {
+	// The Elixir fixtures keep models: in .kogen/project.yaml, which the coordinator no longer
+	// reads: every one of these resumes is refused once the configuration loads.
+	for _, name := range []string{"builder", "builder_verify", "review", "review_verify", "nullable_usage",
+		"staged_builder_second", "staged_builder_second_verify", "staged_builder_final", "staged_review_final"} {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			e, id := newLegacy76Env(t, sc.name)
-			if lineupMoved {
-				legacyMovedLineupRefusal(t, e, id)
-				return
-			}
-			sc.script(e)
-			before := e.runFiles(id)
-			r := legacyResume(e, id)
-			if r.exit != 0 || r.err != nil {
-				t.Fatalf("exit %d err %v\n%s\n%s", r.exit, r.err, r.shown(), r.errs.String())
-			}
-			man := legacy76Load(t)
-			child := legacyChild(t, e, id)
-			contains(t, "stdout", r.out.String(), "resuming Build "+id+" as "+child+" (root "+id+")\n")
-			contains(t, "stdout", r.out.String(), "landed fixture ")
-			eq(t, "commits", e.gitOut("rev-list", "--count", man.Start+"..HEAD"), "1")
-			if !reflect.DeepEqual(e.runFiles(id), before) {
-				t.Fatal("the files of the Elixir Build changed")
-			}
-			doc, state := e.checkpoint(child)
-			eq(t, "child version", doc["version"], any(float64(4)))
-			eq(t, "child stage", state["continuation"].(map[string]any)["stage"], any("landed"))
-			if sc.check != nil {
-				sc.check(t, e, id, child, r)
-			}
+			e, id := newLegacy76Env(t, name)
+			legacyLineupRefusal(t, e, id)
 		})
 	}
 }
@@ -549,6 +475,8 @@ func TestMain76StagedResumeRefusesInconsistentProgressAndEvidence(t *testing.T) 
 
 func TestMain76ExternallyRepairedBlockedReviewReopensUnderTheSameReviewer(t *testing.T) {
 	t.Parallel()
+	// The repaired Build's fixture keeps models: in .kogen/project.yaml, which the coordinator no
+	// longer reads: the resume is refused once the configuration loads.
 	for _, stage := range []string{"review_retry_verify", "review_verify"} {
 		t.Run(stage, func(t *testing.T) {
 			t.Parallel()
@@ -561,19 +489,7 @@ func TestMain76ExternallyRepairedBlockedReviewReopensUnderTheSameReviewer(t *tes
 				}
 			})
 			e.write("app.txt", "repaired\n")
-			f := e.prov
-			f.then(f.calls("submit_review", approveVerdict()))
-			r := legacyResume(e, id)
-			if r.exit != 0 || r.err != nil {
-				t.Fatalf("exit %d err %v\n%s", r.exit, r.err, r.shown())
-			}
-			contains(t, "stdout", r.out.String(), "landed fixture ")
-			reqs := f.requests()
-			eq(t, "requests", len(reqs), 1)
-			legacyContinues(t, reqs[0], "# Intent\n\nPreserve the fixture\n# acceptance.feature", "Final verification passed.",
-				"The caller explicitly resumed this blocked Build", "Original unresolved requirement")
-			eq(t, "passes", e.result(legacyChild(t, e, id))["passes"], any(float64(2)))
-			eq(t, "committed app", e.gitOut("show", "HEAD:app.txt"), "repaired")
+			legacyLineupRefusal(t, e, id)
 		})
 	}
 
