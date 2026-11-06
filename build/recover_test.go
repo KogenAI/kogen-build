@@ -228,15 +228,19 @@ func TestRecoveryRefusals(t *testing.T) {
 		output func(e *env) string
 		want   string
 		kind   string
+		// noAdvice is a refusal without the custody advice: the argument names no recorded Build.
+		noAdvice bool
 	}
 	cases := []refusal{
-		{name: "unknown id", id: func(*env, string) string { return "nothex" }, want: "unknown checkpoint", kind: "recovery_unsupported"},
-		{name: "absent checkpoint", id: func(*env, string) string { return "00000000" }, want: "absent checkpoint", kind: "recovery_unsupported"},
+		{name: "unknown id", id: func(*env, string) string { return "nothex" }, want: `"nothex" is not a Build id; a Build id is 8 lowercase hexadecimal characters, such as 0a1b2c3d; kogen intent list lists Build attempts`, kind: "recovery_unsupported", noAdvice: true},
+		{name: "no recorded Build", id: func(*env, string) string { return "00000000" }, want: "Build 00000000: no Build with this id in this checkout; kogen intent list lists Build attempts", kind: "recovery_unsupported", noAdvice: true},
+		{name: "absent checkpoint", prep: func(e *env, id string) { os.Remove(e.runPath(id, "checkpoint.json")) }, want: "unknown checkpoint: absent checkpoint", kind: "recovery_unsupported"},
+		{name: "damaged checkpoint", prep: func(e *env, id string) { os.WriteFile(e.runPath(id, "checkpoint.json"), []byte("{broken"), 0o600) }, want: "unknown checkpoint: malformed required checkpoint fields"},
 		{name: "version 2", prep: func(e *env, id string) {
 			doc, _ := e.checkpoint(id)
 			doc["version"] = float64(2)
 			e.writeCheckpoint(id, doc)
-		}, want: "legacy checkpoint version 2", kind: "recovery_unsupported"},
+		}, want: "unknown checkpoint: legacy checkpoint version 2", kind: "recovery_unsupported"},
 		{name: "head moved", prep: func(e *env, id string) { e.run("git", "commit", "-q", "--allow-empty", "-m", "moved") }, want: "HEAD changed"},
 		{name: "index changed", prep: func(e *env, id string) { e.write("staged.txt", "x\n"); e.run("git", "add", "staged.txt") }, want: "index changed"},
 		{name: "approval changed", prep: func(e *env, id string) {
@@ -295,7 +299,13 @@ func TestRecoveryRefusals(t *testing.T) {
 			}
 			text := r.shown()
 			contains(t, "output", text, "candidate/"+kind+": "+c.want)
-			contains(t, "output", text, "; inspect the run/receipt and checkout; correct the named fact or use ordinary Refine and fresh exact approval")
+			if c.noAdvice {
+				if strings.Contains(text, "fresh exact approval") {
+					t.Fatalf("advice on an argument that names no recorded Build: %s", text)
+				}
+			} else {
+				contains(t, "output", text, "; inspect the run/receipt and checkout; correct the named fact or use ordinary Refine and fresh exact approval")
+			}
 			if !reflect.DeepEqual(e.state(), state) || !reflect.DeepEqual(e.runFiles(id), files) {
 				t.Fatal("custody changed")
 			}

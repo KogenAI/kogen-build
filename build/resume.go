@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,16 @@ import (
 )
 
 var buildID = regexp.MustCompile(`^[a-f0-9]{8}$`)
+
+// notBuildIDDetail is the refusal of an argument that is not shaped like a Build id.
+func notBuildIDDetail(arg string) string {
+	return strconv.Quote(arg) + " is not a Build id; a Build id is 8 lowercase hexadecimal characters, such as 0a1b2c3d; kogen intent list lists Build attempts"
+}
+
+// noRecordedBuildDetail is the refusal of a well-formed id whose run directory does not exist.
+func noRecordedBuildDetail(id string) string {
+	return "Build " + id + ": no Build with this id in this checkout; kogen intent list lists Build attempts"
+}
 
 func refuse(id, reason, kind string) *sys.Error {
 	if kind == "" {
@@ -130,16 +141,19 @@ func (b *Attempt) reviewBlocked() bool {
 func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git.Repo, out **Attempt) error {
 	root, id := repo.Dir, in.ID
 	if !buildID.MatchString(id) {
-		return refuse(id, "unknown checkpoint", "resume_unsupported")
+		return sys.Fail("candidate", "resume_unsupported", notBuildIDDetail(id), 1)
 	}
 	path := filepath.Join(root, ".kogen/local/runs", id, "checkpoint.json")
+	if _, err := os.Stat(filepath.Dir(path)); err != nil {
+		return sys.Fail("candidate", "resume_unsupported", noRecordedBuildDetail(id), 1)
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return refuse(id, "absent or legacy checkpoint", "resume_unsupported")
+		return refuse(id, "unknown checkpoint: absent or legacy checkpoint", "resume_unsupported")
 	}
 	loaded, why := decodeCheckpoint(raw, in.Deps.legacy())
 	if why != "" {
-		return refuse(id, why, "")
+		return refuse(id, "unknown checkpoint: "+why, "")
 	}
 	doc := loaded.Doc
 	b := &Attempt{State: *loaded.State, s: s, deps: in.Deps, repo: repo, cache: provider.NewCache(loaded.State.PromptCache)}

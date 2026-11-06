@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -192,26 +193,26 @@ func TestResumeRefusals(t *testing.T) {
 		}),
 			"protected-contract blocker requires correction and fresh approval", "resume_refused", nil},
 		{"missing phase", setDoc(func(doc, state map[string]any) { delete(state, "phase") }),
-			"malformed required checkpoint fields", "resume_refused", nil},
+			"unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
 		{"unknown stage", setDoc(func(doc, state map[string]any) { state["continuation"] = map[string]any{"stage": "elsewhere"} }),
-			"malformed required checkpoint fields", "resume_refused", nil},
+			"unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
 		{"bad cache state", setDoc(func(doc, state map[string]any) {
 			state["prompt_cache_states"] = map[string]any{"key": map[string]any{"id": "", "unsupported": false, "response": nil}}
-		}), "malformed required checkpoint fields", "resume_refused", nil},
+		}), "unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
 		{"approval of the envelope differs", setDoc(func(doc, state map[string]any) { doc["approval"] = base64.StdEncoding.EncodeToString([]byte("other")) }),
-			"malformed required checkpoint fields", "resume_refused", nil},
-		{"version 1", setDoc(func(doc, state map[string]any) { doc["version"] = 1 }), "incompatible checkpoint version 1", "resume_refused", nil},
-		{"version 2", setDoc(func(doc, state map[string]any) { doc["version"] = 2 }), "incompatible checkpoint version 2", "resume_refused", nil},
-		{"version 3 whose state is not an Elixir term", setDoc(func(doc, state map[string]any) { doc["version"] = 3 }), "malformed required checkpoint fields", "resume_refused", nil},
-		{"version 999", setDoc(func(doc, state map[string]any) { doc["version"] = 999 }), "incompatible checkpoint version 999", "resume_refused", nil},
-		{"version text", setDoc(func(doc, state map[string]any) { doc["version"] = "x" }), `incompatible checkpoint version "x"`, "resume_refused", nil},
-		{"no version", setDoc(func(doc, state map[string]any) { delete(doc, "version") }), "malformed required checkpoint fields", "resume_refused", nil},
+			"unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
+		{"version 1", setDoc(func(doc, state map[string]any) { doc["version"] = 1 }), "unknown checkpoint: incompatible checkpoint version 1", "resume_refused", nil},
+		{"version 2", setDoc(func(doc, state map[string]any) { doc["version"] = 2 }), "unknown checkpoint: incompatible checkpoint version 2", "resume_refused", nil},
+		{"version 3 whose state is not an Elixir term", setDoc(func(doc, state map[string]any) { doc["version"] = 3 }), "unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
+		{"version 999", setDoc(func(doc, state map[string]any) { doc["version"] = 999 }), "unknown checkpoint: incompatible checkpoint version 999", "resume_refused", nil},
+		{"version text", setDoc(func(doc, state map[string]any) { doc["version"] = "x" }), `unknown checkpoint: incompatible checkpoint version "x"`, "resume_refused", nil},
+		{"no version", setDoc(func(doc, state map[string]any) { delete(doc, "version") }), "unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
 		{"broken json", func(e *env, id string) { os.WriteFile(e.runPath(id, "checkpoint.json"), []byte("{broken"), 0o600) },
-			"malformed required checkpoint fields", "resume_refused", nil},
+			"unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
 		{"empty object", func(e *env, id string) { os.WriteFile(e.runPath(id, "checkpoint.json"), []byte("{}"), 0o600) },
-			"malformed required checkpoint fields", "resume_refused", nil},
+			"unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
 		{"no checkpoint", func(e *env, id string) { os.Remove(e.runPath(id, "checkpoint.json")) },
-			"absent or legacy checkpoint", "resume_unsupported", nil},
+			"unknown checkpoint: absent or legacy checkpoint", "resume_unsupported", nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -240,9 +241,26 @@ func TestResumeRefusals(t *testing.T) {
 	t.Run("not an id", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t)
-		for _, id := range []string{"xyz", "../../etc", "DEADBEEF", ""} {
+		for _, id := range []string{"xyz", "../../etc", "DEADBEEF", "0a1b2c3", "0a1b2c3d4", ""} {
 			r := e.resume(id)
-			contains(t, "output "+id, r.shown(), "candidate/resume_unsupported: Build "+id+": unknown checkpoint;")
+			eq(t, "exit "+id, r.exit, 1)
+			text := r.shown()
+			contains(t, "output "+id, text, "candidate/resume_unsupported: "+strconv.Quote(id)+
+				" is not a Build id; a Build id is 8 lowercase hexadecimal characters, such as 0a1b2c3d; kogen intent list lists Build attempts\n")
+			if strings.Contains(text, "fresh approval") {
+				t.Fatalf("drift advice on a malformed id: %s", text)
+			}
+		}
+	})
+	t.Run("no recorded Build", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t)
+		r := e.resume("0a1b2c3d")
+		eq(t, "exit", r.exit, 1)
+		text := r.shown()
+		contains(t, "output", text, "candidate/resume_unsupported: Build 0a1b2c3d: no Build with this id in this checkout; kogen intent list lists Build attempts\n")
+		if strings.Contains(text, "fresh approval") {
+			t.Fatalf("drift advice on an unrecorded id: %s", text)
 		}
 	})
 }

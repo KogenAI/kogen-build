@@ -1149,19 +1149,19 @@ func TestLegacyResumeRefusals(t *testing.T) {
 		{name: "commit boundary", fixture: "commit", want: "uncertain commit boundary; inspect effects before starting a freshly approved Build"},
 		{name: "startup boundary", fixture: "startup", want: "uncertain startup boundary; inspect effects before starting a freshly approved Build"},
 		{name: "blocker", fixture: "blocker", want: "protected-contract blocker requires correction and fresh approval"},
-		{name: "version 2", file: "version2", raw: true, want: "incompatible checkpoint version 2"},
-		{name: "truncated state", file: "damaged-truncated", raw: true, want: "damaged checkpoint state"},
-		{name: "state that is not a term", file: "damaged-garbage", raw: true, want: "damaged checkpoint state"},
-		{name: "missing phase", file: "malformed-no-phase", raw: true, want: "malformed required checkpoint fields"},
-		{name: "unknown phase", file: "malformed-phase", raw: true, want: "malformed required checkpoint fields"},
-		{name: "envelope without an approval", envelope: func(doc map[string]any) { delete(doc, "approval") }, want: "malformed required checkpoint fields"},
-		{name: "state that is not text", envelope: func(doc map[string]any) { doc["state"] = map[string]any{} }, want: "malformed required checkpoint fields"},
-		{name: "state that is not base64", envelope: func(doc map[string]any) { doc["state"] = "not base64!" }, want: "malformed required checkpoint fields"},
+		{name: "version 2", file: "version2", raw: true, want: "unknown checkpoint: incompatible checkpoint version 2"},
+		{name: "truncated state", file: "damaged-truncated", raw: true, want: "unknown checkpoint: damaged checkpoint state"},
+		{name: "state that is not a term", file: "damaged-garbage", raw: true, want: "unknown checkpoint: damaged checkpoint state"},
+		{name: "missing phase", file: "malformed-no-phase", raw: true, want: "unknown checkpoint: malformed required checkpoint fields"},
+		{name: "unknown phase", file: "malformed-phase", raw: true, want: "unknown checkpoint: malformed required checkpoint fields"},
+		{name: "envelope without an approval", envelope: func(doc map[string]any) { delete(doc, "approval") }, want: "unknown checkpoint: malformed required checkpoint fields"},
+		{name: "state that is not text", envelope: func(doc map[string]any) { doc["state"] = map[string]any{} }, want: "unknown checkpoint: malformed required checkpoint fields"},
+		{name: "state that is not base64", envelope: func(doc map[string]any) { doc["state"] = "not base64!" }, want: "unknown checkpoint: malformed required checkpoint fields"},
 		{name: "state with a line break", envelope: func(doc map[string]any) {
 			s := doc["state"].(string)
 			doc["state"] = s[:8] + "\n" + s[8:]
-		}, want: "malformed required checkpoint fields"},
-		{name: "a hand-built state", state: func(m *legacyMap) { legacyDelete(m, latom("working_context")) }, want: "malformed required checkpoint fields"},
+		}, want: "unknown checkpoint: malformed required checkpoint fields"},
+		{name: "a hand-built state", state: func(m *legacyMap) { legacyDelete(m, latom("working_context")) }, want: "unknown checkpoint: malformed required checkpoint fields"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -162,12 +162,15 @@ func sha(b []byte) string {
 func (r *recovery) run() error {
 	root, id := r.root, r.id
 	if !buildID.MatchString(id) {
-		return recoveryRefused("unknown checkpoint", "recovery_unsupported")
+		return sys.Fail("candidate", "recovery_unsupported", notBuildIDDetail(id), 1)
 	}
 	r.dir = filepath.Join(root, ".kogen/local/runs", id)
+	if _, err := os.Stat(r.dir); err != nil {
+		return sys.Fail("candidate", "recovery_unsupported", noRecordedBuildDetail(id), 1)
+	}
 	cp := filepath.Join(r.dir, "checkpoint.json")
 	if _, err := os.Stat(cp); err != nil {
-		return recoveryRefused("absent checkpoint", "recovery_unsupported")
+		return recoveryRefused("unknown checkpoint: absent checkpoint", "recovery_unsupported")
 	}
 	raw, err := readSafe(cp)
 	if err != nil {
@@ -177,14 +180,14 @@ func (r *recovery) run() error {
 		if m, ok := v.(map[string]any); ok {
 			if version, ok := m["version"]; ok {
 				if n, _ := version.(json.Number); n != "3" && n != "4" {
-					return recoveryRefused("legacy checkpoint version "+inspectScalar(version), "recovery_unsupported")
+					return recoveryRefused("unknown checkpoint: legacy checkpoint version "+inspectScalar(version), "recovery_unsupported")
 				}
 			}
 		}
 	}
 	loaded, why := decodeCheckpoint(raw, newLegacy(Deps{}))
 	if why != "" {
-		return recoveryRefused(why, "")
+		return recoveryRefused("unknown checkpoint: "+why, "")
 	}
 	b, doc := loaded.State, loaded.Doc
 	r.b, r.doc = b, doc

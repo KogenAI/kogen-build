@@ -366,7 +366,7 @@ func TestMain76StagedBoundariesAreRefused(t *testing.T) {
 	// ExUnit: lib/kogen/stages.ex valid_phase?/2 (a request's tool boundary is no stage owner's) and test/integration/build_boundaries_test.exs (tool boundaries are uncertain)
 	for _, c := range []struct{ name, want string }{
 		{"staged_tool_second", "uncertain tool boundary; inspect effects before starting a freshly approved Build"},
-		{"staged_tool_request", "malformed required checkpoint fields"},
+		{"staged_tool_request", "unknown checkpoint: malformed required checkpoint fields"},
 		{"tool", "uncertain tool boundary; inspect effects before starting a freshly approved Build"},
 		{"tool_request", "uncertain tool boundary; inspect effects before starting a freshly approved Build"},
 	} {
@@ -461,7 +461,7 @@ func TestMain76StagedResumeRefusesInconsistentProgressAndEvidence(t *testing.T) 
 			cp := string(e.legacy76Checkpoint(id))
 			r := e.resume(id)
 			eq(t, "exit", r.exit, 1)
-			contains(t, "output", r.shown(), "candidate/resume_refused: Build "+id+": malformed required checkpoint fields;")
+			contains(t, "output", r.shown(), "candidate/resume_refused: Build "+id+": unknown checkpoint: malformed required checkpoint fields;")
 			if string(e.legacy76Checkpoint(id)) != cp || !reflect.DeepEqual(e.state(), before) || !reflect.DeepEqual(e.runIDs(), runs) {
 				t.Fatal("custody or runs changed")
 			}
