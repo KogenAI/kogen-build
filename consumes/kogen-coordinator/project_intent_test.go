@@ -35,7 +35,11 @@ func TestRequireIntentDir(t *testing.T) {
 		t.Errorf("project.RequireIntentDir of an existing Intent = %v", err)
 	}
 	e := wantSysError(t, "project.RequireIntentDir of a missing Intent", project.RequireIntentDir(f.Dir, "other"), "intent", "not_found", 2)
-	equal(t, "project.RequireIntentDir detail", e.Detail, "Intent does not exist")
+	equal(t, "project.RequireIntentDir detail", e.Detail, "Intent does not exist: other (looked in .kogen/intents/other)")
+	equalList(t, "project.RequireIntentDir lines", e.Lines, []string{
+		"kogen intent list shows existing Intents; kogen intent shape other <request-file> creates one",
+		"did you mean: " + fixtureSlug + "?",
+	})
 }
 
 // build/build.go loads the approved Intent (its title for the commit message, its Model: line,

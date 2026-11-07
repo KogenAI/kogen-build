@@ -261,7 +261,7 @@ func TestStartRefusals(t *testing.T) {
 	}{
 		{"not approved", func(e *env) { os.Remove(project.ApprovalPath(e.root, testSlug)) }, 5, "intent/not_approved: fixture is not approved; review it with kogen intent approve fixture\n"},
 		{"changed since approval", func(e *env) { e.write(project.FeaturePath(testSlug), testFeature+"  # changed\n") }, 1, "intent/changed_since_approval: fixture changed after approval and is now "},
-		{"no intent", func(e *env) { os.RemoveAll(filepath.Join(e.root, ".kogen/intents")) }, 2, "intent/not_found: Intent does not exist\n"},
+		{"no intent", func(e *env) { os.RemoveAll(filepath.Join(e.root, ".kogen/intents")) }, 2, "intent/not_found: Intent does not exist: fixture (looked in .kogen/intents/fixture)\n  kogen intent list shows existing Intents; kogen intent shape fixture <request-file> creates one\n"},
 		{"dirty tree", func(e *env) { e.write("stray.txt", "x\n") }, 5, "environment/dirty_tree: 1 changed path(s) are not part of an Intent; commit, stash or discard them first\n  stray.txt\n"},
 		{"no git identity", func(e *env) {
 			e.run("git", "config", "--unset", "user.name")
