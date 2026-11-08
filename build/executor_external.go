@@ -135,7 +135,19 @@ func (b *Attempt) startBuilder(ctx context.Context, brief executor.Brief) (execu
 	if err := os.Chmod(task.Dir, 0o700); err != nil {
 		return nil, err
 	}
-	sess, err := b.ext.exec.Start(ctx, task, b.markExternalWrites(func(event map[string]any) { b.Run.Event(event) }))
+	sess, err := b.ext.exec.Start(ctx, task, b.markExternalWrites(func(event map[string]any) {
+		b.Run.Event(event)
+		if event["event"] == "executor_tool" && event["unanswered"] != true {
+			name, _ := event["name"].(string)
+			args, _ := event["arguments"].(map[string]any)
+			path, _ := args["file_path"].(string)
+			if path == "" {
+				path, _ = args["path"].(string)
+			}
+			failed := event["denied"] == true || event["result_error"] == true || event["rejected_before_hook"] == true
+			b.toolProgress(name, path, failed)
+		}
+	}))
 	if err != nil {
 		return nil, err
 	}

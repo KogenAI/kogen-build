@@ -2,8 +2,10 @@ package build
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -176,6 +178,22 @@ func (n *nativeSession) Round(ctx context.Context, in executor.Input) (executor.
 				b.noEdit.wrote = true
 			}
 			if !terminal {
+				path, _ := call.Args()["path"].(string)
+				failed := strings.HasPrefix(out.Text, "error:") || strings.HasPrefix(out.Text, "refused:")
+				if call.Name == "shell" {
+					if strings.HasPrefix(out.Text, "exit status: ") {
+						failed = !strings.HasPrefix(out.Text, "exit status: 0\n")
+					} else {
+						var envelope struct {
+							Status     string `json:"status"`
+							ExitStatus int    `json:"exit_status"`
+						}
+						if json.Unmarshal([]byte(out.Text), &envelope) == nil && envelope.Status == "completed" {
+							failed = envelope.ExitStatus != 0
+						}
+					}
+				}
+				b.toolProgress(call.Name, path, failed)
 				if event := tools.ReadEvent(call, out, "build"); event != nil {
 					b.Run.Event(event)
 				}

@@ -451,3 +451,16 @@ func (b *Attempt) resumeStage(ctx context.Context) error {
 		return route.Resume(ctx, steps{b}, c.Stage)
 	}
 }
+
+// toolProgress writes only the completed operation's identity and outcome, never its result.
+func (b *Attempt) toolProgress(name, path string, failed bool) {
+	status := "ok"
+	if failed {
+		status = "failed"
+	}
+	line := fmt.Sprintf("kogen: building (round %d) — %s", b.Round, name)
+	if path != "" {
+		line += " " + path
+	}
+	b.s.Progress(line + " " + status)
+}
