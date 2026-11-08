@@ -106,7 +106,7 @@ func TestCoreInspectString(t *testing.T) {
 		"\x00":               `"\0"`,
 		"#{x}":               `"\#{x}"`,
 		"# {x} #":            `"# {x} #"`,
-		"\x01\x7f":           `"\x01\x7F"`,
+		"\x01\x7f":           `"\x01\d"`,
 		"é✓":                 `"é✓"`,
 		string(rune(0x200b)): "\"\\" + "u200B\"",
 		"":                   `""`,
@@ -305,7 +305,7 @@ func TestCoreReviewRecordJSON(t *testing.T) {
 func TestCoreExecutorStateJSON(t *testing.T) {
 	cost := 0.5
 	st := core.ExecutorState{
-		Name: "claude-code", Version: "2.1.0", SessionID: "sess-1", Rounds: 2,
+		Name: "claude-code", Version: "2.1.318", SessionID: "sess-1", Rounds: 2,
 		Usage: core.ExecutorUsage{Input: core.Count(3), Cached: nil, Output: core.Count(4), Reasoning: core.Count(0), State: "partial", Source: "harness", CostUSD: &cost},
 	}
 	var _ string = st.Name
@@ -320,7 +320,7 @@ func TestCoreExecutorStateJSON(t *testing.T) {
 	var _ string = st.Usage.State
 	var _ string = st.Usage.Source
 	var _ *float64 = st.Usage.CostUSD
-	want := `{"name":"claude-code","version":"2.1.0","session_id":"sess-1","rounds":2,"usage":{"input":3,"cached":null,"output":4,"reasoning":0,"state":"partial","source":"harness","cost_usd":0.5}}`
+	want := `{"name":"claude-code","version":"2.1.318","session_id":"sess-1","rounds":2,"usage":{"input":3,"cached":null,"output":4,"reasoning":0,"state":"partial","source":"harness","cost_usd":0.5}}`
 	if got := encoded(t, "core.ExecutorState", st); got != want {
 		t.Errorf("core.ExecutorState: JSON = %s, want %s", got, want)
 	}

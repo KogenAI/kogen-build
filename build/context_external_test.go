@@ -253,7 +253,7 @@ func fakeClaudeScript(state string) string {
 	return `#!/bin/sh
 state='` + state + `'
 case "$1" in
---version) echo "2.1.312 (Claude Code)"; exit 0;;
+--version) echo "2.1.318 (Claude Code)"; exit 0;;
 auth) echo '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"max"}'; exit 0;;
 esac
 sid=''; prev=''
@@ -266,7 +266,7 @@ echo $n > "$state/calls"
 cat > "$state/prompt-$n.bin"
 printf 'candidate\n' > app.txt
 cwd=$(pwd -P)
-printf '{"type":"system","subtype":"init","cwd":"%s","session_id":"%s","mcp_servers":[],"model":"claude-sonnet-5-5","permissionMode":"acceptEdits","apiKeySource":"none","claude_code_version":"2.1.312"}\n' "$cwd" "$sid"
+printf '{"type":"system","subtype":"init","cwd":"%s","session_id":"%s","mcp_servers":[],"model":"claude-sonnet-5-5","permissionMode":"acceptEdits","apiKeySource":"none","claude_code_version":"2.1.318"}\n' "$cwd" "$sid"
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"%s","result":"done","terminal_reason":"completed","stop_reason":"end_turn","permission_denials":[]}\n' "$sid"
 `
 }
