@@ -1,0 +1,41 @@
+# Assert typed context failure in Build test
+
+Slug: build-typed-context-failure-contract
+Model: not applicable — a test-only change has no meaningful state
+Acceptance:
+- .kogen/intents/build-typed-context-failure-contract/acceptance.feature
+- features/steps/build-typed-context-failure-contract__steps.js
+
+Narrow the Build diagnostic input contract around `intent/context_unavailable` and exit 2 in the test `TestDiagnosticDataIsBoundedOriginalUTF8` in `build/unit_test.go`. Its refusal loop (the inputs `""`, `" \t\r\n "`, `"\xff"`, 262,145 bytes of `x`, and 131,073 repetitions of `é`) currently finds the public code by searching `err.Error()` for the text `intent/context_unavailable`. The test must instead assert the existing structured failure identity of `Diagnostic.Validate`: the returned error is, or wraps (`errors.As`), a `*sys.Error` (package `github.com/KogenAI/kogen-loop/sys`) with `Class` `intent`, `Reason` `context_unavailable` and `Exit` 2. A plain error whose text merely spells the code must fail the test, and so must a different class, a different kind or a different exit code.
+
+The test keeps everything else it checks: the exact UTF-8 size boundary in bytes (sizes 1, 262,143 and 262,144 accepted; 262,145 bytes and 131,073 two-byte characters refused), the invalid UTF-8 refusal, the blank refusals, and its successful cases (`"  Δ🙂\r\ntrailing\n "` and 131,072 repetitions of `é` are accepted), all built with the matching SHA-256 digest. The digest mismatch check lives in the sibling test, which is not changed. The failure wording belongs to the CLI: the focused test asserts no `Detail` text, so a change of wording alone does not fail it.
+
+This is a test-only change. No production file, saved data (`diagnostic-context.json`), protocol or other error changes, and no other test is edited. The focused test and the full Build suite must pass.
+
+## Decisions
+- The structured identity asserted is Class `intent`, Reason `context_unavailable`, Exit 2 of a `*sys.Error` read with `errors.As`; `Detail` is not asserted. (constraint: the test must not search err.Error() for the public code) (evidence: build/context.go; build/unit_test.go) (source: request)
+- Only `TestDiagnosticDataIsBoundedOriginalUTF8` is edited; the sibling tests `TestDiagnosticDataShapeAndDigestAreExact` (prefix check) and `TestDiagnosticDataThatIsNotValidRefusesBeforeAnyEffect` (exact CLI wording and exit 2 through `Build`) stay unchanged. (constraint: no other test and no production file is changed) (evidence: build/unit_test.go) (assumption: the user confirms that the sibling prefix check in TestDiagnosticDataShapeAndDigestAreExact stays out of this row, since the request says to start with the focused test and this row is one scoped Build) (source: request)
+- Acceptance observes the test from outside by running it with `go test -overlay` against variants of `build/context.go`; the checkout is never written. A rejection counts only when the runner prints `--- FAIL: TestDiagnosticDataIsBoundedOriginalUTF8`, so a compile error is not a rejection. (evidence: build/context.go; build/unit_test.go) (source: request)
+- The control overlays in `controls.json` replace `build/unit_test.go` with a reduced file holding `digestOf`, `diagnostic`, the focused test and, where the identity is asserted, its helper. Dropping the other tests of that file is enough for these controls because no scenario runs them, and `digestOf` and `diagnostic` stay because other test files of the package use them. There are seven wrong implementations, the limit; the invalid UTF-8 variant is exercised by its scenario without its own wrong control. (evidence: build/unit_test.go; build/context_external_test.go; build/loop_knobs_test.go; build/review_test.go) (assumption: the user confirms that reduced single-test control overlays and seven wrong implementations are an acceptable reading of the request's "meaningful red controls") (source: request)
+- The structured identity asserted is Class intent, Reason context_unavailable, Exit 2 of a *sys.Error read with errors.As; Detail is not asserted. (decision: D1, round 1) (constraint: the test must not search err.Error() for the public code) (evidence: build/context.go; build/unit_test.go) (assumption: none beyond the repository files read; sys.Error fields Class, Reason, Detail, Exit were read in the pinned kogen-loop module cache.) (source: request)
+- Only TestDiagnosticDataIsBoundedOriginalUTF8 is edited; sibling tests stay unchanged. (decision: D2, round 1) (constraint: no other test and no production file is changed) (evidence: build/unit_test.go) (assumption: The user must confirm that the sibling prefix check in TestDiagnosticDataShapeAndDigestAreExact stays out of this row.) (source: request)
+- Acceptance observes the test from outside by running it with go test -overlay against variants of build/context.go; a rejection counts only when the runner prints --- FAIL for the focused test. (decision: D3, round 1) (evidence: build/context.go; build/unit_test.go) (assumption: An external session run of the focused test with go test -json on the unchanged tree showed the top-level --- PASS line; this is not recorded as evidence.) (source: request)
+- Control overlays replace build/unit_test.go with a reduced file; seven wrong implementations, the limit. (decision: D4, round 1) (evidence: build/unit_test.go; build/context_external_test.go; build/loop_knobs_test.go; build/review_test.go) (assumption: The invalid UTF-8 variant has no wrong control of its own because of the seven-control limit.) (source: request)
+- The control overlays in controls.json replace build/unit_test.go with a reduced file; seven wrong implementations, the limit. (decision: D5, round 1) (evidence: build/unit_test.go; build/context_external_test.go; build/loop_knobs_test.go; build/review_test.go) (assumption: The user must confirm that reduced single-test control overlays and seven wrong implementations are an acceptable reading of 'meaningful red controls'; the invalid UTF-8 variant has no wrong control of its own.) (source: request)
+
+## Source comparison
+- Addressed: "Narrow the Build diagnostic input contract around intent/context_unavailable and exit 2": scenario "The focused test checks the structured failure identity" runs the test against a plain error spelling the code, class `build`, kind `context_missing` and exit code 1, and requires each to fail it (evidence: build/context.go).
+- Addressed: "Assert existing structured failure identity rather than searching err.Error for the public code": the plain-error variant is accepted today by the substring search and must be rejected (the unchanged-tree red).
+- Addressed: "Retain exact UTF-8 size and digest checks, the successful cases, and meaningful red controls": scenarios for size counted in runes, unchecked UTF-8 and a refused carriage return; the digest mismatch check lives in the sibling test, which is left unchanged (evidence: build/unit_test.go).
+- Addressed: "CLI owns wording": scenario "The focused test leaves the wording to the CLI" requires the test to pass when only the `Detail` text differs.
+- Addressed: "Keep saved data, protocol and other errors unchanged": scenario "Only the focused test file changes" requires `build/unit_test.go` to be the only changed file outside `.kogen/` and this Intent's step file; the existing Build suite covers the rest.
+- Addressed: "Run the focused test and the full Build suite": the first scenario runs the focused test and requires its `--- PASS` line; the configured `go-test` check runs the full suite (evidence: .kogen/project.yaml).
+- Omitted: the user order about the kogen and kogen-setup split, and the Studio issue references, ask for no behavior in this module. Conflicting: none.
+
+## Tests
+- Failure identity (`*sys.Error` with class `intent`, kind `context_unavailable`, exit 2) is asserted, not searched in error text: update `TestDiagnosticDataIsBoundedOriginalUTF8` in `build/unit_test.go` (unit)
+- The exact byte-size and UTF-8 boundaries and the successful cases stay: the same test keeps its three input groups (unit)
+- Wording stays with the CLI and other errors are unchanged: `TestDiagnosticDataThatIsNotValidRefusesBeforeAnyEffect` and the rest of the Build suite pass unchanged (existing)
+
+## Feasibility
+- none

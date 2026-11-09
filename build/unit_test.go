@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-loop/tools"
 	"github.com/KogenAI/kogen-verification/verify"
 )
@@ -24,6 +26,19 @@ func digestOf(text string) string {
 
 func diagnostic(text string) *Diagnostic {
 	return &Diagnostic{Text: text, SourcePath: "/inaccessible/label", SHA256: digestOf(text)}
+}
+
+// requireContextUnavailable asserts the structured failure identity (class, kind, exit code);
+// the wording belongs to the CLI.
+func requireContextUnavailable(t *testing.T, label string, err error) {
+	t.Helper()
+	var failure *sys.Error
+	if !errors.As(err, &failure) {
+		t.Fatalf("%q: %T %v is not a structured failure", label, err, err)
+	}
+	if failure.Class != "intent" || failure.Reason != "context_unavailable" || failure.Exit != 2 {
+		t.Fatalf("%q: got %s/%s exit %d, want intent/context_unavailable exit 2", label, failure.Class, failure.Reason, failure.Exit)
+	}
 }
 
 func TestDiagnosticDataIsBoundedOriginalUTF8(t *testing.T) {
@@ -40,10 +55,7 @@ func TestDiagnosticDataIsBoundedOriginalUTF8(t *testing.T) {
 		}
 	}
 	for _, text := range []string{"", " \t\r\n ", "\xff", strings.Repeat("x", 262_145), strings.Repeat("é", 131_073)} {
-		err := diagnostic(text).Validate()
-		if err == nil || !strings.Contains(err.Error(), "intent/context_unavailable") {
-			t.Fatalf("%q: %v", text, err)
-		}
+		requireContextUnavailable(t, text[:min(len(text), 16)], diagnostic(text).Validate())
 	}
 }
 
