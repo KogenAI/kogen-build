@@ -2,13 +2,10 @@ package build
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/KogenAI/kogen-review/review"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,6 +17,7 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-executor/executor/claudecode"
+	"github.com/KogenAI/kogen-executor/testkit/clauderuntime"
 )
 
 // The frozen `build --context` diagnostic reaches the builder's first prompt and every
@@ -247,86 +245,108 @@ func TestContextExternalReviewMatrix(t *testing.T) {
 
 // ---- the first prompt of the real Claude Code adapter ----
 
-// fakeClaudeScript is a minimal `claude`: it answers --version and auth status, keeps every
-// prompt it receives on stdin, writes the candidate and ends the round successfully.
-func fakeClaudeScript(state string) string {
-	return `#!/bin/sh
-state='` + state + `'
-case "$1" in
---version) echo "2.1.318 (Claude Code)"; exit 0;;
-auth) echo '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"max"}'; exit 0;;
-esac
-sid=''; prev=''
-for a in "$@"; do
-  if [ "$prev" = "--session-id" ] || [ "$prev" = "--resume" ]; then sid=$a; fi
-  prev=$a
-done
-n=1; if [ -f "$state/calls" ]; then n=$(( $(cat "$state/calls") + 1 )); fi
-echo $n > "$state/calls"
-cat > "$state/prompt-$n.bin"
-printf 'candidate\n' > app.txt
-cwd=$(pwd -P)
-printf '{"type":"system","subtype":"init","cwd":"%s","session_id":"%s","mcp_servers":[],"model":"claude-sonnet-5-5","permissionMode":"acceptEdits","apiKeySource":"none","claude_code_version":"2.1.318"}\n' "$cwd" "$sid"
-printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"%s","result":"done","terminal_reason":"completed","stop_reason":"end_turn","permission_denials":[]}\n' "$sid"
-`
+// candidateWriter wraps the real Claude Code adapter: the shared fake runtime writes no files, so
+// each round first writes the candidate (app.txt) into the task's checkout, as the runtime's former
+// script did, and then runs the adapter's own session.
+type candidateWriter struct {
+	executor.Executor
+	t *testing.T
 }
 
-// withClaudeProcess provides the real Claude Code adapter on the scripted process. The
-// executor checks the managed runtime before every start; a local test origin that supplies
-// its own manifest (claudecode.SeamEnv) leaves the pinned size unknown, so the stand-in is
-// not padded to it. The stand-in is owned by the current user with mode exactly 0755.
-func withClaudeProcess(t *testing.T) (func(*Input), string) {
-	t.Helper()
-	dir := physical(t, t.TempDir())
-	state := filepath.Join(dir, "state")
-	if err := os.MkdirAll(state, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	home := filepath.Join(dir, "home")
-	script := []byte(fakeClaudeScript(state))
-	runtime := claudecode.RuntimePath(home)
-	writeFile(t, runtime, string(script), 0o755)
-	if err := os.Chmod(runtime, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	platform, ok := claudecode.Supported()
-	if !ok {
-		t.Fatalf("Claude Code is not supported on this platform")
-	}
-	sum := sha256.Sum256(script)
-	manifest, err := json.Marshal(map[string]any{"platforms": map[string]any{
-		platform: map[string]any{"checksum": hex.EncodeToString(sum[:]), "size": len(script)},
-	}})
+func (c candidateWriter) Start(ctx context.Context, task executor.Task, emit executor.Sink) (executor.Session, error) {
+	s, err := c.Executor.Start(ctx, task, emit)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
-	root := "/" + claudecode.Version
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET "+root+"/manifest.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Write(manifest)
+	return candidateSession{Session: s, t: c.t, root: task.Root}, nil
+}
+
+// FirstPromptBytes forwards the adapter's exact first-prompt size.
+func (c candidateWriter) FirstPromptBytes(role string, brief executor.Brief) int {
+	if sizer, ok := c.Executor.(executor.PromptSizer); ok {
+		return sizer.FirstPromptBytes(role, brief)
+	}
+	return len(brief.Stable) + len(brief.Dynamic)
+}
+
+type candidateSession struct {
+	executor.Session
+	t    *testing.T
+	root string
+}
+
+func (s candidateSession) Round(ctx context.Context, in executor.Input) (executor.RoundResult, error) {
+	lineupWriteApp(s.t, s.root, "candidate\n")
+	return s.Session.Round(ctx, in)
+}
+
+// successRound is a successful result line of the fake runtime.
+func successRound() string {
+	return clauderuntime.ResultLine(map[string]any{"stop_reason": "end_turn", "permission_denials": []any{}})
+}
+
+// withClaudeProcess installs the shared fake Claude runtime of kogen-executor (round 1 plays the
+// given stream lines after the init line; none means a successful result) and provides the real
+// Claude Code adapter on it, wrapped to write the candidate.
+func withClaudeProcess(t *testing.T, e *env, round ...string) (func(*Input), *clauderuntime.Fixture) {
+	t.Helper()
+	if len(round) == 0 {
+		round = []string{successRound()}
+	}
+	dir := physical(t, t.TempDir())
+	fx := clauderuntime.Install(t, clauderuntime.Options{
+		Home:     filepath.Join(dir, "home"),
+		State:    filepath.Join(dir, "state"),
+		Rounds:   [][]string{round},
+		Checkout: physical(t, e.root),
 	})
-	mux.HandleFunc("GET "+root+"/"+platform+"/claude", func(w http.ResponseWriter, r *http.Request) {
-		w.Write(script)
-	})
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-	t.Setenv(claudecode.SeamEnv, server.URL)
 	return func(in *Input) {
 		in.External = func(project.Role) (executor.Executor, error) {
-			return claudecode.New(claudecode.Options{Home: home, HookCommand: []string{"/bin/true"}}), nil
+			return candidateWriter{Executor: claudecode.New(claudecode.Options{Home: fx.Home, HookCommand: []string{"/bin/true"}}), t: t}, nil
 		}
-	}, state
+	}, fx
+}
+
+// roundCalls is the number of rounds the fake runtime played.
+func roundCalls(t *testing.T, fx *clauderuntime.Fixture) string {
+	t.Helper()
+	n, _ := os.ReadFile(filepath.Join(fx.State, "calls"))
+	return strings.TrimSpace(string(n))
+}
+
+// TestContextExternalMalformedRuntimeResult: a malformed round result is refused by the adapter,
+// the Build stops after one round and commits nothing.
+func TestContextExternalMalformedRuntimeResult(t *testing.T) {
+	for _, c := range []struct{ name, line, refusal string }{
+		{"truncated json", `{"type":"result","subtype":"success","is_error":false`,
+			"executor/protocol: line 2 of the event stream is not a JSON object"},
+		{"is_error not a boolean", clauderuntime.ResultLine(map[string]any{"is_error": "false"}),
+			"executor/protocol: the result has no boolean is_error flag"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.useRoles(true, false)
+			provide, fx := withClaudeProcess(t, e, c.line)
+			start := e.head()
+			a := e.build(provide)
+			if a.exit != 1 || a.err != nil {
+				t.Fatalf("exit %d err %v\n%s", a.exit, a.err, a.shown())
+			}
+			contains(t, "output", a.shown(), c.refusal)
+			eq(t, "commits", e.commitsSince(start), "0")
+			eq(t, "rounds", roundCalls(t, fx), "1")
+		})
+	}
 }
 
 func TestContextExternalFirstPrompt(t *testing.T) {
-	// No t.Parallel: the subtests set the process environment with t.Setenv.
 	text := "Previous candidate failed at line 3 — \xf0\x9f\x99\x82\nnot approval, a plan or current proof\n"
 	text = strings.ToValidUTF8(text, "")
 	for _, withContext := range []bool{true, false} {
 		t.Run(fmt.Sprintf("context %v", withContext), func(t *testing.T) {
 			e := newEnv(t)
 			e.useRoles(true, false)
-			provide, state := withClaudeProcess(t)
+			provide, fx := withClaudeProcess(t, e)
 			d := &Diagnostic{Text: text, SourcePath: "/inaccessible/label", SHA256: digestOf(text)}
 			if !withContext {
 				d = nil
@@ -335,11 +355,7 @@ func TestContextExternalFirstPrompt(t *testing.T) {
 			if a.exit != 0 || a.err != nil {
 				t.Fatalf("exit %d err %v\n%s", a.exit, a.err, a.shown())
 			}
-			raw, err := os.ReadFile(filepath.Join(state, "prompt-1.bin"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			prompt := string(raw)
+			prompt := fx.Prompt(t, 1)
 			contains(t, "prompt", prompt, "# Protected paths")
 			if d == nil {
 				lacks(t, "prompt", prompt, "Caller diagnostic data")
@@ -354,7 +370,7 @@ func TestContextExternalFirstPrompt(t *testing.T) {
 				t.Fatal("the diagnostic precedes the authority")
 			}
 			contains(t, "prompt", prompt, want+"\n\n# Files\n\n")
-			if n, _ := os.ReadFile(filepath.Join(state, "calls")); strings.TrimSpace(string(n)) != "1" {
+			if n := roundCalls(t, fx); n != "1" {
 				t.Fatalf("calls %q: the diagnostic must not depend on a later round", n)
 			}
 		})
