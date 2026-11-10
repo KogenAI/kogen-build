@@ -88,3 +88,37 @@ func TestAnAnthropicBuildRequestRecordsCacheCreationAsCacheWrite(t *testing.T) {
 	}
 	eq(t, "build requests", builds, 1)
 }
+
+func TestRunBlobCustodyAndFailure(t *testing.T) {
+	run, err := StartRun(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []any{"<hello>", map[string]any{"text": "<hello>"}} {
+		ref := run.retainBlob(value)
+		if ref == nil {
+			t.Fatal(run.LogErr())
+		}
+		raw, err := os.ReadFile(filepath.Join(run.Dir, "blobs", ref.SHA256))
+		if err != nil || len(raw) != ref.Bytes || sha256Hex(raw) != ref.SHA256 {
+			t.Fatalf("bad blob: %q %v", raw, err)
+		}
+		if ref2 := run.retainBlob(value); *ref != *ref2 {
+			t.Fatal("content was not deduplicated")
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(run.Dir, "blobs"))
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("blobs: %v %v", entries, err)
+	}
+	bad, err := StartRun(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad.Dir, "blobs"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if ref := bad.retainBlob("missing"); ref != nil || bad.TakeLogErr() == nil {
+		t.Fatal("blob failure was not retained")
+	}
+}

@@ -395,7 +395,33 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 			suffix = fmt.Sprintf("; deferred %d pinned part reads", len(deferrals)-k)
 		}
 	}
+	breakdown := func() map[string]any {
+		kinds := func(items []any) map[string]int {
+			result := map[string]int{}
+			for _, item := range items {
+				m, _ := item.(map[string]any)
+				kind, _ := m["type"].(string)
+				if kind == "" {
+					kind, _ = m["role"].(string)
+				}
+				if kind == "" {
+					kind = "unknown"
+				}
+				raw, _ := core.EncodeJSON(item)
+				result[kind] += len(raw)
+			}
+			return result
+		}
+		reset := window.mandatory[len(window.mandatory)-1].(map[string]any)
+		summary, _ := reset["content"].(string)
+		return map[string]any{"before_bytes": measured.RenderedBytes, "after_bytes": next.RenderedBytes,
+			"summary_bytes": len(summary), "mandatory_bytes_by_kind": kinds(window.mandatory),
+			"optional_bytes_by_kind": kinds(window.reduced[len(window.mandatory):])}
+	}
 	if refused() {
+		if owner == "build" {
+			b.Run.Event(map[string]any{"event": "context_budget_exceeded", "owner": owner, "breakdown": breakdown()})
+		}
 		var paths []string
 		for _, h := range state.History {
 			paths = append(paths, h.Path)
@@ -433,10 +459,14 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 	}
 	state.History, state.Observations = window.history, window.observations
 	b.WorkingContext[owner] = state
-	b.Run.Event(map[string]any{
+	event := map[string]any{
 		"event": "window_reset", "owner": owner, "input_tokens_before": measured.RenderedBytes,
 		"input_tokens_after": next.RenderedBytes, "carried_items": len(window.reduced),
-	})
+	}
+	if owner == "build" {
+		event["breakdown"] = breakdown()
+	}
+	b.Run.Event(event)
 	if window.ledger != nil {
 		// Request logs it, with the bytes the prefill appends, after the reset and before the request.
 		b.ledgerReset = map[string]any{

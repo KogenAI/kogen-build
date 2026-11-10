@@ -198,13 +198,18 @@ func (n *nativeSession) Round(ctx context.Context, in executor.Input) (executor.
 					b.Run.Event(event)
 				}
 			}
-			var resultLog any = "finish"
+			var result any = "finish"
 			if !terminal {
-				resultLog = provider.Fingerprint(out.Value())
+				result = out.Value()
+			}
+			resultLog := b.Run.retainBlob(result)
+			arguments := b.Run.retainBlob(call.Arguments)
+			if b.Run.LogErr() != nil {
+				return b.Save(b.Continuation)
 			}
 			event := map[string]any{
 				"event": "tool_call", "call_id": call.CallID(), "name": call.Name,
-				"arguments": provider.Fingerprint(call.Arguments), "result": resultLog,
+				"arguments": arguments, "result": resultLog,
 			}
 			if !terminal {
 				for k, v := range b.toolRecordFields(call, out, func(string) (int, bool) { return 0, false }) {

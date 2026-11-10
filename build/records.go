@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,9 +16,67 @@ import (
 	"github.com/KogenAI/kogen-loop/tools"
 )
 
-// Run-record measurements (hashes, byte counts, token counts, line numbers only): they are
-// taken where Kogen builds a request and receives a tool result, never from request or file
-// content.
+// Run-record measurements are taken where Kogen builds a request and receives a tool result.
+
+// retainBlob stores the exact digest bytes before exposing a reference in an event.
+func (r *Run) retainBlob(v any) *provider.Digest {
+	var data []byte
+	var err error
+	if text, ok := v.(string); ok {
+		data = []byte(text)
+	} else {
+		data, err = core.EncodeJSON(v)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err == nil {
+		dir := filepath.Join(r.Dir, "blobs")
+		err = os.MkdirAll(dir, 0700)
+		if err == nil {
+			err = os.Chmod(dir, 0700)
+		}
+		if err == nil {
+			path := filepath.Join(dir, sha256Hex(data))
+			_, err = os.Stat(path)
+			if os.IsNotExist(err) {
+				var f *os.File
+				f, err = os.CreateTemp(dir, ".blob-*")
+				if err == nil {
+					tmp := f.Name()
+					err = f.Chmod(0600)
+					if err == nil {
+						_, err = f.Write(data)
+					}
+					if closeErr := f.Close(); err == nil {
+						err = closeErr
+					}
+					if err == nil {
+						err = os.Rename(tmp, path)
+					}
+					if err != nil {
+						os.Remove(tmp)
+					}
+				}
+			}
+
+		}
+	}
+	if err != nil {
+		if r.logErr == nil {
+			r.logErr = fmt.Errorf("run blob: %w", err)
+		}
+		return nil
+	}
+	return &provider.Digest{SHA256: sha256Hex(data), Bytes: len(data)}
+}
+
+func (r *Run) retainItems(items []any) []*provider.Digest {
+	refs := make([]*provider.Digest, 0, len(items))
+	for _, item := range items {
+		refs = append(refs, r.retainBlob(item))
+	}
+	return refs
+}
 
 // requestUsage is the usage of a request event: the totals and the provider-reported
 // cache-write tokens (null when the provider does not report them).

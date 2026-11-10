@@ -613,6 +613,18 @@ func (b *Attempt) Request(ctx context.Context, sp RequestSpec) (*provider.Respon
 		"event": "request", "operation_id": resp.OperationID, "role": sp.Owner, "model": sp.Role.Model,
 		"effort": sp.Role.Effort, "usage": requestUsageOf(got, resp), "wall_ms": wall, "request_bytes": requestBytes,
 	}
+	if sp.Owner == "build" {
+		event["items"] = b.Run.retainItems(input)
+		responseItems := make([]any, len(resp.Items))
+		for i, item := range resp.Items {
+			responseItems[i] = item
+		}
+		event["response_items"] = b.Run.retainItems(responseItems)
+		event["response_id"] = resp.ID
+		if b.Run.LogErr() != nil {
+			return nil, nil, b.Save(b.Continuation)
+		}
+	}
 	if sp.Owner == "review" {
 		event["review_round"] = b.Review
 	} else {

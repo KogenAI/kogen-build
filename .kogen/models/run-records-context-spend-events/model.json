@@ -1,0 +1,11 @@
+{
+  "None": false,
+  "Path": ".kogen/models/run-records-context-spend-events/model.qnt",
+  "Invariants": [
+    "AllReferencesResolve",
+    "CallsHaveResponses"
+  ],
+  "Seed": "17",
+  "Samples": "100",
+  "Steps": "20"
+}
