@@ -324,6 +324,9 @@ func (b *Attempt) stageGate(ctx context.Context) (string, bool, error) {
 			return "", false, err
 		}
 	}
+	if err := b.repeatedFailure(stage.ID, pass); err != nil {
+		return "", false, err
+	}
 	b.remember(stage.ID, pass)
 	editedNotice := b.unmovedNotice(stage.ID, pass)
 	if !pass.Green {

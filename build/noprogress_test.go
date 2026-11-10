@@ -1,11 +1,14 @@
 package build
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-verification/verify"
 )
 
 // A builder round that leaves the candidate unchanged after a red pass is not verified again:
@@ -154,28 +157,31 @@ func TestARoundThatEditsIsVerifiedEvenWhenTheFailingSetIsUnchanged(t *testing.T)
 	eq(t, "model requests", f.count(), 3)
 }
 
-// A round with a write_file call is verified even when it writes the bytes the tree already
-// holds, so a builder that rewrites the same wrong file keeps repairing.
-func TestARoundThatRewritesTheSameBytesIsVerifiedAndTheBuildKeepsRepairing(t *testing.T) {
-	t.Parallel()
+// Rewrites still run verification, but four identical red passes stop the Build.
+func TestRepeatedFailureDespiteRewritesStops(t *testing.T) {
 	e := newEnv(t)
 	f := e.prov
-	rewrite := func() handler {
-		return f.calls("write_file", map[string]any{"path": "app.txt", "content": "red\n"}, "finish", map[string]any{"summary": "again"})
+	for i := 0; i < 5; i++ {
+		f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": "red\n"}, "finish", map[string]any{"summary": "again"}))
 	}
-	f.then(rewrite(), rewrite(), rewrite(), rewrite(),
-		f.calls("write_file", map[string]any{"path": "app.txt", "content": "green\n"}, "finish", map[string]any{"summary": "repaired"}))
 	a := e.build()
-	if a.exit != 0 {
-		t.Fatalf("exit %d\n%s", a.exit, a.shown())
-	}
+	eq(t, "exit", a.exit, 1)
 	id := e.onlyRun()
-	eq(t, "passes", e.result(id)["passes"], any(float64(5)))
-	eq(t, "pass events", passEvents(t, e, id), 5)
-	eq(t, "model requests", f.count(), 5)
-	if strings.Contains(a.errs.String(), "made no edits") {
-		t.Fatalf("a rewrite round was reported as made no edits:\n%s", a.errs.String())
+	eq(t, "passes", passEvents(t, e, id), 4)
+	eq(t, "model requests", f.count(), 4)
+	contains(t, "diagnostic", a.out.String(), "candidate/no_progress")
+	contains(t, "scenario", a.out.String(), "First (line 2)")
+	events := eventsNamed(e.events(id), "no_progress")
+	if len(events) != 1 {
+		t.Fatalf("events: %v", events)
 	}
+	eq(t, "count", events[0]["count"], any(float64(4)))
+	if fp, ok := events[0]["fingerprint"].(string); !ok || len(fp) != 64 {
+		t.Fatalf("fingerprint %v", events[0]["fingerprint"])
+	}
+	failing, _ := json.Marshal(events[0]["failing"])
+	eq(t, "failing", string(failing), `["acceptance"]`)
+
 }
 
 // A rewrite round is not a round without edits and gives the remembered red pass: the text-only
@@ -284,4 +290,62 @@ func TestAStoppedNoProgressBuildResumesFromItsCheckpoint(t *testing.T) {
 		t.Fatalf("resume exit %d\n%s", r.exit, r.shown())
 	}
 	eq(t, "candidate", e.read("app.txt"), "green\n")
+}
+
+func TestRepeatedFailureStreakResets(t *testing.T) {
+	base := verify.Pass{Clean: true, Failing: []string{"check"}, Checks: []verify.CommandResult{{Name: "check", Status: 1, Output: "first"}}}
+	for _, tc := range []struct {
+		name   string
+		stage  string
+		change func(*verify.Pass)
+		want   int
+	}{
+		{"green", "s", func(p *verify.Pass) { p.Green = true }, 0},
+		{"unclean", "s", func(p *verify.Pass) { p.Clean = false }, 0},
+		{"moved", "s", func(p *verify.Pass) { p.Moved = []string{"x"} }, 0},
+		{"stage", "other", func(p *verify.Pass) {}, 1},
+		{"feedback", "s", func(p *verify.Pass) { p.Checks = []verify.CommandResult{{Name: "check", Status: 1, Output: "changed"}} }, 1},
+		{"failing", "s", func(p *verify.Pass) { p.Failing = []string{"other"} }, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &Attempt{State: State{Config: &project.Config{}}}
+			for i := 0; i < 3; i++ {
+				p := base
+				p.N = i + 1
+				p.Tree = itoa(i)
+				if err := b.repeatedFailure("s", p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p := base
+			tc.change(&p)
+			if err := b.repeatedFailure(tc.stage, p); err != nil {
+				t.Fatal(err)
+			}
+			eq(t, "count", b.noEdit.redCount, tc.want)
+			if tc.want == 0 {
+				if err := b.repeatedFailure("s", base); err != nil {
+					t.Fatal(err)
+				}
+				eq(t, "restart", b.noEdit.redCount, 1)
+			}
+		})
+	}
+}
+
+func TestRepeatedStageFailureDespiteEditsStops(t *testing.T) {
+	e, _ := stagedEnv(t, []string{"echo scoped-red; exit 23"})
+	f := e.prov
+	for i := 0; i < 5; i++ {
+		f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": fmt.Sprintf("red %d\n", i)}, "finish", map[string]any{"summary": "verify"}))
+	}
+	a := e.build()
+	eq(t, "exit", a.exit, 1)
+	contains(t, "diagnostic", a.out.String(), "candidate/no_progress")
+	contains(t, "failing", a.out.String(), "stage-foundation-1")
+	events := eventsNamed(e.events(e.onlyRun()), "no_progress")
+	if len(events) != 1 {
+		t.Fatalf("events: %v", events)
+	}
+	eq(t, "count", events[0]["count"], any(float64(4)))
 }

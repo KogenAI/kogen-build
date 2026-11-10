@@ -1,0 +1,12 @@
+{
+  "None": false,
+  "Path": ".kogen/models/build-stops-on-repeated-failure/model.qnt",
+  "Invariants": [
+    "Boundary",
+    "Reset",
+    "Consecutive"
+  ],
+  "Seed": "1",
+  "Samples": "100",
+  "Steps": "12"
+}

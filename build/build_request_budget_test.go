@@ -35,7 +35,13 @@ func TestBuildRequestBudgetAcrossPasses(t *testing.T) {
 			e := newEnv(t)
 			f := e.prov
 			for i := 0; i < limit+2; i++ {
-				f.then(redTry(f, i+1))
+				if limit == 4 && i == 3 {
+					// Leave the fourth response mid-round so the budget, rather than the
+					// repeated-red policy, stops the next request.
+					f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": redContent(i + 1)}))
+				} else {
+					f.then(redTry(f, i+1))
+				}
 			}
 			start := e.head()
 			a := e.build(func(in *Input) { in.BuildRequestBudget = limit })
@@ -46,7 +52,11 @@ func TestBuildRequestBudgetAcrossPasses(t *testing.T) {
 			id := e.onlyRun()
 			res := e.result(id)
 			eq(t, "outcome", res["outcome"], any("build_request_budget"))
-			eq(t, "passes", res["passes"], any(float64(limit)))
+			passes := limit
+			if limit == 4 {
+				passes--
+			}
+			eq(t, "passes", res["passes"], any(float64(passes)))
 			eq(t, "retained candidate", e.read("app.txt"), redContent(limit))
 			ev := budgetEvents(e, id)
 			if len(ev) != 1 || ev[0]["role"] != "build" || ev[0]["count"] != float64(limit) || ev[0]["limit"] != float64(limit) {

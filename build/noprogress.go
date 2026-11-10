@@ -26,8 +26,10 @@ type noEditWatch struct {
 	rounds, noEdits int
 	// streak counts the consecutive identical red passes of an external Build, identified by
 	// streakSig (stage, candidate tree and failing-set fingerprint).
-	streak    int
-	streakSig string
+	streak         int
+	streakSig      string
+	redCount       int
+	redFingerprint string
 }
 
 // externalWriteTools are the executor_tool names of an external executor's file-write calls.
@@ -59,12 +61,7 @@ func (b *Attempt) externalStalled(stage string, pass verify.Pass) error {
 		w.streak, w.streakSig = 0, ""
 		return nil
 	}
-	anon := pass
-	anon.N = 0
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		stage, strings.Join(pass.Failing, "\x00"), b.PassFeedback(anon, "finish"),
-	}, "\x1f")))
-	fingerprint := hex.EncodeToString(sum[:])
+	fingerprint := b.failureFingerprint(stage, pass)
 	sig := fingerprint + "\x1f" + pass.Tree
 	if w.streak > 0 && w.streakSig == sig {
 		w.streak++
@@ -79,6 +76,38 @@ func (b *Attempt) externalStalled(stage string, pass verify.Pass) error {
 		"fingerprint": fingerprint, "failing": core.NonNil(pass.Failing),
 	})
 	return executor.RoundLimit(b.Executor.Rounds)
+}
+
+// failureFingerprint identifies the failing evidence independently of the candidate tree.
+func (b *Attempt) failureFingerprint(stage string, pass verify.Pass) string {
+	anon := pass
+	anon.N = 0
+	sum := sha256.Sum256([]byte(strings.Join([]string{stage, strings.Join(pass.Failing, "\x00"), b.PassFeedback(anon, "finish")}, "\x1f")))
+	return hex.EncodeToString(sum[:])
+}
+
+func (b *Attempt) repeatedFailure(stage string, pass verify.Pass) error {
+	w := &b.noEdit
+	if pass.Green || !pass.Clean || len(pass.Moved) != 0 {
+		w.redCount, w.redFingerprint = 0, ""
+		return nil
+	}
+	fingerprint := b.failureFingerprint(stage, pass)
+	if w.redFingerprint == fingerprint {
+		w.redCount++
+	} else {
+		w.redCount, w.redFingerprint = 1, fingerprint
+	}
+	if w.redCount < 4 {
+		return nil
+	}
+	b.Run.Event(map[string]any{"event": "no_progress", "fingerprint": fingerprint, "count": w.redCount, "failing": core.NonNil(pass.Failing)})
+	e := sys.Fail("candidate", "no_progress", "four consecutive verification passes have identical failures; edits are left in place", 1)
+	e.Lines = []string{"failing: " + strings.Join(pass.Failing, ", ")}
+	if items := missingAcceptanceItems(pass); len(items) > 0 {
+		e.Lines = append(e.Lines, "scenarios: "+strings.Join(items, ", "))
+	}
+	return e
 }
 
 // redPass is a remembered red verification pass with its stage ("" for the whole Intent) and

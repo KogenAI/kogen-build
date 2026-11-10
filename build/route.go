@@ -37,6 +37,9 @@ func (s steps) Verify(ctx context.Context, builderPass bool) (verify.Pass, bool,
 			return verify.Pass{}, false, "", err
 		}
 	}
+	if err := b.repeatedFailure("", pass); err != nil {
+		return verify.Pass{}, false, "", err
+	}
 	b.remember("", pass)
 	editedNotice := b.unmovedNotice("", pass)
 	if !pass.Green {

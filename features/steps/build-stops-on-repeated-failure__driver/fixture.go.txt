@@ -1,0 +1,116 @@
+package build
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/core"
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+func TestRepeatedFailureAcceptance(t *testing.T) {
+	var want struct {
+		Mode     string
+		Sequence []int
+		Passes   int
+		Outcome  string
+		Exit     int
+		Message  []string
+		Event    bool
+	}
+	if err := json.Unmarshal([]byte(os.Getenv("REPEATED_WANT")), &want); err != nil {
+		t.Fatal(err)
+	}
+	e := newEnv(t)
+	feature := "Feature: Repeated failure\n"
+	for i := 1; i <= 7; i++ {
+		feature += fmt.Sprintf("  Scenario: Failure %d\n    Then requirement %d holds\n", i, i)
+	}
+	e.write(project.FeaturePath(testSlug), feature)
+	scenarios, err := project.ParseGherkin(feature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for count := 0; count <= 7; count++ {
+		events := []obj{documentMessage(project.FeaturePath(testSlug), scenarios)}
+		for i, s := range scenarios {
+			status := "PASSED"
+			if i < count {
+				status = "FAILED"
+			}
+			events = append(events, caseMessages(s, i+1, project.FeaturePath(testSlug), statuses(repeat(status, len(s.Steps))...))...)
+		}
+		var lines []string
+		for _, event := range events {
+			b, err := core.EncodeJSON(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines = append(lines, string(b))
+		}
+		writeFile(t, filepath.Join(e.aux, fmt.Sprintf("report-%d", count)), strings.Join(lines, "\n")+"\n", 0644)
+	}
+	script := filepath.Join(e.aux, "repeated.sh")
+	writeFile(t, script, "#!/bin/sh\nn=$(sed -n '1p' app.txt)\ncp '"+e.aux+"/report-'\"$n\" \"$KOGEN_ACCEPTANCE_REPORT\"\nif test \"$n\" != 0; then echo fixed-failure-message; exit 1; fi\n", 0755)
+	cfg, err := project.LoadConfig(e.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Acceptance.Run = script
+	e.writeConfig(cfg)
+	e.run("git", "add", ".kogen/project.yaml")
+	e.run("git", "commit", "-qm", "acceptance configuration")
+	e.approve()
+	content := func(n int) string {
+		count := 0
+		if n <= len(want.Sequence) {
+			count = want.Sequence[n-1]
+		}
+		return fmt.Sprintf("%d\nround-%d\n", count, n)
+	}
+	var a *attempt
+	if want.Mode == "external" {
+		e.useExecutor("")
+		f := newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {
+			return externalWritesApp(content(n), executor.Usage{})(n, ctx, root, in)
+		})
+		f.reportsWrites = true
+		a = e.build(withExecutor(f, nil))
+	} else {
+		for n := 1; n <= len(want.Sequence)+1; n++ {
+			e.prov.then(e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": content(n)}, "finish", map[string]any{"summary": "attempt"}))
+		}
+		a = e.build()
+	}
+	if a.exit != want.Exit {
+		t.Fatalf("exit %d want %d\n%s", a.exit, want.Exit, a.shown())
+	}
+	id := e.onlyRun()
+	eq(t, "outcome", e.result(id)["outcome"], any(want.Outcome))
+	eq(t, "pass events", passEvents(t, e, id), want.Passes)
+	for _, text := range want.Message {
+		contains(t, "stop message", a.out.String(), text)
+	}
+	events := eventsNamed(e.events(id), "no_progress")
+	if want.Event {
+		if len(events) != 1 {
+			t.Fatalf("no_progress events: %v", events)
+		}
+		ev := events[0]
+		eq(t, "count", ev["count"], any(float64(4)))
+		fp, _ := ev["fingerprint"].(string)
+		if len(fp) != 64 {
+			t.Fatalf("fingerprint %q", fp)
+		}
+		b, _ := json.Marshal(ev["failing"])
+		eq(t, "failing", string(b), "[\"acceptance\"]")
+	} else if len(events) != 0 {
+		t.Fatalf("unexpected no_progress: %v", events)
+	}
+}

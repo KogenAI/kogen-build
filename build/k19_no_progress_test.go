@@ -2,6 +2,8 @@ package build
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/executor"
@@ -106,5 +108,31 @@ func TestExternalNoProgressResetsWhenTheTreeChanges(t *testing.T) {
 	}
 	eq(t, "rounds", len(f.seen()), 4)
 	eq(t, "events", countEvents(e.events(e.onlyRun()), "executor_no_progress"), 0)
-	eq(t, "outcome", e.result(e.onlyRun())["outcome"], any("executor_round_limit"))
+	eq(t, "outcome", e.result(e.onlyRun())["outcome"], any("no_progress"))
+}
+
+func TestExternalRepeatedFailureWithFreshTreesStops(t *testing.T) {
+	e := newEnv(t)
+	e.useExecutor("")
+	f := newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {
+		return externalWritesApp(fmt.Sprintf("red\n%d\n", n), executor.Usage{})(n, ctx, root, in)
+	})
+	f.reportsWrites = true
+	a := e.build(withExecutor(f, nil))
+	eq(t, "exit", a.exit, 1)
+	id := e.onlyRun()
+	eq(t, "passes", passEvents(t, e, id), 4)
+	eq(t, "rounds", len(f.seen()), 4)
+	contains(t, "diagnostic", a.out.String(), "candidate/no_progress")
+	contains(t, "scenario", a.out.String(), "First (line 2)")
+	events := eventsNamed(e.events(id), "no_progress")
+	if len(events) != 1 {
+		t.Fatalf("events %v", events)
+	}
+	eq(t, "count", events[0]["count"], any(float64(4)))
+	if fp, ok := events[0]["fingerprint"].(string); !ok || len(fp) != 64 {
+		t.Fatalf("fingerprint %v", events[0]["fingerprint"])
+	}
+	b, _ := json.Marshal(events[0]["failing"])
+	eq(t, "failing", string(b), `["acceptance"]`)
 }
