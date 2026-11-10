@@ -28,8 +28,8 @@ func strandBuilder(f *fakeProvider) handler {
 	return f.calls("write_file", map[string]any{"path": "app.txt", "content": bigFile()}, "finish", map[string]any{"summary": "done"})
 }
 
-// forcedBodies are the transmitted bodies of the review requests that named submit_review as
-// their tool choice, with the index of each among the review requests.
+// forcedBodies selects transmitted forced reminders in the multipart strand fixture, with
+// their original indexes among review requests.
 func forcedBodies(t *testing.T, f *fakeProvider) (indexes []int, bodies [][]byte) {
 	t.Helper()
 	for i, body := range f.reviewBodies() {
@@ -37,7 +37,8 @@ func forcedBodies(t *testing.T, f *fakeProvider) (indexes []int, bodies [][]byte
 		if err := json.Unmarshal(body, &wire); err != nil {
 			t.Fatal(err)
 		}
-		if jsonOf(wire["tool_choice"]) == jsonOf(forcedSubmit) {
+		if jsonOf(wire["tool_choice"]) == jsonOf(forcedSubmit) ||
+			jsonOf(wire["tool_choice"]) == jsonOf(map[string]any{"type": "function", "name": "read_file"}) {
 			indexes, bodies = append(indexes, i), append(bodies, body)
 		}
 	}
