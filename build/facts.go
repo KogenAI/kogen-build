@@ -145,11 +145,7 @@ func (f *localFacts) fail(e *sys.Error) { f.failure = e }
 
 func passSummary(b *Attempt) map[string]any {
 	p := b.LastPass
-	m := map[string]any{"n": p.N, "green": p.Green, "tree": p.Tree, "failing": core.NonNil(p.Failing)}
-	if !p.Legacy {
-		m["not_run"] = core.NonNil(p.NotRun)
-	}
-	return m
+	return map[string]any{"n": p.N, "green": p.Green, "tree": p.Tree, "failing": core.NonNil(p.Failing), "not_run": core.NonNil(p.NotRun)}
 }
 
 func reviewSummary(b *Attempt) map[string]any {

@@ -85,15 +85,11 @@ func TestPassComplete(t *testing.T) {
 		}
 	}
 
-	// A pass recorded before setup and not_run existed stays reusable without them.
-	legacy := completePass(cfg, expected, "none")
-	legacy.Legacy, legacy.Setup, legacy.NotRun = true, nil, nil
-	if !legacy.Complete(cfg, expected, nil) {
-		t.Errorf("verify.Pass.Legacy: a legacy pass without setup is not complete")
-	}
-	legacy.Legacy = false
-	if legacy.Complete(cfg, expected, nil) {
-		t.Errorf("verify.Pass.Legacy: a pass without setup commands is complete although it is not legacy")
+	// A pass without setup commands is not complete.
+	noSetup := completePass(cfg, expected, "none")
+	noSetup.Setup, noSetup.NotRun = nil, nil
+	if noSetup.Complete(cfg, expected, nil) {
+		t.Errorf("verify.Pass.Complete: a pass without setup commands is complete")
 	}
 	// Other expectations.
 	if p := completePass(cfg, expected, "none"); p.Complete(&project.Config{Setup: cfg.Setup, Checks: cfg.Checks[:1]}, expected, nil) || p.Complete(cfg, expected[:1], nil) {
@@ -146,9 +142,6 @@ func TestPassJSON(t *testing.T) {
 	if err := json.Unmarshal(b, &back); err != nil || !reflect.DeepEqual(back, p) {
 		t.Errorf("verify.Pass: decoded %+v (%v), want %+v", back, err, p)
 	}
-	if back.Legacy {
-		t.Errorf("verify.Pass.Legacy: a record with setup and not_run is legacy")
-	}
 
 	// Model values and empty lists.
 	for _, c := range []struct {
@@ -168,19 +161,13 @@ func TestPassJSON(t *testing.T) {
 		}
 	}
 
-	// A record from before setup and not_run existed is a legacy pass and stays that way.
+	// A record from before setup and not_run existed is refused.
 	old := `{"n":1,"clean":true,"green":true,"tree":"t","acceptance":"not_run","model":"none","checks":[],"moved":[],"failing":[]}`
-	var legacy verify.Pass
-	if err := json.Unmarshal([]byte(old), &legacy); err != nil || !legacy.Legacy || legacy.N != 1 || !legacy.Green || legacy.Acceptance != nil || legacy.Model.State != "none" {
-		t.Errorf("verify.Pass.Legacy: decoded %+v (%v), want a legacy pass", legacy, err)
+	var rec verify.Pass
+	if err := json.Unmarshal([]byte(old), &rec); err == nil {
+		t.Errorf("verify.Pass: a record without setup decoded")
 	}
-	if b, _ := json.Marshal(legacy); strings.Contains(string(b), `"setup"`) || strings.Contains(string(b), `"not_run":[`) {
-		t.Errorf("verify.Pass.Legacy: a legacy pass encodes setup or not_run: %s", b)
-	}
-	if err := json.Unmarshal([]byte(`{"n":1,"model":"none","acceptance":"not_run","setup":[]}`), &legacy); err != nil || legacy.Legacy {
-		t.Errorf("verify.Pass.Legacy: a record with a setup key is legacy (%v)", err)
-	}
-	if err := json.Unmarshal([]byte(`{"n":1,"model":{"weird":[]}}`), &legacy); err == nil {
+	if err := json.Unmarshal([]byte(`{"n":1,"model":{"weird":[]}}`), &rec); err == nil {
 		t.Errorf("verify.Pass: an unknown model state decoded")
 	}
 }

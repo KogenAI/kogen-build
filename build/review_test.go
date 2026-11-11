@@ -136,7 +136,7 @@ func TestTheReviewerApprovesUnchangedCodeWithoutRepairs(t *testing.T) {
 		t.Fatalf("%d review requests", len(reqs))
 	}
 	req := reqs[0]
-	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Replace(requestInstructions(req), "\n"+review.LimitRaises+"\n", "", 1)))); got != "345eb0281e2330ba1bf3de62528693cf34d7b3963e91bf332231c94492c4d2bb" {
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Replace(requestInstructions(req), "\n"+review.LimitRaises+"\n", "", 1)))); got != "1aaaf6582febb8b75c1c096e7e806803ffff29b66d6e69a17b69c2d1aaf45dde" {
 		t.Fatalf("emitted reviewer prompt hash = %s", got)
 	}
 	// A fresh conversation: one opening message, the reviewer's tools, no builder replay.

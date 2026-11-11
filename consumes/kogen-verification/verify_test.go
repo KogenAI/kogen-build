@@ -75,10 +75,9 @@ func TestVerifyGreenPass(t *testing.T) {
 	var _ []string = pass.NotRun
 	var _ []string = pass.Moved
 	var _ []string = pass.Failing
-	var _ bool = pass.Legacy
 
-	if pass.N != 3 || !pass.Clean || !pass.Green || pass.Legacy {
-		t.Errorf("verify.Pass: N=%d Clean=%v Green=%v Legacy=%v, want 3 true true false", pass.N, pass.Clean, pass.Green, pass.Legacy)
+	if pass.N != 3 || !pass.Clean || !pass.Green {
+		t.Errorf("verify.Pass: N=%d Clean=%v Green=%v, want 3 true true", pass.N, pass.Clean, pass.Green)
 	}
 	if pass.Tree != p.headTree() {
 		t.Errorf("verify.Pass.Tree = %q, want the clean candidate's tree %q", pass.Tree, p.headTree())

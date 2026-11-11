@@ -126,7 +126,7 @@ func TestConfigJSONIsTheCheckpointFormat(t *testing.T) {
 		Protect:    []string{"p"},
 		Models: map[string]project.Role{
 			"build":  {Provider: "anthropic", Model: "m", Effort: "high"},
-			"review": {Model: "r", Effort: "low", Executor: "claude-code", MaxRounds: 3},
+			"review": {Model: "r", Effort: "low", Executor: "claude-code"},
 		},
 	}
 	b, err := json.Marshal(cfg)
@@ -140,7 +140,7 @@ func TestConfigJSONIsTheCheckpointFormat(t *testing.T) {
 		"Acceptance": `{"Run":"r","StepsDir":"features/steps"}`,
 		"Protect":    `["p"]`,
 		"Models": `{"build":{"Provider":"anthropic","Model":"m","Effort":"high"},` +
-			`"review":{"Provider":"","Model":"r","Effort":"low","Executor":"claude-code","MaxRounds":3}}`,
+			`"review":{"Provider":"","Model":"r","Effort":"low","Executor":"claude-code"}}`,
 	} {
 		var wantValue any
 		check(t, json.Unmarshal([]byte(want), &wantValue))
@@ -152,11 +152,7 @@ func TestConfigJSONIsTheCheckpointFormat(t *testing.T) {
 	var back project.Config
 	check(t, json.Unmarshal(b, &back))
 	if !reflect.DeepEqual(&back, cfg) {
-		// The unrelated Shape keys decode to their zero values; compare what build reads.
-		back.ShapeWorkers, back.ShapeAudit, back.ShapeDecisionCheck, back.ReviewMaterial = cfg.ShapeWorkers, cfg.ShapeAudit, cfg.ShapeDecisionCheck, cfg.ReviewMaterial
-		if !reflect.DeepEqual(&back, cfg) {
-			t.Errorf("project.Config JSON round trip = %+v, want %+v", back, *cfg)
-		}
+		t.Errorf("project.Config JSON round trip = %+v, want %+v", back, *cfg)
 	}
 
 	none := &project.Config{}

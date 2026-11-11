@@ -585,7 +585,7 @@ func TestNativeCheckpointAndConfigCarryNoExecutorIdentity(t *testing.T) {
 		t.Fatal("a native result names an executor")
 	}
 	build := state["config"].(map[string]any)["Models"].(map[string]any)["build"].(map[string]any)
-	eq(t, "native build role", build, map[string]any{"Provider": "", "Model": "gpt-6.1-sol", "Effort": "medium"})
+	eq(t, "native build role", build, map[string]any{"Provider": "chatgpt", "Model": "gpt-6.1-sol", "Effort": "medium"})
 	if len(eventsNamed(e.events(id), "executor_round")) != 0 {
 		t.Fatal("a native Build logs executor rounds")
 	}

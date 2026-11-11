@@ -228,7 +228,7 @@ func TestRedVerificationIsFedBackToTheSameBuilderAndRepaired(t *testing.T) {
 	contains(t, "feedback", feedback, "not run because an earlier item failed: count")
 	lines := a.errs.String()
 	contains(t, "progress", lines, "kogen: building (round 2)")
-	contains(t, "progress", lines, "kogen: pass 1: acceptance failed; not run because an earlier item failed: count")
+	contains(t, "progress", lines, "kogen: pass 1: acceptance failed (2 of 2 scenarios: First:2, Second:5); not run because an earlier item failed: count")
 	contains(t, "progress", lines, "kogen: pass 2: all checks passed")
 	contains(t, "stdout", a.out.String(), "  checks: acceptance 2/2, model not applicable, count passed\n")
 	contains(t, "stdout", a.out.String(), "  repairs: 1 ")

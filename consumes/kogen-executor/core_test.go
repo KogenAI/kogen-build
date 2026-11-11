@@ -201,7 +201,7 @@ func TestCoreShellDefinitions(t *testing.T) {
 
 func TestCoreProviderRole(t *testing.T) {
 	var _ func(project.Role) provider.Role = core.ProviderRole
-	got := core.ProviderRole(project.Role{Provider: "anthropic", Model: "m", Effort: "high", BaseURL: "http://127.0.0.1:1", Executor: "claude-code", MaxRounds: 3})
+	got := core.ProviderRole(project.Role{Provider: "anthropic", Model: "m", Effort: "high", BaseURL: "http://127.0.0.1:1", Executor: "claude-code"})
 	if want := (provider.Role{Provider: "anthropic", Model: "m", Effort: "high", BaseURL: "http://127.0.0.1:1"}); got != want {
 		t.Errorf("core.ProviderRole = %+v, want %+v", got, want)
 	}
