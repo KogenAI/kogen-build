@@ -26,7 +26,7 @@ type repoFx struct {
 // newBareRepo is a repository with the identity and no commit.
 func newBareRepo(t *testing.T) *repoFx {
 	t.Helper()
-	f := &repoFx{Dir: t.TempDir(), Hooks: t.TempDir()}
+	f := &repoFx{Dir: realTempDir(t), Hooks: t.TempDir()}
 	f.git(t, "init", "-q")
 	f.git(t, "config", "user.name", "Fixture")
 	f.git(t, "config", "user.email", "fixture@example.invalid")
@@ -148,4 +148,15 @@ func wantSysError(t *testing.T, name string, err error, class, reason string, ex
 		t.Fatalf("%s: error = %s (exit %d), want %s/%s (exit %d)", name, e.Error(), e.Exit, class, reason, exit)
 	}
 	return e
+}
+
+// realTempDir is t.TempDir() with symlinks resolved (on macOS /var is /private/var), the
+// form Git reports for paths.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

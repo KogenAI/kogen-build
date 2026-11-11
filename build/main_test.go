@@ -31,6 +31,11 @@ import (
 // after the run; a test binary re-executed by a test finds the PATH of its parent and shares
 // that directory.
 func TestMain(m *testing.M) {
+	// No global or system Git configuration (hooks, signing, templates, identity rules) reaches
+	// the fixture repositories; a re-executed child inherits this through its environment.
+	os.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	os.Setenv("GIT_TERMINAL_PROMPT", "0")
 	if inheritPrivate() {
 		// A test re-executed this binary (the baseline tests do) under its PATH: the child
 		// shares the parent's private directory, and its environment stays the parent's.

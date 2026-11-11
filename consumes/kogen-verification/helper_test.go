@@ -82,7 +82,7 @@ type proj struct {
 
 func newProj(t *testing.T) *proj {
 	t.Helper()
-	p := &proj{t: t, root: t.TempDir(), aux: t.TempDir()}
+	p := &proj{t: t, root: realTempDir(t), aux: t.TempDir()}
 	p.env = append(processEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
 	p.repo = git.New(p.root, p.env)
 	p.git("init", "-q")
@@ -221,4 +221,15 @@ func failWith(t *testing.T, item string, err error) *sys.Error {
 		t.Fatalf("%s: error %v is not a sys.Error", item, err)
 	}
 	return e
+}
+
+// realTempDir is t.TempDir() with symlinks resolved (on macOS /var is /private/var), the
+// form a command's pwd prints.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

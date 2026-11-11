@@ -221,7 +221,8 @@ func TestReadinessSetup(t *testing.T) {
 	if e.Class != "environment" || e.Reason != "setup_failed" || e.Detail != "Setup setup-2 failed (status=3)." || e.Exit != 3 {
 		t.Errorf("verify.Readiness.Setup: %+v, want environment/setup_failed: Setup setup-2 failed (status=3)., exit 3", e)
 	}
-	if len(e.Lines) != 20 || e.Lines[0] != "line 11" || e.Lines[19] != "line 30" {
+	// The 20 output lines are followed by the failing command and the next step.
+	if len(e.Lines) != 22 || e.Lines[0] != "line 11" || e.Lines[19] != "line 30" {
 		t.Errorf("verify.Readiness.Setup: detail lines %q, want the last 20 lines of the output", e.Lines)
 	}
 	if b, _ := os.ReadFile(filepath.Join(p2.root, "setup.txt")); string(b) != "ran\n" {
