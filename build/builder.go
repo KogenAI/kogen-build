@@ -44,9 +44,6 @@ func (b *Attempt) brief() (executor.Brief, error) {
 	readme := "(no README.md)"
 	if t, err := readFile(b.Root, "README.md"); err == nil {
 		readme = string(t)
-		if max := b.deps.BuildBriefMaxReadmeBytes; b.ext == nil && max > 0 && len(t) > max {
-			readme = string(t[:max]) + fmt.Sprintf("\n[README.md cut: %d bytes omitted; read_file README.md for the rest.]", len(t)-max)
-		}
 	}
 	var checks []string
 	for _, c := range b.Config.Checks {
@@ -81,15 +78,6 @@ func (b *Attempt) brief() (executor.Brief, error) {
 	files, err := b.repo.OK("ls-files", "--cached", "--others", "--exclude-standard")
 	if err != nil {
 		return executor.Brief{}, err
-	}
-	if max := b.deps.BuildBriefMaxFiles; b.ext == nil && max > 0 {
-		lines := strings.SplitAfter(files, "\n")
-		if lines[len(lines)-1] == "" {
-			lines = lines[:len(lines)-1]
-		}
-		if len(lines) > max {
-			files = strings.Join(lines[:max], "") + fmt.Sprintf("[File list cut: %d entries omitted; use shell git ls-files --cached --others --exclude-standard for the rest.]", len(lines)-max)
-		}
 	}
 	return executor.Brief{Stable: stable, Dynamic: b.baselineText() + "# Files\n\n" + files}, nil
 }

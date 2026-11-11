@@ -258,7 +258,7 @@ func stateGoldenReviewCheckpoint(t *testing.T, path, verdict string, findings []
 // stateGoldenResumedBytes resumes the attempts checkpoint bytes the way resumeLocked does: a new
 // run whose parent and root are the attempts run, a new start time and no attempt usage.
 func stateGoldenResumedBytes(t *testing.T, path string, attempts []byte) []byte {
-	loaded, why := decodeCheckpoint(attempts, nil)
+	loaded, why := decodeCheckpoint(attempts)
 	if loaded == nil {
 		stateGoldenMust(t, path, &stateGoldenError{"the attempts checkpoint does not decode: " + why})
 	}

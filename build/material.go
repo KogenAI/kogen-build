@@ -526,7 +526,7 @@ func (c *reviewCustody) prefilled(window []any) map[string]bool {
 // complete rendered request prefillMargin bytes under the ceiling. Nothing else changes; a
 // part counts as delivered only once a completed response follows the message (prefillScan).
 func (b *Attempt) prefillSource(role project.Role, instructions string, defs, input []any) ([]any, error) {
-	if b.WorkingContext["review"] == nil || (b.deps.ReadLedger && resetCarriesWindow(input)) {
+	if b.WorkingContext["review"] == nil {
 		return input, nil
 	}
 	if err := b.validateWorkingContext(); err != nil {
@@ -662,14 +662,9 @@ func (b *Attempt) reviewDelivery(input, kept []any, tree string) (map[string]any
 		"by complete read_file outputs stay counted for the approval check across working-window resets; " +
 		"a pinned part is frozen evidence of its tree, so reading it again returns the same text. Pixels of " +
 		"images not in_window are archived, not in this window: use view_image again to inspect them. " +
-		"Parts or images of a tree other than candidate_tree are not current. "
-	if b.deps.ReadLedger {
-		note += "After a working-window reset Kogen appends no pinned parts to this review: read the unread parts with read_file; " +
-			"the read_ledger message lists the reads this conversation made, and every pinned part can be read again. "
-	} else {
-		note += "Kogen also appends unread pinned parts as native source data messages; they count once a completed response follows them. "
-	}
-	note += "Read unread pinned parts in batches of about 10 read_file calls per response, not one per response; " +
+		"Parts or images of a tree other than candidate_tree are not current. " +
+		"Kogen also appends unread pinned parts as native source data messages; they count once a completed response follows them. " +
+		"Read unread pinned parts in batches of about 10 read_file calls per response, not one per response; " +
 		"use a smaller batch only after a native not-delivered notice shows a batch did not fit. " +
 		"A not-delivered read is not counted and must be read again."
 	return map[string]any{

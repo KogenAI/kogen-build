@@ -147,9 +147,6 @@ type State struct {
 	// ReviewExecutor is the same for an independent review by an external executor: its own
 	// session, rounds and usage, separate from the builder's. Nil for the native reviewer.
 	ReviewExecutor *ExecutorState `json:"review_executor,omitempty"`
-	// BuildRequestBudget is the enabled total builder request budget and how many builder
-	// requests have been attempted against it; nil (and absent from the checkpoint) when off.
-	BuildRequestBudget *RequestBudget `json:"build_request_budget,omitempty"`
 	// ReviewRetry is the durable lineage of independent reviews that ended without a valid
 	// verdict for one exact green tree, and whether that tree's one automatic fresh review is
 	// spent. Absent until a review ends invalid, so other checkpoints keep their bytes.
@@ -162,13 +159,6 @@ type State struct {
 	// environment (checkreuse.go): a whole-Intent pass on the same key reuses the record. At most
 	// one record per configured check; absent until a check passed.
 	CheckResults []checkResult `json:"check_results,omitempty"`
-}
-
-// RequestBudget is a Build's total builder request limit and its cumulative attempt count.
-// An attempt is counted at the durable boundary before dispatch and never uncounted.
-type RequestBudget struct {
-	Limit int `json:"limit"`
-	Count int `json:"count"`
 }
 
 // ReviewRetry belongs to one exact green candidate tree. Automatic is true once the single

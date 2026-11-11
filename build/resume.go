@@ -56,9 +56,9 @@ func resumeRun(ctx context.Context, s *sys.Session, in ResumeInput, out **Attemp
 	return resumeLocked(ctx, s, in, repo, out)
 }
 
-// decodeCheckpoint reads a checkpoint file: a version 4 state, or through legacy a version 3
-// one. why is the reason a resume is refused.
-func decodeCheckpoint(raw []byte, legacy LegacyDecoder) (loaded *Loaded, why string) {
+// decodeCheckpoint reads a checkpoint file: a version 4 state. why is the reason a resume is
+// refused.
+func decodeCheckpoint(raw []byte) (loaded *Loaded, why string) {
 	const malformed = "malformed required checkpoint fields"
 	v, err := decodeJSONNumbers(raw)
 	m, ok := v.(map[string]any)
@@ -82,18 +82,6 @@ func decodeCheckpoint(raw []byte, legacy LegacyDecoder) (loaded *Loaded, why str
 			return nil, malformed
 		}
 		loaded = &Loaded{Doc: doc, State: st}
-	case "3":
-		if legacy == nil {
-			return nil, "incompatible checkpoint version 3"
-		}
-		l, err := legacy(raw)
-		if err != nil {
-			return nil, err.Error()
-		}
-		if l == nil || l.State == nil {
-			return nil, malformed
-		}
-		loaded = l
 	default:
 		return nil, "incompatible checkpoint version " + inspectScalar(version)
 	}
@@ -149,9 +137,9 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return refuse(id, "unknown checkpoint: absent or legacy checkpoint", "resume_unsupported")
+		return refuse(id, "unknown checkpoint: absent checkpoint", "resume_unsupported")
 	}
-	loaded, why := decodeCheckpoint(raw, in.Deps.legacy())
+	loaded, why := decodeCheckpoint(raw)
 	if why != "" {
 		return refuse(id, "unknown checkpoint: "+why, "")
 	}

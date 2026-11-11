@@ -52,44 +52,14 @@ func decodeState(raw json.RawMessage) (*State, bool) {
 	return st, true
 }
 
-// removedConfigKeys are the top-level configuration keys the Build no longer reads: they never
-// make two configurations differ.
-var removedConfigKeys = []string{"ShapeWorkers", "ShapeAudit", "ShapeDecisionCheck", "ReviewMaterial"}
-
-// configJSON is the canonical JSON of a configuration, to compare two of them, without the
-// options the Build no longer reads (the removed top-level keys and each model's MaxRounds).
-func configJSON(c *project.Config) string {
-	b, err := json.Marshal(c)
-	if err != nil {
-		return ""
-	}
-	var doc map[string]any
-	if json.Unmarshal(b, &doc) != nil {
-		return ""
-	}
-	for _, k := range removedConfigKeys {
-		delete(doc, k)
-	}
-	if models, ok := doc["Models"].(map[string]any); ok {
-		for _, role := range models {
-			if r, ok := role.(map[string]any); ok {
-				delete(r, "MaxRounds")
-			}
-		}
-	}
-	out, err := json.Marshal(doc)
-	if err != nil {
-		return ""
-	}
-	return string(out)
-}
-
-// sameConfig reports whether two configurations are equal in everything the Build reads.
+// sameConfig reports whether two configurations have the same canonical JSON.
 func sameConfig(a, b *project.Config) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return configJSON(a) == configJSON(b)
+	ja, errA := json.Marshal(a)
+	jb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(ja, jb)
 }
 
 // stateIntent rebuilds the Intent from the text the Build was started with.
@@ -200,9 +170,6 @@ func validCheckpointState(s *State, doc *Checkpoint) bool {
 		}
 	}
 	if x := s.Executor; x != nil && (x.Name == "" || x.Rounds < 0) {
-		return false
-	}
-	if r := s.BuildRequestBudget; r != nil && (r.Limit < 1 || r.Count < 0 || r.Count > r.Limit) {
 		return false
 	}
 	c := &s.Continuation

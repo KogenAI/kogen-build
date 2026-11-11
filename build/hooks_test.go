@@ -4,8 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"strings"
+	"os"
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/core"
@@ -163,30 +162,23 @@ func TestTheStubReviewerApprovesAndRecordsItself(t *testing.T) {
 	}
 }
 
-func TestVersion3CheckpointsGoThroughTheImporter(t *testing.T) {
+func TestVersion3CheckpointsAreRefused(t *testing.T) {
 	t.Parallel()
-	// ExUnit: lib/kogen/run.ex decode_checkpoint/1 (version 3 is the Elixir Kogen's; the importer hook reads it)
+	// The Elixir Kogen's version 3 checkpoints are no longer read: the resume refuses them and
+	// leaves the file's bytes alone.
 	e := newEnv(t)
 	id, _ := e.interruptedAtRequest()
 	doc, _ := e.checkpoint(id)
 	doc["version"] = 3
 	e.writeCheckpoint(id, doc)
-	var seen []byte
-	importer := func(raw []byte) (*Loaded, error) {
-		seen = raw
-		l, why := decodeCheckpoint(bytes.Replace(raw, []byte(`"version":3`), []byte(`"version":4`), 1), nil)
-		if l == nil {
-			return nil, errors.New(why)
-		}
-		return l, nil
+	before, _ := os.ReadFile(e.runPath(id, "checkpoint.json"))
+	r := e.resume(id)
+	if r.exit == 0 {
+		t.Fatalf("exit 0\n%s", r.shown())
 	}
-	e.prov.replace(e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": "candidate\n"}, "finish", map[string]any{"summary": "done"}))
-	r := e.resume(id, func(in *ResumeInput) { in.Legacy = importer })
-	if r.exit != 0 {
-		t.Fatalf("exit %d\n%s", r.exit, r.shown())
+	contains(t, "output", r.shown(), "unknown checkpoint: incompatible checkpoint version 3")
+	after, _ := os.ReadFile(e.runPath(id, "checkpoint.json"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("the refused checkpoint changed")
 	}
-	if !strings.Contains(string(seen), `"version":3`) {
-		t.Fatalf("the importer saw %.80s", seen)
-	}
-	contains(t, "stdout", r.out.String(), "landed fixture ")
 }

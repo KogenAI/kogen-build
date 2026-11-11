@@ -142,18 +142,15 @@ func TestCheckpointDecoderRefusesDamagedIncompleteAndIncompatibleState(t *testin
 		"{broken", "{}", `{"version":999}`, `{"version":1,"state":"bad"}`, `{"version":4}`, `{"version":4,"state":"bad"}`,
 		`{"version":4,"state":{}}`, `{"version":4,"state":{"root":"x"}}`, "[]", "null",
 	} {
-		if l, why := decodeCheckpoint([]byte(raw), nil); l != nil || why == "" {
+		if l, why := decodeCheckpoint([]byte(raw)); l != nil || why == "" {
 			t.Fatalf("%q decoded", raw)
 		}
 	}
-	if _, why := decodeCheckpoint([]byte(`{"version":999}`), nil); why != "incompatible checkpoint version 999" {
+	if _, why := decodeCheckpoint([]byte(`{"version":999}`)); why != "incompatible checkpoint version 999" {
 		t.Fatal(why)
 	}
-	// A version 3 checkpoint goes through the importer the caller supplies.
-	called := false
-	legacy := func(raw []byte) (*Loaded, error) { called = true; return nil, os.ErrInvalid }
-	if _, why := decodeCheckpoint([]byte(`{"version":3,"state":"x"}`), legacy); !called || why != os.ErrInvalid.Error() {
-		t.Fatalf("importer called %v, reason %q", called, why)
+	if _, why := decodeCheckpoint([]byte(`{"version":3,"state":"x"}`)); why != "incompatible checkpoint version 3" {
+		t.Fatal(why)
 	}
 }
 
@@ -212,7 +209,7 @@ func TestGreenReuseRequiresCompleteRequiredCleanEvidenceNotAStoredBoolean(t *tes
 	t.Parallel()
 	// ExUnit: test/kogen/run_test.exs: green reuse requires complete required clean evidence, not a stored Boolean
 	st, doc, _ := validState(t)
-	if _, why := decodeCheckpoint(encodeState(t, st, doc), nil); why != "" {
+	if _, why := decodeCheckpoint(encodeState(t, st, doc)); why != "" {
 		t.Fatalf("a valid state is refused: %s", why)
 	}
 	session := json.RawMessage(`{"input":[],"role":{"model":"fixture","effort":"high"}}`)
@@ -229,7 +226,7 @@ func TestGreenReuseRequiresCompleteRequiredCleanEvidenceNotAStoredBoolean(t *tes
 		complete := completePass()
 		s := *st
 		place(&s, complete)
-		if _, why := decodeCheckpoint(encodeState(t, &s, doc), nil); why != "" {
+		if _, why := decodeCheckpoint(encodeState(t, &s, doc)); why != "" {
 			t.Fatalf("%s: complete evidence refused: %s", name, why)
 		}
 		broken := map[string]func(p *verify.Pass){
@@ -250,7 +247,7 @@ func TestGreenReuseRequiresCompleteRequiredCleanEvidenceNotAStoredBoolean(t *tes
 			mutate(&p)
 			s := *st
 			place(&s, p)
-			if _, why := decodeCheckpoint(encodeState(t, &s, doc), nil); why == "" {
+			if _, why := decodeCheckpoint(encodeState(t, &s, doc)); why == "" {
 				t.Errorf("%s: incomplete green evidence (%s) is accepted", name, what)
 			}
 		}
@@ -264,13 +261,13 @@ func TestGreenReuseRequiresCompleteRequiredCleanEvidenceNotAStoredBoolean(t *tes
 	} {
 		s := *st
 		s.PromptCache = states
-		if _, why := decodeCheckpoint(encodeState(t, &s, doc), nil); why == "" {
+		if _, why := decodeCheckpoint(encodeState(t, &s, doc)); why == "" {
 			t.Errorf("cache states %s accepted", name)
 		}
 	}
 	s := *st
 	s.PromptCache = map[string]provider.CacheState{"conversation": {ID: "conversation-id", Unsupported: true, Response: "resp_last"}}
-	l, why := decodeCheckpoint(encodeState(t, &s, doc), nil)
+	l, why := decodeCheckpoint(encodeState(t, &s, doc))
 	if why != "" || l.State.PromptCache["conversation"] != (provider.CacheState{ID: "conversation-id", Unsupported: true, Response: "resp_last"}) {
 		t.Fatalf("cache states lost: %v %q", l, why)
 	}
@@ -283,11 +280,11 @@ func TestGreenReuseRequiresCompleteRequiredCleanEvidenceNotAStoredBoolean(t *tes
 	d := *doc
 	d.State = damaged
 	raw, _ := core.EncodeJSON(d)
-	if _, why := decodeCheckpoint(raw, nil); why == "" {
+	if _, why := decodeCheckpoint(raw); why == "" {
 		t.Fatal("a state without working_context is accepted")
 	}
 	old := bytes.Replace(encodeState(t, st, doc), []byte(`"version":4`), []byte(`"version":2`), 1)
-	if _, why := decodeCheckpoint(old, nil); why != "incompatible checkpoint version 2" {
+	if _, why := decodeCheckpoint(old); why != "incompatible checkpoint version 2" {
 		t.Fatalf("version 2: %q", why)
 	}
 }

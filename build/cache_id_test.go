@@ -92,7 +92,7 @@ func TestAResumedBuildKeepsItsConversationsIdentity(t *testing.T) {
 	for _, k := range keys {
 		eq(t, "key", k, saved)
 	}
-	child := legacyChild(t, e, id)
+	child := resumedRun(t, e, id)
 	_, resumed := e.checkpoint(child)
 	eq(t, "child ids", resumed["cache_ids"].(map[string]any)["build"], any(saved))
 }
@@ -163,4 +163,16 @@ func TestAnAnthropicResponseKeepsUnreportedCountsUnknown(t *testing.T) {
 	eq(t, "none", none.Line(), "input=unknown cached=unknown output=unknown reasoning=unknown")
 	chat := core.ResponseTokens(project.Role{Model: "gpt-6.1-sol", Effort: "medium"}, &provider.Response{Usage: provider.Usage{Input: 4, Output: 2}})
 	eq(t, "chatgpt", chat.Line(), "input=4 cached=0 output=2 reasoning=0")
+}
+
+// resumedRun is the run a resume of run id created.
+func resumedRun(t *testing.T, e *env, id string) string {
+	t.Helper()
+	for _, c := range e.runIDs() {
+		if c != id {
+			return c
+		}
+	}
+	t.Fatalf("no resumed run besides %s: %v", id, e.runIDs())
+	return ""
 }

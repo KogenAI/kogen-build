@@ -203,7 +203,7 @@ func TestResumeRefusals(t *testing.T) {
 			"unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
 		{"version 1", setDoc(func(doc, state map[string]any) { doc["version"] = 1 }), "unknown checkpoint: incompatible checkpoint version 1", "resume_refused", nil},
 		{"version 2", setDoc(func(doc, state map[string]any) { doc["version"] = 2 }), "unknown checkpoint: incompatible checkpoint version 2", "resume_refused", nil},
-		{"version 3 whose state is not an Elixir term", setDoc(func(doc, state map[string]any) { doc["version"] = 3 }), "unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
+		{"version 3", setDoc(func(doc, state map[string]any) { doc["version"] = 3 }), "unknown checkpoint: incompatible checkpoint version 3", "resume_refused", nil},
 		{"version 999", setDoc(func(doc, state map[string]any) { doc["version"] = 999 }), "unknown checkpoint: incompatible checkpoint version 999", "resume_refused", nil},
 		{"version text", setDoc(func(doc, state map[string]any) { doc["version"] = "x" }), `unknown checkpoint: incompatible checkpoint version "x"`, "resume_refused", nil},
 		{"no version", setDoc(func(doc, state map[string]any) { delete(doc, "version") }), "unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
@@ -212,7 +212,7 @@ func TestResumeRefusals(t *testing.T) {
 		{"empty object", func(e *env, id string) { os.WriteFile(e.runPath(id, "checkpoint.json"), []byte("{}"), 0o600) },
 			"unknown checkpoint: malformed required checkpoint fields", "resume_refused", nil},
 		{"no checkpoint", func(e *env, id string) { os.Remove(e.runPath(id, "checkpoint.json")) },
-			"unknown checkpoint: absent or legacy checkpoint", "resume_unsupported", nil},
+			"unknown checkpoint: absent checkpoint", "resume_unsupported", nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -378,7 +378,7 @@ func TestCheckpointUsageCountsMayBeNilButNeverMalformed(t *testing.T) {
 		s := d["state"].(map[string]any)
 		mutate(s["usage"].(map[string]any), s["attempt_usage"].(map[string]any))
 		raw, _ := json.Marshal(d)
-		return decodeCheckpoint(raw, nil)
+		return decodeCheckpoint(raw)
 	}
 	_ = doc
 	_ = state

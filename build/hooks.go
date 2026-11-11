@@ -15,8 +15,7 @@ import (
 )
 
 // Deps are what a Build needs from outside: the provider client, Kogen's own tools and the
-// two hooks a later change fills in (the independent review of a green pass and the import
-// of version 3 checkpoints written by the Elixir Kogen).
+// hook a later change fills in (the independent review of a green pass).
 type Outcome struct {
 	Tree   string
 	Checks []verify.CommandResult
@@ -26,26 +25,11 @@ type Outcome struct {
 type Deps struct {
 	// Outcome, when non-nil, receives evidence from this invocation.
 	Outcome *Outcome
-	// BuildRequestBudget is internal and applies to the native builder
-	// only. A positive N allows N builder requests over the whole Build (every verification
-	// pass and explicit resume); review requests are not counted. Zero is off. The limit and the
-	// count are kept in the checkpoint: a resume takes them from there, not from this field.
-	BuildRequestBudget int
-	// ReadLedger is internal and off by default; it is not a CLI flag, a project.yaml key or part
-	// of the checkpoint. On, a working-window reset of the native builder or reviewer re-opens
-	// the conversation with a read ledger instead of the newest exchange, and a re-opened review
-	// gets no pinned source prefill (readledger.go).
-	ReadLedger bool
 	// shellAfter is a test seam that production leaves nil. It is passed as the native tools'
 	// tools.Tools.ShellAfter, so a test controls when the loop's shell wait elapses. It is no CLI
 	// flag, project.yaml key, environment variable or checkpoint field; being unexported, only
 	// tests in this package set it.
 	shellAfter func(wait time.Duration) <-chan time.Time
-
-	// BuildBriefMaxFiles and BuildBriefMaxReadmeBytes cap optional native context.
-	// Nonpositive values leave the corresponding context uncapped.
-	BuildBriefMaxFiles       int
-	BuildBriefMaxReadmeBytes int
 
 	// Client sends the model requests; its prompt-cache is not used, the Build keeps its own
 	// (restored from a checkpoint).
@@ -54,8 +38,6 @@ type Deps struct {
 	Tools verify.Tools
 	// Reviewer runs the independent review of a green pass. Nil: see newReviewer.
 	Reviewer Reviewer
-	// Legacy reads a version 3 checkpoint. Nil: see newLegacy.
-	Legacy LegacyDecoder
 	// External returns the executor of a build role that selects an external executor
 	// (`executor: claude-code`). Nil: such a role stops with executor/unavailable ("not
 	// available in this program"). The native builder never uses it.
@@ -89,11 +71,6 @@ type Reviewer interface {
 	Resume(ctx context.Context, b *Attempt) (Approved, error)
 }
 
-// LegacyDecoder reads a version 3 checkpoint, as the Elixir Kogen wrote it, into this
-// package's own state. The raw argument is the whole checkpoint file. It returns the
-// envelope fields and the state, or an error whose text is the reason a resume is refused.
-type LegacyDecoder func(raw []byte) (*Loaded, error)
-
 // Checkpoint is the envelope of a checkpoint file: the identity of the checkout, the
 // candidate tree, the user's index and the approval as they were saved (index and approval
 // are base64), and the state.
@@ -121,22 +98,11 @@ type Loaded struct {
 // review and repair of chapter 06 (kogen-review's review).
 func newReviewer(Deps) Reviewer { return nativeReviewer() }
 
-// newLegacy is the version 3 decoder a resume uses when Deps.Legacy is nil: the reader of
-// the checkpoints the Elixir Kogen wrote (legacy.go).
-func newLegacy(Deps) LegacyDecoder { return legacyDecode }
-
 func (d Deps) reviewer() Reviewer {
 	if d.Reviewer != nil {
 		return d.Reviewer
 	}
 	return newReviewer(d)
-}
-
-func (d Deps) legacy() LegacyDecoder {
-	if d.Legacy != nil {
-		return d.Legacy
-	}
-	return newLegacy(d)
 }
 
 // approveWithoutReview is the STUB reviewer: it approves the green pass as it is. It records

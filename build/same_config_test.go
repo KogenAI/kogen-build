@@ -45,14 +45,6 @@ func TestSameConfigIgnoresTheRemovedOptions(t *testing.T) {
 		edit func(doc map[string]any)
 		same bool
 	}{
-		{"max_rounds", func(d map[string]any) {
-			d["Models"].(map[string]any)["build"].(map[string]any)["MaxRounds"] = 4
-		}, true},
-		{"review_material on_demand", func(d map[string]any) { d["ReviewMaterial"] = map[string]any{"Mode": "on_demand"} }, true},
-		{"review_material empty mode", func(d map[string]any) { d["ReviewMaterial"] = map[string]any{"Mode": ""} }, true},
-		{"shape_workers", func(d map[string]any) { d["ShapeWorkers"] = map[string]any{"Enabled": true} }, true},
-		{"shape_audit", func(d map[string]any) { d["ShapeAudit"] = map[string]any{"Enabled": true} }, true},
-		{"shape_decision_check", func(d map[string]any) { d["ShapeDecisionCheck"] = map[string]any{"Enabled": true} }, true},
 		{"checks", func(d map[string]any) {
 			d["Checks"] = []any{map[string]any{"Name": "unit", "Run": "false"}}
 		}, false},

@@ -32,6 +32,9 @@ type Diagnostic struct {
 // maxDiagnostic is the longest diagnostic text, in bytes.
 const maxDiagnostic = 262_144
 
+// resetMarker opens the content of a working-window reset message.
+const resetMarker = "Local working-window reset\n"
+
 func contextUnavailable() *sys.Error {
 	return sys.Fail("intent", "context_unavailable",
 		"expected bounded nonblank UTF-8 diagnostic data with an absolute source label and matching SHA-256", 2)
@@ -262,7 +265,6 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 	// construct is the reset window of one input: its observations, the archive of exactly
 	// that input, the reset message and the request that keeps the mandatory opening, the
 	// reset and the newest exchange. deferred is nil unless pinned reads were deferred.
-	ledgerOn := b.deps.ReadLedger
 	construct := func(in []any, deferred []int) (resetWindow, agent.Measurement, error) {
 		var w resetWindow
 		w.observations = uniqueItems(append(slices.Clone(state.Observations), observationsOf(in)...))
@@ -285,11 +287,7 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		}
 		var delivery map[string]any
 		if owner == "review" {
-			kept := newestExchange(in)
-			if ledgerOn {
-				kept = nil
-			}
-			if delivery, err = b.reviewDelivery(in, kept, tree); err != nil {
+			if delivery, err = b.reviewDelivery(in, newestExchange(in), tree); err != nil {
 				return w, agent.Measurement{}, err
 			}
 		}
@@ -334,41 +332,13 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		}
 		message := map[string]any{"role": "user", "content": resetMarker + string(encoded)}
 		w.mandatory = append(slices.Clone(state.Mandatory), message)
-		if ledgerOn {
-			// The newest exchange is not carried: the conversation continues from the ledger.
-			ledgerMessage, ledger, err := readLedgerMessage(in)
-			if err != nil {
-				return w, agent.Measurement{}, err
-			}
-			w.ledger, w.reduced = &ledger, append(slices.Clone(w.mandatory), ledgerMessage)
-		} else {
-			w.reduced = append(slices.Clone(w.mandatory), thinking.Strip(newestExchange(in))...)
-		}
+		w.reduced = append(slices.Clone(w.mandatory), thinking.Strip(newestExchange(in))...)
 		next, err := agent.Measure(b.bodyOf(role, instructions, w.reduced, tools, owner), core.ProviderRole(role))
 		return w, next, err
 	}
 	var window resetWindow
 	var next agent.Measurement
-	if ledgerOn && owner == "review" {
-		// Every undelivered complete part read of the newest exchange is deferred up front: it is
-		// archived as a native not-delivered output, so a read that never reached the model is
-		// never counted as delivered.
-		deferrals, custody, err := b.deferrable(input)
-		if err != nil {
-			return nil, err
-		}
-		var parts []int
-		if len(deferrals) > 0 {
-			input = slices.Clone(input)
-			for _, d := range deferrals {
-				input[d.index] = d.item
-			}
-			parts = custody.deferredParts(b.Root, input, deferrals)
-		}
-		if window, next, err = construct(input, parts); err != nil {
-			return nil, err
-		}
-	} else if window, next, err = construct(input, nil); err != nil {
+	if window, next, err = construct(input, nil); err != nil {
 		return nil, err
 	}
 	mand, err := agent.Measure(b.bodyOf(role, instructions, window.mandatory, tools, owner), core.ProviderRole(role))
@@ -377,7 +347,7 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 	}
 	refused := func() bool { return !next.Fits || next.RenderedBytes >= measured.RenderedBytes }
 	suffix := ""
-	if refused() && owner == "review" && mand.Fits && !ledgerOn {
+	if refused() && owner == "review" && mand.Fits {
 		// The newest exchange is an unsplittable call batch. Complete reads of pinned source
 		// parts that have not reached the model yet are deferred, last first, to a native
 		// output that is never counted as delivery; the archive keeps what is actually sent.
@@ -467,13 +437,6 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		event["breakdown"] = breakdown()
 	}
 	b.Run.Event(event)
-	if window.ledger != nil {
-		// Request logs it, with the bytes the prefill appends, after the reset and before the request.
-		b.ledgerReset = map[string]any{
-			"event": "read_ledger_reset", "owner": owner, "entries": len(window.ledger.Entries),
-			"bytes": contentBytes(window.reduced[len(window.reduced)-1:]), "dropped": window.ledger.Dropped,
-		}
-	}
 	b.s.Progress(fmt.Sprintf("kogen: %s local reset %d -> %d bytes; ceiling %d; reserve %d; history %s%s",
 		owner, measured.RenderedBytes, next.RenderedBytes, agent.InputBudgetBytes, reservedOutputTokens, path, suffix))
 	return window.reduced, nil
@@ -488,8 +451,6 @@ type resetWindow struct {
 	observations []any
 	mandatory    []any
 	reduced      []any
-	// ledger is the read ledger the request is re-opened with; nil without the option.
-	ledger *readLedger
 }
 
 // deferral is one complete, not yet delivered read of a pinned source part in the newest

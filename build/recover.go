@@ -179,13 +179,13 @@ func (r *recovery) run() error {
 	if v, err := decodeJSONNumbers(raw); err == nil {
 		if m, ok := v.(map[string]any); ok {
 			if version, ok := m["version"]; ok {
-				if n, _ := version.(json.Number); n != "3" && n != "4" {
+				if n, _ := version.(json.Number); n != "4" {
 					return recoveryRefused("unknown checkpoint: legacy checkpoint version "+inspectScalar(version), "recovery_unsupported")
 				}
 			}
 		}
 	}
-	loaded, why := decodeCheckpoint(raw, newLegacy(Deps{}))
+	loaded, why := decodeCheckpoint(raw)
 	if why != "" {
 		return recoveryRefused("unknown checkpoint: "+why, "")
 	}

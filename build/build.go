@@ -64,9 +64,6 @@ type Attempt struct {
 	// force is the tool the request being sent must call (RequestSpec.ForceTool), so that the
 	// size measured for it is that of the request actually sent.
 	force string
-	// ledgerReset is the read_ledger_reset event of the reset that prepared the request being
-	// sent, until Request logs it with the bytes its prefill appended.
-	ledgerReset map[string]any
 	// baselineRunning is the baseline check in progress, and baselineStop the record of the one
 	// a stop interrupted (baseline.go). Neither is persisted.
 	baselineRunning *baselineRunning
@@ -358,9 +355,6 @@ func checked(ctx context.Context, s *sys.Session, in Input, repo *git.Repo, cfg 
 		},
 		s: s, deps: in.Deps, repo: repo, cache: provider.NewCache(nil), facts: facts, intent: intent, model: intent.Model, diag: in.Context, ext: ext,
 	}
-	if ext == nil && in.BuildRequestBudget > 0 {
-		b.BuildRequestBudget = &RequestBudget{Limit: in.BuildRequestBudget}
-	}
 	*out = b
 	run.Event(map[string]any{"event": "start", "slug": slug, "start_head": start, "approved": approval.SHA256})
 	run.Event(agent.BudgetEvent(in.Deps.Client))
@@ -533,33 +527,16 @@ func (b *Attempt) Request(ctx context.Context, sp RequestSpec) (*provider.Respon
 	if err := project.ValidateSource(b.SourceProvenance); err != nil {
 		return nil, nil, err
 	}
-	budget := b.BuildRequestBudget
-	if sp.Owner != "build" {
-		budget = nil
-	}
-	if budget != nil && budget.Count >= budget.Limit {
-		b.Run.Event(map[string]any{"event": "build_request_budget", "role": "build", "count": budget.Count, "limit": budget.Limit})
-		return nil, nil, sys.Fail("candidate", "build_request_budget", fmt.Sprintf(
-			"the Build has used its budget of %d builder requests (%d sent); the candidate, checkpoint and approval are preserved and nothing was committed",
-			budget.Limit, budget.Count), 1)
-	}
 	b.force = sp.ForceTool
 	defer func() { b.force = "" }()
-	b.ledgerReset = nil
 	input, err := b.prepareContext(sp.Owner, sp.Role, sp.Instructions, sp.Input, sp.Tools)
 	if err != nil {
 		return nil, nil, err
 	}
-	reopened := len(input)
 	if sp.Prefill != nil {
 		if input, err = sp.Prefill(input); err != nil {
 			return nil, nil, err
 		}
-	}
-	if b.ledgerReset != nil {
-		b.ledgerReset["prefilled_bytes"] = contentBytes(input[reopened:])
-		b.Run.Event(b.ledgerReset)
-		b.ledgerReset = nil
 	}
 	cont := b.Continuation
 	switch {
@@ -574,9 +551,6 @@ func (b *Attempt) Request(ctx context.Context, sp RequestSpec) (*provider.Respon
 	t0 := time.Now()
 	b.s.Progress(fmt.Sprintf("kogen: %s request %s/%s", sp.Owner, sp.Role.Model, sp.Role.Effort))
 	b.UnknownRequests++
-	if budget != nil {
-		budget.Count++
-	}
 	if err := b.Save(b.Continuation); err != nil {
 		return nil, nil, err
 	}
