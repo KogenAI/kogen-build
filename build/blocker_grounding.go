@@ -1,6 +1,8 @@
 package build
 
 import (
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -23,7 +25,8 @@ func (b *Attempt) latestPass() *verify.Pass {
 
 // unbackedBlocker is the feedback for a well-formed blocker claim that no failure of the
 // latest verification pass of the current candidate tree supports, or "" when one of its paths
-// is named by such a failure. Kogen does not run a fresh pass to check a claim.
+// is backed by such a failure: named by it, or reached through a file that it and the claimed
+// protected file both name. Kogen does not run a fresh pass to check a claim.
 func (b *Attempt) unbackedBlocker(args map[string]any) (string, error) {
 	tree, err := b.checkRepo().Tree(b.Start, b.Excluded)
 	if err != nil {
@@ -37,7 +40,10 @@ func (b *Attempt) unbackedBlocker(args map[string]any) (string, error) {
 	for _, p := range args["paths"].([]any) {
 		paths = append(paths, p.(string))
 	}
-	if blockerBacked(b.Slug, pass, paths) {
+	if blockerBacked(b.Slug, pass, paths) || blockerReferenced(b.Slug, pass, paths, func(rel string) string {
+		text, _ := readFile(b.Root, rel)
+		return string(text)
+	}) {
 		return "", nil
 	}
 	return unbackedBlockerMessage(pass, paths), nil
@@ -52,6 +58,41 @@ func blockerBacked(slug string, pass *verify.Pass, paths []string) bool {
 	for _, evidence := range redEvidence(slug, pass) {
 		for _, p := range paths {
 			if strings.Contains(evidence, p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// fileRef matches the file names a failure's output carries: a path or bare name with an extension.
+var fileRef = regexp.MustCompile(`[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.[A-Za-z][A-Za-z0-9]{0,7}`)
+
+// minRefBase is the shortest file name that links a failure to a protected file, so that short
+// names such as a.c do not back a claim by coincidence.
+const minRefBase = 6
+
+// blockerReferenced is whether a red item of the pass names a file that a claimed protected file
+// also names. A protected Intent text that demands what existing code contradicts is named by
+// the failure only through the file in conflict (a test failing to open a document the Intent
+// removes), never by its own path. Kogen's own files are no link: every Intent text names its
+// feature. A nil pass, a green pass and a claimed file that cannot be read back nothing.
+func blockerReferenced(slug string, pass *verify.Pass, paths []string, read func(rel string) string) bool {
+	if pass == nil {
+		return false
+	}
+	bases := map[string]bool{}
+	for _, evidence := range redEvidence(slug, pass) {
+		for _, ref := range fileRef.FindAllString(evidence, -1) {
+			if base := filepath.Base(ref); len(base) >= minRefBase && !strings.Contains(ref, ".kogen/") {
+				bases[base] = true
+			}
+		}
+	}
+	for _, p := range paths {
+		text := read(p)
+		for base := range bases {
+			if strings.Contains(text, base) {
 				return true
 			}
 		}
