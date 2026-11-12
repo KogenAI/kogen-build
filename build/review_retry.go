@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -214,9 +213,12 @@ func (b *Attempt) discardReviewEdits(inv *invalidReview, current string) ([]stri
 
 // approvalIntact is the exact approval record the Build started from.
 func (b *Attempt) approvalIntact() error {
-	current, err := os.ReadFile(project.ApprovalPath(b.Root, b.Slug))
+	current, err := readBounded(project.ApprovalPath(b.Root, b.Slug))
+	if err != nil {
+		return err
+	}
 	saved, derr := decodeBase64(b.ApprovalBytes)
-	if err != nil || derr != nil || !bytes.Equal(current, saved) {
+	if derr != nil || !bytes.Equal(current, saved) {
 		return fmt.Errorf("the approval changed")
 	}
 	return nil
@@ -225,13 +227,13 @@ func (b *Attempt) approvalIntact() error {
 // indexIntact is the user's index as this run found it: the same bytes, or the same staged
 // entries after a status refreshed its stat cache.
 func (b *Attempt) indexIntact() error {
-	current, err := os.ReadFile(b.GitIndex)
+	current, err := readBounded(b.GitIndex)
 	if err != nil {
-		return fmt.Errorf("the index cannot be read")
+		return err
 	}
-	original, err := os.ReadFile(filepath.Join(b.Run.Dir, "index-at-start"))
+	original, err := readBounded(filepath.Join(b.Run.Dir, "index-at-start"))
 	if err != nil {
-		return fmt.Errorf("the original index backup is missing")
+		return err
 	}
 	if bytes.Equal(current, original) {
 		return nil

@@ -5,10 +5,15 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/KogenAI/kogen-executor/core"
 )
@@ -44,4 +49,38 @@ func inspectStrings(list []string) string {
 		parts[i] = core.InspectString(s)
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// maxCustodyRead is the most bytes read from an approval record or an index copy.
+const maxCustodyRead = 64 << 20
+
+// readBounded reads a regular file of at most maxCustodyRead bytes through one open handle.
+// The file is opened without blocking and its type checked on the handle, so a named pipe is
+// refused instead of waited on. A refusal names the path and says whether the file is oversized,
+// not a regular file or unreadable.
+func readBounded(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return nil, fmt.Errorf("%s is unreadable: %v", path, err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("%s is unreadable: %v", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxCustodyRead+1))
+	if err != nil {
+		return nil, fmt.Errorf("%s is unreadable: %v", path, err)
+	}
+	if len(data) > maxCustodyRead {
+		return nil, fmt.Errorf("%s is oversized (more than 64 MiB)", path)
+	}
+	return data, nil
 }

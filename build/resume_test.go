@@ -169,7 +169,7 @@ func TestResumeRefusals(t *testing.T) {
 			e.write(".kogen/local/approvals/fixture.json", strings.Replace(e.read(".kogen/local/approvals/fixture.json"), "Kogen Integration", "Somebody Else", 1))
 		}, "approval changed", "resume_refused", nil},
 		{"approval removed", func(e *env, id string) { os.Remove(filepath.Join(e.root, ".kogen/local/approvals/fixture.json")) },
-			"approval changed", "resume_refused", nil},
+			"approval: ", "resume_refused", nil},
 		{"head moved", func(e *env, id string) { e.run("git", "commit", "-q", "--allow-empty", "-m", "moved") },
 			"HEAD moved or uncertain commit; inspect git log", "resume_refused", nil},
 		{"candidate drift", func(e *env, id string) { e.write("app.txt", "drift\n") },

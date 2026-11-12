@@ -151,7 +151,7 @@ func readSafe(path string) ([]byte, error) {
 	if err != nil || !st.Mode().IsRegular() {
 		return nil, recoveryRefused("not regular custody: "+path, "")
 	}
-	return os.ReadFile(path)
+	return readBounded(path)
 }
 
 func sha(b []byte) string {
@@ -464,7 +464,7 @@ func (r *recovery) run() error {
 		if err := r.restoreDelta(sides); err != nil {
 			return err
 		}
-		current, err := os.ReadFile(r.b.GitIndex)
+		current, err := readBounded(r.b.GitIndex)
 		if err != nil || !bytes.Equal(current, r.index) {
 			return errors.New("index changed during cleanup")
 		}

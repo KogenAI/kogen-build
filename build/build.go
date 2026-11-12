@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -339,7 +338,7 @@ func checked(ctx context.Context, s *sys.Session, in Input, repo *git.Repo, cfg 
 	if err != nil {
 		return err
 	}
-	approvalFile, err := os.ReadFile(project.ApprovalPath(root, slug))
+	approvalFile, err := readBounded(project.ApprovalPath(root, slug))
 	if err != nil {
 		return err
 	}
@@ -427,7 +426,7 @@ func (b *Attempt) Save(c Continuation) error {
 	if err != nil {
 		return err
 	}
-	index, err := os.ReadFile(b.GitIndex)
+	index, err := readBounded(b.GitIndex)
 	if err != nil {
 		return err
 	}

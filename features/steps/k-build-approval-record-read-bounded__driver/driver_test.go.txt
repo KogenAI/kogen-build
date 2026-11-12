@@ -1,0 +1,100 @@
+package build
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+)
+
+// TestKBARRDriver runs the approval and index comparisons on prepared files and writes each
+// outcome (the error text, "" for equal, "PANIC: ..." if the comparison panicked) as JSON to
+// $KBARR_OUT. The Attempt has no repo: a correct comparison refuses the unusable index before
+// any git use.
+func TestKBARRDriver(t *testing.T) {
+	out := map[string]string{}
+	run := func(name string, f func() error) {
+		done := make(chan string, 1)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					done <- fmt.Sprintf("PANIC: %v", r)
+				}
+			}()
+			if err := f(); err != nil {
+				done <- err.Error()
+			} else {
+				done <- ""
+			}
+		}()
+		select {
+		case s := <-done:
+			out[name] = s
+		case <-time.After(5 * time.Second):
+			out[name] = "BLOCKED"
+		}
+	}
+	mk := func() (*Attempt, string) {
+		root := t.TempDir()
+		a := &Attempt{}
+		a.Root, a.Slug = root, "slug"
+		a.ApprovalBytes = encodeBase64([]byte("approved"))
+		p := project.ApprovalPath(root, "slug")
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		a.Run = &Run{Dir: filepath.Join(root, "run")}
+		os.MkdirAll(a.Run.Dir, 0o755)
+		a.GitIndex = filepath.Join(root, "index")
+		return a, p
+	}
+	{
+		a, p := mk()
+		os.WriteFile(p, []byte("approved"), 0o644)
+		run("approval_same", a.approvalIntact)
+		os.WriteFile(p, []byte("different"), 0o644)
+		run("approval_different", a.approvalIntact)
+	}
+	{
+		a, p := mk()
+		f, _ := os.Create(p)
+		f.Truncate(64<<20 + 1)
+		f.Close()
+		run("approval_oversized", a.approvalIntact)
+	}
+	{
+		a, p := mk()
+		syscall.Mkfifo(p, 0o644)
+		run("approval_fifo", a.approvalIntact)
+	}
+	{
+		a, p := mk()
+		os.WriteFile(p, []byte("approved"), 0o000)
+		run("approval_unreadable", a.approvalIntact)
+	}
+	{
+		a, _ := mk()
+		os.WriteFile(a.GitIndex, []byte("idx"), 0o644)
+		os.WriteFile(filepath.Join(a.Run.Dir, "index-at-start"), []byte("idx"), 0o644)
+		run("index_same", a.indexIntact)
+	}
+	{
+		a, _ := mk()
+		f, _ := os.Create(a.GitIndex)
+		f.Truncate(64<<20 + 1)
+		f.Close()
+		os.WriteFile(filepath.Join(a.Run.Dir, "index-at-start"), []byte("idx"), 0o644)
+		run("index_oversized", a.indexIntact)
+	}
+	{
+		a, _ := mk()
+		syscall.Mkfifo(a.GitIndex, 0o644)
+		os.WriteFile(filepath.Join(a.Run.Dir, "index-at-start"), []byte("idx"), 0o644)
+		run("index_fifo", a.indexIntact)
+	}
+	b, _ := json.Marshal(out)
+	os.WriteFile(os.Getenv("KBARR_OUT"), b, 0o644)
+}

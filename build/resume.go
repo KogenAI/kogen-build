@@ -206,9 +206,12 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	if why := b.builderResumeRefusal(); why != "" {
 		return refuse(id, why, "")
 	}
-	approval, err := os.ReadFile(project.ApprovalPath(root, b.Slug))
+	approval, err := readBounded(project.ApprovalPath(root, b.Slug))
+	if err != nil {
+		return refuse(id, "approval: "+err.Error(), "")
+	}
 	saved, derr := decodeBase64(doc.Approval)
-	if err != nil || derr != nil || !bytes.Equal(approval, saved) {
+	if derr != nil || !bytes.Equal(approval, saved) {
 		return refuse(id, "approval changed", "")
 	}
 	for _, p := range b.Baseline {
@@ -239,9 +242,9 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	// The user's index must record exactly what it recorded at the checkpoint. A plain `git
 	// status` may since have refreshed its stat cache: that alone is not a change.
 	savedIndex, _ := decodeBase64(doc.Index)
-	currentIndex, err := os.ReadFile(b.GitIndex)
+	currentIndex, err := readBounded(b.GitIndex)
 	if err != nil {
-		return refuse(id, "index/staged custody changed", "")
+		return refuse(id, err.Error(), "")
 	}
 	refreshed := !bytes.Equal(currentIndex, savedIndex)
 	if refreshed {
@@ -251,7 +254,7 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 		}
 	}
 	original := filepath.Join(b.Run.Dir, "index-at-start")
-	if backup, err := os.ReadFile(original); err != nil || !bytes.Equal(backup, savedIndex) {
+	if backup, err := readBounded(original); err != nil || !bytes.Equal(backup, savedIndex) {
 		return refuse(id, "original index backup missing or damaged: "+original, "")
 	}
 	candidate, err := repo.Tree(b.Start, nil)
