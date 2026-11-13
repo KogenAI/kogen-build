@@ -233,10 +233,10 @@ func cleanPaths(repo *git.Repo, intent *project.Intent) ([]string, error) {
 func buildRoles(cfg *project.Config) []provider.Role {
 	var roles []provider.Role
 	if role := cfg.Models["build"]; !role.External() {
-		roles = append(roles, core.ProviderRole(role))
+		roles = append(roles, providerRole(role))
 	}
 	if role := cfg.Models["review"]; !role.External() {
-		roles = append(roles, core.ProviderRole(role))
+		roles = append(roles, providerRole(role))
 	}
 	return roles
 }
@@ -558,7 +558,7 @@ func (b *Attempt) Request(ctx context.Context, sp RequestSpec) (*provider.Respon
 		parent = *b.RootRun
 	}
 	req := provider.Request{
-		Role: core.ProviderRole(sp.Role), Instructions: sp.Instructions, Input: input, Tools: sp.Tools, ToolChoice: sp.ForceTool, CacheID: b.cacheID(sp.Owner), Cache: b.cache,
+		Role: providerRole(sp.Role), Instructions: sp.Instructions, Input: input, Tools: sp.Tools, ToolChoice: sp.ForceTool, CacheID: b.cacheID(sp.Owner), Cache: b.cache,
 		Context: map[string]any{
 			"phase": sp.Owner, "role": sp.Owner, "run_id": b.Run.ID, "slug": b.Slug, "lineage": parent,
 			"pass": b.Pass, "repair": b.Repairs,
@@ -575,7 +575,7 @@ func (b *Attempt) Request(ctx context.Context, sp RequestSpec) (*provider.Respon
 	wall := time.Since(t0).Milliseconds()
 	b.UnknownRequests--
 	b.ModelActiveMS += wall
-	got := core.ResponseTokens(sp.Role, resp)
+	got := responseTokens(sp.Role, resp)
 	b.AttemptUsage = b.AttemptUsage.Plus(got)
 	b.Usage = b.Usage.Plus(got)
 	if err := b.Save(Continuation{Stage: StageTool, Owner: sp.Owner, Response: resp.Items, Request: true}); err != nil {

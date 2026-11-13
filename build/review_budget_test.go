@@ -32,7 +32,7 @@ func budgetMaterial(authority string) materialSet {
 // budgetMeasure is the real measurement against the unchanged ceiling.
 func budgetMeasure(t *testing.T, b *Attempt, role project.Role, input []any) agent.Measurement {
 	t.Helper()
-	m, err := agent.Measure(b.bodyOf(role, "policy", input, nil, "review"), core.ProviderRole(role))
+	m, err := agent.Measure(b.bodyOf(role, "policy", input, nil, "review"), providerRole(role))
 	if err != nil {
 		t.Fatal(err)
 	}

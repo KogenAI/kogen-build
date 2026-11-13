@@ -266,7 +266,7 @@ func TestKogenRunRecordsAttribution(t *testing.T) {
 				opening["content"] = strings.Repeat("authority", 70000)
 			}
 			role := defaultRole()
-			before, err := tools.Measure(b.bodyOf(role, "policy", input, nil, "build"), core.ProviderRole(role))
+			before, err := tools.Measure(b.bodyOf(role, "policy", input, nil, "build"), providerRole(role))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -300,7 +300,7 @@ func TestKogenRunRecordsAttribution(t *testing.T) {
 				t.Fatalf("%s summary bytes missing", eventName)
 			}
 			if !refusal {
-				measured, _ := tools.Measure(b.bodyOf(role, "policy", reduced, nil, "build"), core.ProviderRole(role))
+				measured, _ := tools.Measure(b.bodyOf(role, "policy", reduced, nil, "build"), providerRole(role))
 				if after != float64(measured.RenderedBytes) || after >= float64(before.RenderedBytes) || after > 524288 {
 					t.Fatalf("reset measured bytes: %v", breakdown)
 				}

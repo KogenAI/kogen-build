@@ -126,7 +126,7 @@ func (n *nativeSession) Round(ctx context.Context, in executor.Input) (executor.
 	role := b.Config.Models["build"]
 	tl := &tools.Tools{Root: b.Root, Session: b.s, Repo: agent.Git(b.repo), Enabled: builderTools, Protected: b.Baseline, Excluded: b.Excluded, ShellAfter: b.deps.shellAfter}
 	rd := loop.Round{
-		Owner: "build", Role: core.ProviderRole(role), Instructions: BuilderInstructions(),
+		Owner: "build", Role: providerRole(role), Instructions: BuilderInstructions(),
 		Definitions: builderDefinitions(tl),
 		Tools:       tl,
 		Terminal:    []string{FinishTool},

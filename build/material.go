@@ -68,7 +68,7 @@ func materialOpening(authority, source string, diagnostic []any) []any {
 // force pins even a source that fits.
 func (b *Attempt) materialPrepare(tree string, m materialSet, role project.Role, instructions string, defs, diagnostic []any, force bool) ([]any, error) {
 	measure := func(items []any) (tools.Measurement, error) {
-		return tools.Measure(b.bodyOf(role, instructions, items, defs, "review"), core.ProviderRole(role))
+		return tools.Measure(b.bodyOf(role, instructions, items, defs, "review"), providerRole(role))
 	}
 	full := materialOpening(m.Authority, m.Source, diagnostic)
 	fit, err := measure(full)
@@ -563,7 +563,7 @@ func (b *Attempt) prefillSource(role project.Role, instructions string, defs, in
 		if err != nil {
 			return false, err
 		}
-		m, err := tools.Measure(b.bodyOf(role, instructions, candidate, defs, "review"), core.ProviderRole(role))
+		m, err := tools.Measure(b.bodyOf(role, instructions, candidate, defs, "review"), providerRole(role))
 		if err != nil {
 			return false, err
 		}

@@ -46,8 +46,8 @@ A use is every identifier in kogen-build's own non-test Go code (the packages `b
 `pkg.Name`, or to a method or field of one of its named types, named `pkg.Type.Member` by the type
 that declares the member. Import aliases, type aliases and re-exports (`build/core_names.go`) and
 members reached through returned values and struct fields are therefore counted. The uses were
-listed per dependency and package with this go/types listing (564 at HEAD: 112 kogen-coordinator,
-139 kogen-executor, 138 kogen-loop, 104 kogen-review, 71 kogen-verification) and compared with
+listed per dependency and package with this go/types listing (562 at HEAD: 112 kogen-coordinator,
+137 kogen-executor, 138 kogen-loop, 104 kogen-review, 71 kogen-verification) and compared with
 the identifiers each suite's tests name inside their bodies, using the same go/types resolution.
 The inventory below holds one row per use, under its suite: the use and the tests whose bodies name
 it (the tests that assert it, and any that only arrange another assertion with it).
@@ -183,7 +183,7 @@ it (the tests that assert it, and any that only arrange another assertion with i
 | `agent.Prompt` | TestAgentPromptTestingRules |
 | `agent.TestingRules` | TestAgentPromptTestingRules |
 | `agent.WithOriginHint` | TestAgentWithOriginHint |
-| `core.Count` | TestCoreExecutorStateJSON, TestCoreExecutorUsagePlus, TestCoreResponseTokens, TestCoreTokens |
+| `core.Count` | TestCoreExecutorStateJSON, TestCoreExecutorUsagePlus, TestCoreTokens |
 | `core.DiagnosticText` | TestCoreDiagnosticText |
 | `core.Display` | TestCoreDisplay |
 | `core.EncodeJSON` | TestCoreEncodeJSON |
@@ -206,8 +206,6 @@ it (the tests that assert it, and any that only arrange another assertion with i
 | `core.InspectString` | TestCoreInspectString |
 | `core.MaterialText` | TestCoreMaterialText |
 | `core.NonNil` | TestCoreNonNil, TestCoreReviewRecordJSON |
-| `core.ProviderRole` | TestCoreProviderRole |
-| `core.ResponseTokens` | TestCoreResponseTokens |
 | `core.ResumeRefused` | TestCoreResumeRefused |
 | `core.ReviewRecord` | TestCoreReviewRecordJSON |
 | `core.ReviewRecord.Findings` | TestCoreReviewRecordJSON |
@@ -215,13 +213,13 @@ it (the tests that assert it, and any that only arrange another assertion with i
 | `core.ReviewRecord.Tree` | TestCoreReviewRecordJSON |
 | `core.ReviewRecord.Verdict` | TestCoreReviewRecordJSON |
 | `core.ShellDefinitions` | TestCoreShellDefinitions |
-| `core.Tokens` | TestCoreResponseTokens, TestCoreTokens |
-| `core.Tokens.Cached` | TestCoreResponseTokens, TestCoreTokens |
-| `core.Tokens.Input` | TestCoreResponseTokens, TestCoreTokens |
+| `core.Tokens` | TestCoreTokens |
+| `core.Tokens.Cached` | TestCoreTokens |
+| `core.Tokens.Input` | TestCoreTokens |
 | `core.Tokens.Line` | TestCoreTokens |
-| `core.Tokens.Output` | TestCoreResponseTokens, TestCoreTokens |
+| `core.Tokens.Output` | TestCoreTokens |
 | `core.Tokens.Plus` | TestCoreTokens |
-| `core.Tokens.Reasoning` | TestCoreResponseTokens, TestCoreTokens |
+| `core.Tokens.Reasoning` | TestCoreTokens |
 | `core.Tokens.Total` | TestCoreTokens |
 | `core.ZeroTokens` | TestCoreTokens |
 | `executor.BlockerClaim` | TestExecutorDrivenThroughTheContract, TestExecutorRoundResultFields |

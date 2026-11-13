@@ -69,7 +69,7 @@ const suites = {
       'agent.ApplyBuildReview agent.AsAny agent.BudgetEvent agent.Git agent.NameBudgetExpiry',
       'agent.Prompt agent.TestingRules agent.WithOriginHint core.Count core.DiagnosticText',
       'core.Display core.EncodeJSON core.HashHex core.InspectString core.MaterialText',
-      'core.ProviderRole core.ResponseTokens core.ResumeRefused core.ShellDefinitions',
+      'core.ResumeRefused core.ShellDefinitions',
       'core.ZeroTokens executor.Contract executor.EndBlocker executor.EndFinish',
       'executor.EndNoCall executor.Fail executor.Native executor.PreventWriteTool',
       'executor.ReasonDeadline executor.ReasonInterrupted executor.ReasonProtocol',

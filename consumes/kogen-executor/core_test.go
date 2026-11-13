@@ -6,10 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-executor/executor"
-	"github.com/KogenAI/kogen-loop/provider"
 	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-loop/tools"
 )
@@ -199,14 +197,6 @@ func TestCoreShellDefinitions(t *testing.T) {
 	}
 }
 
-func TestCoreProviderRole(t *testing.T) {
-	var _ func(project.Role) provider.Role = core.ProviderRole
-	got := core.ProviderRole(project.Role{Provider: "anthropic", Model: "m", Effort: "high", BaseURL: "http://127.0.0.1:1", Executor: "claude-code"})
-	if want := (provider.Role{Provider: "anthropic", Model: "m", Effort: "high", BaseURL: "http://127.0.0.1:1"}); got != want {
-		t.Errorf("core.ProviderRole = %+v, want %+v", got, want)
-	}
-}
-
 func TestCoreTokens(t *testing.T) {
 	var _ func(int) *int = core.Count
 	var _ func() core.Tokens = core.ZeroTokens
@@ -257,26 +247,6 @@ func TestCoreTokens(t *testing.T) {
 	}
 	if *tk.Input != 1 || tk.Cached != nil {
 		t.Errorf("core.Tokens.Plus: must not change its operands, got %+v", tk)
-	}
-}
-
-func TestCoreResponseTokens(t *testing.T) {
-	var _ func(project.Role, *provider.Response) core.Tokens = core.ResponseTokens
-	resp := &provider.Response{
-		Usage: provider.Usage{Input: 100, Cached: 40, Output: 20, Reasoning: 5},
-		Known: provider.KnownUsage{Input: core.Count(7), Cached: nil, Output: core.Count(3), Reasoning: nil},
-	}
-	// The compatible totals of every route but Anthropic: always known integers.
-	for _, role := range []project.Role{{}, {Provider: "chatgpt"}, {Provider: "openai-compatible", Model: "m"}} {
-		want := core.Tokens{Input: core.Count(100), Cached: core.Count(40), Output: core.Count(20), Reasoning: core.Count(5)}
-		if got := core.ResponseTokens(role, resp); !reflect.DeepEqual(got, want) {
-			t.Errorf("core.ResponseTokens: provider %q = %+v, want the response's usage %+v", role.Provider, got, want)
-		}
-	}
-	// Anthropic: the validated analytical usage, with what it did not report unknown.
-	want := core.Tokens{Input: core.Count(7), Cached: nil, Output: core.Count(3), Reasoning: nil}
-	if got := core.ResponseTokens(project.Role{Provider: "anthropic", Model: "m"}, resp); !reflect.DeepEqual(got, want) {
-		t.Errorf("core.ResponseTokens: anthropic = %+v, want the known usage %+v", got, want)
 	}
 }
 

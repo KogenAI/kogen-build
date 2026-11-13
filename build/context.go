@@ -166,7 +166,7 @@ func safeFile(path string) bool {
 // measure is the complete rendered request against the 524288-byte input budget.
 func (b *Attempt) bodyOf(role project.Role, instructions string, items, tools []any, owner string) map[string]any {
 	return b.deps.Client.Body(provider.Request{
-		Role: core.ProviderRole(role), Instructions: instructions, Input: items, Tools: tools, ToolChoice: b.force,
+		Role: providerRole(role), Instructions: instructions, Input: items, Tools: tools, ToolChoice: b.force,
 		CacheID: b.cacheID(owner), Cache: provider.NewCache(b.PromptCache),
 	})
 }
@@ -216,7 +216,7 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		}
 		state = &OwnerContext{Mandatory: core.NonNil(mandatory), Observations: []any{}, History: []HistoryRef{}}
 	}
-	measured, err := agent.Measure(b.bodyOf(role, instructions, input, tools, owner), core.ProviderRole(role))
+	measured, err := agent.Measure(b.bodyOf(role, instructions, input, tools, owner), providerRole(role))
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +333,7 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		message := map[string]any{"role": "user", "content": resetMarker + string(encoded)}
 		w.mandatory = append(slices.Clone(state.Mandatory), message)
 		w.reduced = append(slices.Clone(w.mandatory), thinking.Strip(newestExchange(in))...)
-		next, err := agent.Measure(b.bodyOf(role, instructions, w.reduced, tools, owner), core.ProviderRole(role))
+		next, err := agent.Measure(b.bodyOf(role, instructions, w.reduced, tools, owner), providerRole(role))
 		return w, next, err
 	}
 	var window resetWindow
@@ -341,7 +341,7 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 	if window, next, err = construct(input, nil); err != nil {
 		return nil, err
 	}
-	mand, err := agent.Measure(b.bodyOf(role, instructions, window.mandatory, tools, owner), core.ProviderRole(role))
+	mand, err := agent.Measure(b.bodyOf(role, instructions, window.mandatory, tools, owner), providerRole(role))
 	if err != nil {
 		return nil, err
 	}

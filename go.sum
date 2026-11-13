@@ -4,8 +4,8 @@ github.com/KogenAI/kogen-executor v0.0.0-20261111115604-e41db3d2d2e4 h1:JeT1neuy
 github.com/KogenAI/kogen-executor v0.0.0-20261111115604-e41db3d2d2e4/go.mod h1:1aw+rhdSBMEagexTyXdL7aRCYZO9Vj1zTx4c88AI+hE=
 github.com/KogenAI/kogen-loop v0.0.0-20261111104243-16bc90355dfb h1:oICLvgo6hCyVYKztkJ0wTgY8Q9eSvSgIHxlEfe065dM=
 github.com/KogenAI/kogen-loop v0.0.0-20261111104243-16bc90355dfb/go.mod h1:yPduvTAVdxH5egqW82Uis/ZhemRb5gNSdzTll/f6bG0=
-github.com/KogenAI/kogen-review v0.0.0-20261111115833-3fecb984726a h1:MBAf++H+CF1lmUX46IyB3AsxiAF+4WkPDUXaXeKZhWs=
-github.com/KogenAI/kogen-review v0.0.0-20261111115833-3fecb984726a/go.mod h1:GerfruyyxJ+W0DGad6OzxbMVvTZKmakjYcXwXwccjmo=
+github.com/KogenAI/kogen-review v0.0.0-20261113154643-47c694035e56 h1:5KPEgXWH0D0DlQ3cHrWv9EWUu0/Zf0s1uqrK53ke8p8=
+github.com/KogenAI/kogen-review v0.0.0-20261113154643-47c694035e56/go.mod h1:GerfruyyxJ+W0DGad6OzxbMVvTZKmakjYcXwXwccjmo=
 github.com/KogenAI/kogen-verification v0.0.0-20261111114253-4a379220bdb1 h1:u8SZRQIsNFg+3zkMCjmcABwXntAM1SUXqFTyDqyaJoo=
 github.com/KogenAI/kogen-verification v0.0.0-20261111114253-4a379220bdb1/go.mod h1:b3TIpodtSQnpvmfgd8lXd5PtiNNn4Y/fQM+IsTj8tQA=
 golang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=

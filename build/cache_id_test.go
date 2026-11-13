@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"github.com/KogenAI/kogen-executor/core"
 	"github.com/KogenAI/kogen-loop/provider"
 )
 
@@ -157,11 +156,11 @@ func TestAnAnthropicResponseKeepsUnreportedCountsUnknown(t *testing.T) {
 	// ExUnit: lib/kogen/anthropic.ex usage/1 (input is the sum of its reported parts; reasoning is never reported)
 	role := project.Role{Provider: "anthropic", Model: "claude-sonnet-5-5", Effort: "high"}
 	in, cached, out := 12, 5, 3
-	got := core.ResponseTokens(role, &provider.Response{Known: provider.KnownUsage{Input: &in, Cached: &cached, Output: &out}})
+	got := responseTokens(role, &provider.Response{Known: provider.KnownUsage{Input: &in, Cached: &cached, Output: &out}})
 	eq(t, "line", got.Line(), "input=12 cached=5 output=3 reasoning=unknown")
-	none := core.ResponseTokens(role, &provider.Response{})
+	none := responseTokens(role, &provider.Response{})
 	eq(t, "none", none.Line(), "input=unknown cached=unknown output=unknown reasoning=unknown")
-	chat := core.ResponseTokens(project.Role{Model: "gpt-6.1-sol", Effort: "medium"}, &provider.Response{Usage: provider.Usage{Input: 4, Output: 2}})
+	chat := responseTokens(project.Role{Model: "gpt-6.1-sol", Effort: "medium"}, &provider.Response{Usage: provider.Usage{Input: 4, Output: 2}})
 	eq(t, "chatgpt", chat.Line(), "input=4 cached=0 output=2 reasoning=0")
 }
 
