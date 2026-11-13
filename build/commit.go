@@ -70,10 +70,21 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 			return false, err
 		}
 	}
-	os.Remove(project.ApprovalPath(b.Root, b.Slug))
+	approvalPath := project.ApprovalPath(b.Root, b.Slug)
+	var removalFailure error
+	if err := os.Remove(approvalPath); err != nil && !os.IsNotExist(err) {
+		removalFailure = err
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) {
+			removalFailure = pathErr.Err
+		}
+	}
 	b.SetPhase(phaseLanded)
 	if err := b.Save(Continuation{Stage: StageLanded, Commit: commit, AlreadyPresent: alreadyPresent}); err != nil {
 		return false, err
+	}
+	if removalFailure != nil {
+		b.Run.Event(map[string]any{"event": "approval_removal_failed", "path": approvalPath, "error": removalFailure.Error()})
 	}
 	var notes []map[string]any
 	for _, f := range review.Findings {
@@ -108,6 +119,9 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 	b.s.Puts(line)
 	for _, f := range notes {
 		b.s.Puts(fmt.Sprintf("  note: %s:%s: %s", core.Display(f["path"]), core.Display(f["line"]), core.Display(f["message"])))
+	}
+	if removalFailure != nil {
+		b.s.Puts(fmt.Sprintf("  note: could not remove the approval file %s: %s", approvalPath, removalFailure))
 	}
 	b.s.Puts(fmt.Sprintf("  repairs: %d · tokens: %s · time: %s", b.Repairs, b.Usage.Total(), duration(b.elapsed())))
 	if x := b.Executor; x != nil && x.Name != executor.Native {

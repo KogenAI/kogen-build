@@ -1,0 +1,1 @@
+{"deferred":"The acceptance drives a full fake-provider Build landing in the build package's test fixtures; a correct overlay would be the production edit in build/commit.go plus its fixtures, and the Build writes it."}

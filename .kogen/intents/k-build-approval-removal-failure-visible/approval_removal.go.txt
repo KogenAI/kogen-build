@@ -1,0 +1,69 @@
+package build
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+)
+
+func TestApprovalRemoval(t *testing.T) {
+	land := func(t *testing.T, prepare func(e *env, approval string)) (*env, *attempt, string) {
+		e := newEnv(t)
+		e.prov.then(landScript(e.prov)...)
+		approval := project.ApprovalPath(e.root, testSlug)
+		prepare(e, approval)
+		a := e.build()
+		if a.exit != 0 || a.err != nil {
+			t.Fatalf("exit %d err %v\n%s\n%s", a.exit, a.err, a.out, a.errs)
+		}
+		return e, a, approval
+	}
+	t.Run("normal", func(t *testing.T) {
+		_, a, approval := land(t, func(*env, string) {})
+		if _, err := os.Stat(approval); !os.IsNotExist(err) || strings.Contains(a.out.String(), "note: ") || !strings.Contains(a.out.String(), "landed fixture") {
+			t.Fatalf("stdout %q", a.out)
+		}
+	})
+	t.Run("already-gone", func(t *testing.T) {
+		_, a, _ := land(t, func(e *env, ap string) {
+			e.hook("pre-commit", "rm -f '"+ap+"'\n")
+		})
+		if strings.Contains(a.out.String(), "note: ") || !strings.Contains(a.out.String(), "landed fixture") {
+			t.Fatalf("stdout %q", a.out)
+		}
+	})
+	t.Run("unremovable", func(t *testing.T) {
+		e, a, approval := land(t, func(e *env, ap string) {
+			dir := filepath.Dir(ap)
+			t.Cleanup(func() { os.Chmod(dir, 0o755) })
+			e.hook("pre-commit", "chmod 555 '"+dir+"'\n")
+		})
+		out := a.out.String()
+		if !strings.Contains(out, "landed fixture") || strings.Count(out, "note: ") != 1 ||
+			!strings.Contains(out, approval) || !strings.Contains(out, "permission denied") {
+			t.Fatalf("stdout %q", out)
+		}
+		id := e.onlyRun()
+		log, err := os.ReadFile(e.runPath(id, "log.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(string(log), `"event":"approval_removal_failed"`) != 1 || !strings.Contains(string(log), "permission denied") {
+			t.Fatalf("log %s", log)
+		}
+		if _, err := os.Stat(approval); err != nil {
+			t.Fatalf("approval should remain: %v", err)
+		}
+		r := e.resume(id)
+		if r.exit != 0 || strings.Contains(r.out.String(), "note: ") || strings.Contains(r.errs.String(), "note: ") {
+			t.Fatalf("resume exit %d out %q errs %q", r.exit, r.out, r.errs)
+		}
+		log, _ = os.ReadFile(e.runPath(id, "log.jsonl"))
+		if strings.Count(string(log), `"event":"approval_removal_failed"`) != 1 {
+			t.Fatalf("log after resume %s", log)
+		}
+	})
+}
