@@ -180,7 +180,7 @@ func (r *recovery) run() error {
 		if m, ok := v.(map[string]any); ok {
 			if version, ok := m["version"]; ok {
 				if n, _ := version.(json.Number); n != "4" {
-					return recoveryRefused("unknown checkpoint: legacy checkpoint version "+inspectScalar(version), "recovery_unsupported")
+					return recoveryRefused("unknown checkpoint: incompatible checkpoint version "+inspectScalar(version), "recovery_unsupported")
 				}
 			}
 		}

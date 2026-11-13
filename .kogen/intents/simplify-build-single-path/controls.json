@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation is a one-string wording change in build/recover.go plus its test expectations; the scenarios observe source text and the existing test suite, which the Build's own change satisfies."}

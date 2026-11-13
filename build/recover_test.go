@@ -240,12 +240,12 @@ func TestRecoveryRefusals(t *testing.T) {
 			doc, _ := e.checkpoint(id)
 			doc["version"] = float64(2)
 			e.writeCheckpoint(id, doc)
-		}, want: "unknown checkpoint: legacy checkpoint version 2", kind: "recovery_unsupported"},
+		}, want: "unknown checkpoint: incompatible checkpoint version 2", kind: "recovery_unsupported"},
 		{name: "version 3", prep: func(e *env, id string) {
 			doc, _ := e.checkpoint(id)
 			doc["version"] = float64(3)
 			e.writeCheckpoint(id, doc)
-		}, want: "unknown checkpoint: legacy checkpoint version 3", kind: "recovery_unsupported"},
+		}, want: "unknown checkpoint: incompatible checkpoint version 3", kind: "recovery_unsupported"},
 		{name: "head moved", prep: func(e *env, id string) { e.run("git", "commit", "-q", "--allow-empty", "-m", "moved") }, want: "HEAD changed"},
 		{name: "index changed", prep: func(e *env, id string) { e.write("staged.txt", "x\n"); e.run("git", "add", "staged.txt") }, want: "index changed"},
 		{name: "approval changed", prep: func(e *env, id string) {
