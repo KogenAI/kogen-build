@@ -2,6 +2,7 @@ package build
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -49,16 +50,154 @@ func forcedBodies(t *testing.T, f *fakeProvider) (indexes []int, bodies [][]byte
 // working-window reset (pinned source, native prefill around it) is transmitted forced; its
 // text-only answer is a provider fault naming route and model and the ordinary no-tool
 // exhaustion; a fresh independent review of the same green tree then approves and lands.
+//
+// The forced tool follows the pinned unread parts the reset handoff reports (unread_parts):
+// read_file while any remain unread, submit_review once none do. Both states run: a candidate
+// whose pinned parts the reviewer never reads leaves some unread, a small one it reads first
+// leaves none.
 func TestKReviewVerdictStrandReset(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		readAll  bool // the reviewer reads every pinned part before the long prose turn
+		wantRead bool // some pinned parts are then still unread at the reset
+	}{
+		{"unread pinned parts remain", false, true},
+		{"every pinned part was read", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			strandReset(t, tc.readAll, tc.wantRead)
+		})
+	}
+}
+
+// reviewResetHandoff is the kogen-review working-context reset message a request carries, or
+// nil. It states how many pinned parts remain unread as unread_parts.
+func reviewResetHandoff(t *testing.T, req map[string]any) map[string]any {
+	t.Helper()
+	const header = "Kogen review working-context reset\n"
+	for _, it := range requestInput(req) {
+		m, _ := it.(map[string]any)
+		s, ok := m["content"].(string)
+		if !ok || !strings.HasPrefix(s, header) {
+			continue
+		}
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(s, header)), &doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	return nil
+}
+
+// resetText is the text of every reset handoff a request carries (Build's and the review's), in
+// order, or "".
+func resetText(t *testing.T, req map[string]any) string {
+	t.Helper()
+	var out string
+	for _, it := range requestInput(req) {
+		m, _ := it.(map[string]any)
+		if c, ok := m["content"].(string); ok && (strings.HasPrefix(c, "Local working-window reset\n") || strings.HasPrefix(c, "Kogen review working-context reset\n")) {
+			out += c + "\n"
+		}
+	}
+	return out
+}
+
+// afterReset reports whether a request carries a working-window reset handoff, Build's or the
+// review's own.
+func afterReset(t *testing.T, req map[string]any) bool {
+	t.Helper()
+	return resetHandoff(t, req) != nil || reviewResetHandoff(t, req) != nil
+}
+
+// unreadParts is the unread_parts count the reset handoff of a request reports: the review's own
+// handoff states it as unread_parts, Build's carries the unread pinned parts of its source
+// delivery facts. ok is false when the request carries no such count.
+func unreadParts(t *testing.T, req map[string]any) (n int, ok bool) {
+	t.Helper()
+	if doc := reviewResetHandoff(t, req); doc != nil {
+		n, ok := doc["unread_parts"].(float64)
+		return int(n), ok
+	}
+	delivery, _ := resetHandoff(t, req)["review_delivery"].(map[string]any)
+	source, _ := delivery["source"].(map[string]any)
+	unread, isList := source["unread"].([]any)
+	if source["current"] != true || !isList {
+		return 0, false
+	}
+	return len(unread), true
+}
+
+// forcedToolFor is the tool the review contract forces for a reminder: read_file while pinned
+// parts remain unread, submit_review once none do.
+func forcedToolFor(unread int) string {
+	if unread > 0 {
+		return "read_file"
+	}
+	return "submit_review"
+}
+
+// unreadLeft reports whether the confirming reviewer would still read a pinned part in answer
+// to req: one that neither the request's window nor the reset's native delivery facts show as
+// delivered.
+func unreadLeft(t *testing.T, req map[string]any, e *env) bool {
+	t.Helper()
+	known, _ := inWindow(req)
+	for path := range prefilledParts(t, req) {
+		known[path] = true
+	}
+	parts := latestPinnedParts(e.root)
+	if reset := resetHandoff(t, req); reset != nil {
+		if d, ok := reset["review_delivery"].(map[string]any); ok {
+			if source, ok := d["source"].(map[string]any); ok && source["current"] == true {
+				unread := map[int]bool{}
+				for _, n := range source["unread"].([]any) {
+					unread[int(n.(float64))] = true
+				}
+				for i, p := range parts {
+					if !unread[i+1] {
+						known[p] = true
+					}
+				}
+			}
+		}
+	}
+	return slices.ContainsFunc(parts, func(p string) bool { return !known[p] })
+}
+
+func strandReset(t *testing.T, readAll, wantUnread bool) {
 	e := newEnv(t)
 	f := e.prov
 	f.then(strandBuilder(f))
-	// Review 1: a large prose-only turn that pushes the reminder request over the ceiling (the
-	// reset happens in that very request, which also carries native source prefill) and a
-	// text-only answer to it.
-	f.then(prose(strings.Repeat("Everything is fine. ", 7_000)), prose("Nothing to add."))
-	f.then(repeatHandler(confirmingReviewer(t, e, f, nil), 40)...)
+	// Review 1: optionally reads every pinned part first (the confirming reviewer's reads, a few
+	// at a time across its windows), then a large prose-only turn that pushes the reminder request
+	// over the ceiling (the reset happens in that very request, which also carries native source
+	// prefill) and a text-only answer to it. Review 2 then confirms and approves.
+	confirm := confirmingReviewer(t, e, f, nil)
+	stage := 0
+	f.then(repeatHandler(func(w http.ResponseWriter, r *http.Request) {
+		reqs := f.reviewRequests()
+		if stage == 0 && readAll && !unreadLeft(t, reqs[len(reqs)-1], e) {
+			stage = 1
+		} else if stage == 0 && !readAll {
+			stage = 1
+		}
+		switch stage {
+		case 0:
+			confirm(w, r)
+		case 1:
+			stage = 2
+			prose(strings.Repeat("Everything is fine. ", 7_000))(w, r)
+		case 2:
+			stage = 3
+			prose("Nothing to add.")(w, r)
+		default:
+			confirm(w, r)
+		}
+	}, 120)...)
 	start := e.head()
 	a := e.reviewed()
 	if a.exit != 0 || a.err != nil {
@@ -71,16 +210,31 @@ func TestKReviewVerdictStrandReset(t *testing.T) {
 	// The forced request really followed a reset and was transmitted forced, within the ceiling.
 	forced, forcedBody := forcedBodies(t, f)
 	eq(t, "forced requests", len(forced), 1)
-	if resetHandoff(t, reqs[forced[0]]) == nil || resetHandoff(t, reqs[forced[0]-1]) != nil {
+	if !afterReset(t, reqs[forced[0]]) || (forced[0] > 0 && resetText(t, reqs[forced[0]]) == resetText(t, reqs[forced[0]-1])) {
 		t.Fatal("the forced request is not the one that came right after a working-window reset")
 	}
-	resets := eventsNamed(events, "window_reset")
-	if len(resets) == 0 || resets[0]["input_tokens_after"].(float64) >= resets[0]["input_tokens_before"].(float64) || len(forcedBody[0]) > looptools.InputBudgetBytes {
-		t.Fatalf("resets %v, forced request %d bytes", resets, len(forcedBody[0]))
+	// Build's own reset (window_reset) or the review's (review_window_reset) shrank the window.
+	shrank := func(evs []map[string]any, before, after string) bool {
+		return len(evs) > 0 && evs[0][after].(float64) < evs[0][before].(float64)
 	}
-	eq(t, "the reset is part of the forced request's body", strings.Contains(string(bodies[forced[0]]), "Local working-window reset"), true)
+	resets, reviewResets := eventsNamed(events, "window_reset"), eventsNamed(events, "review_window_reset")
+	if !(shrank(resets, "input_tokens_before", "input_tokens_after") || shrank(reviewResets, "bytes_before", "bytes_after")) || len(forcedBody[0]) > looptools.InputBudgetBytes {
+		t.Fatalf("resets %v, review resets %v, forced request %d bytes", resets, reviewResets, len(forcedBody[0]))
+	}
+	eq(t, "the reset is part of the forced request's body", strings.Contains(string(bodies[forced[0]]), "working-window reset") || strings.Contains(string(bodies[forced[0]]), "working-context reset"), true)
+
+	// The forced tool follows the unread pinned parts the reset handoff of the forced request
+	// reports, not a fixed tool.
+	unread, ok := unreadParts(t, reqs[forced[0]])
+	if !ok {
+		t.Fatal("the forced request reports no unread_parts count in its reset handoff")
+	}
+	eq(t, "some pinned parts are unread", unread > 0, wantUnread)
+	wantTool := forcedToolFor(unread)
+	eq(t, "forced tool_choice", jsonOf(reqs[forced[0]]["tool_choice"]), jsonOf(map[string]any{"type": "function", "name": wantTool}))
 	eq(t, "tool choice events", len(eventsNamed(events, "review_tool_choice")), 1)
 	eq(t, "mode", eventsNamed(events, "review_tool_choice")[0]["mode"], any("api_forced"))
+	eq(t, "tool choice event tool", eventsNamed(events, "review_tool_choice")[0]["tool"], any(wantTool))
 	if len(eventsNamed(events, "review_source_prefill")) < 2 {
 		t.Fatalf("no native source prefill progress around the forced turn: %v", eventsNamed(events, "review_source_prefill"))
 	}
@@ -91,7 +245,7 @@ func TestKReviewVerdictStrandReset(t *testing.T) {
 	eq(t, "fault", faults[0]["fault"], any("forced_tool_not_called"))
 	eq(t, "fault route", faults[0]["route"], any("chatgpt"))
 	eq(t, "fault model", faults[0]["model"], any("gpt-6.1-terra"))
-	eq(t, "fault tool", faults[0]["tool"], any("submit_review"))
+	eq(t, "fault tool", faults[0]["tool"], any(wantTool))
 	verdicts := map[float64]map[string]any{}
 	for _, ev := range e.reviewVerdicts(id) {
 		verdicts[ev["review"].(float64)] = ev
