@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"slices"
+	"strings"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
@@ -174,10 +175,15 @@ func (e reviewEnv) Repaired() error {
 	e.b.Repairs++
 	return e.b.Track()
 }
-func (e reviewEnv) Executor(x *ExecutorState)         { e.b.ReviewExecutor = x }
-func (e reviewEnv) Track() error                      { return e.b.Track() }
-func (e reviewEnv) Facts(phase string) error          { return e.b.facts.update(e.b, phase, "") }
-func (e reviewEnv) Progress(line string)              { e.b.s.Progress(line) }
+func (e reviewEnv) Executor(x *ExecutorState) { e.b.ReviewExecutor = x }
+func (e reviewEnv) Track() error              { return e.b.Track() }
+func (e reviewEnv) Facts(phase string) error  { return e.b.facts.update(e.b, phase, "") }
+func (e reviewEnv) Progress(line string) {
+	if strings.HasPrefix(line, "kogen: reviewing (review ") || strings.HasPrefix(line, "kogen: review ") {
+		line = e.b.phaseProgress(line)
+	}
+	e.b.s.Progress(line)
+}
 func (e reviewEnv) Event(event map[string]any)        { e.b.Run.Event(event) }
 func (e reviewEnv) Write(name string, data any) error { return e.b.Run.Write(name, data) }
 func (e reviewEnv) Err() error                        { return e.b.s.Err() }

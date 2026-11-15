@@ -113,7 +113,7 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 				}
 			}
 		}
-		b.s.Progress("kogen: checking " + c.Name + " before the Build changes anything")
+		b.s.Progress(b.phaseProgress("kogen: checking " + c.Name + " before the Build changes anything"))
 		b.baselineRunning = &baselineRunning{name: c.Name, command: c.Run, started: time.Now()}
 		b.Run.Event(map[string]any{"event": "command", "name": c.Name, "command": c.Run, "before_change": true})
 		started := time.Now()

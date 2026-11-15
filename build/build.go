@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -653,3 +654,34 @@ func (b *Attempt) PassFeedback(pass verify.Pass, completion string) string {
 }
 
 func (b *Attempt) elapsed() time.Duration { return time.Since(time.UnixMilli(b.T0)) }
+
+// phaseProgress retains the phase's message and measures from the original Build start.
+func (b *Attempt) phaseProgress(line string) string {
+	return fmt.Sprintf("%s (%d s)", line, b.elapsed()/time.Second)
+}
+
+// Verification owns its progress messages and writes them through the session. Adapt
+// only its boundary lines, leaving command notices and diagnostics untouched.
+type verifyProgressWriter struct {
+	io.Writer
+	b *Attempt
+}
+
+func (w verifyProgressWriter) Write(p []byte) (int, error) {
+	line := string(p)
+	if strings.HasPrefix(line, "kogen: verifying (pass ") || strings.HasPrefix(line, "kogen: pass ") {
+		_, err := io.WriteString(w.Writer, w.b.phaseProgress(strings.TrimSuffix(line, "\n"))+"\n")
+		if err != nil {
+			return 0, err
+		}
+		return len(p), nil
+	}
+	return w.Writer.Write(p)
+}
+
+func (b *Attempt) verifyProgress(ctx context.Context, in verify.Input) (verify.Pass, error) {
+	stderr := b.s.Stderr
+	b.s.Stderr = verifyProgressWriter{Writer: stderr, b: b}
+	defer func() { b.s.Stderr = stderr }()
+	return verify.Verify(ctx, b.s, in)
+}

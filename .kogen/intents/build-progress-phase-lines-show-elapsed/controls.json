@@ -1,0 +1,26 @@
+{
+  "correct": {
+    "files": {
+      "build/build.go": {
+        "patch": "--- a/build/build.go\n+++ b/build/build.go\n@@ -365,6 +365,8 @@\n \n // begin is a fresh Build's start checks (AUT-3..5) and then the builder.\n func (b *Attempt) begin(ctx context.Context) error {\n+\trestoreProgress := b.timePhaseProgress()\n+\tdefer restoreProgress()\n \tif err := b.repo.CheckCommitMsg(b.s, b.intent.Title, b.Slug); err != nil {\n \t\treturn err\n \t}\n"
+      },
+      "build/builder.go": {
+        "patch": "--- a/build/builder.go\n+++ b/build/builder.go\n@@ -408,6 +408,8 @@\n // conversation, or a routed step (kogen-coordinator's route.Resume), never an external\n // executor's builder session.\n func (b *Attempt) resumeStage(ctx context.Context) error {\n+\trestoreProgress := b.timePhaseProgress()\n+\tdefer restoreProgress()\n \tif why := b.builderResumeRefusal(); why != \"\" {\n \t\treturn core.ResumeRefused(why)\n \t}\n"
+      },
+      "build/resume.go": {
+        "patch": "--- a/build/resume.go\n+++ b/build/resume.go\n@@ -11,7 +11,6 @@\n \t\"slices\"\n \t\"strconv\"\n \t\"strings\"\n-\t\"time\"\n \n \t\"github.com/KogenAI/kogen-coordinator/git\"\n \t\"github.com/KogenAI/kogen-coordinator/project\"\n@@ -329,7 +328,6 @@\n \tb.facts = facts\n \tfacts.inherit(b, b.Run)\n \tb.Run, b.Parent, b.RootRun = run, &id, &root0\n-\tb.T0 = time.Now().UnixMilli()\n \tb.AttemptUsage = core.ZeroTokens()\n \t*out = b\n \ts.Puts(fmt.Sprintf(\"resuming Build %s as %s (root %s)\", id, run.ID, root0))\n"
+      },
+      "build/progress_phase.go": "package build\n\nimport (\n\t\"fmt\"\n\t\"io\"\n\t\"regexp\"\n\t\"strings\"\n\t\"time\"\n)\n\nvar phaseBoundary = regexp.MustCompile(`^kogen: (checking .+ before the Build changes anything|verifying \\(pass [0-9]+\\)|pass [0-9]+: .*|reviewing \\(review [0-9]+.*|review [0-9]+: .*|committing)$`)\n\n// phaseLine decorates only phase boundaries, never tool progress or diagnostics.\nfunc (b *Attempt) phaseLine(line string) string {\n\tif phaseBoundary.MatchString(line) {\n\t\treturn fmt.Sprintf(\"%s (%d s)\", line, b.elapsed()/time.Second)\n\t}\n\treturn line\n}\n\ntype phaseProgressWriter struct {\n\tb   *Attempt\n\tout io.Writer\n}\n\nfunc (w phaseProgressWriter) Write(p []byte) (int, error) {\n\tline := string(p)\n\tif strings.HasSuffix(line, \"\\n\") {\n\t\tline = w.b.phaseLine(strings.TrimSuffix(line, \"\\n\")) + \"\\n\"\n\t}\n\tn, err := io.WriteString(w.out, line)\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\tif n != len(line) {\n\t\treturn 0, io.ErrShortWrite\n\t}\n\treturn len(p), nil\n}\n\n// timePhaseProgress keeps the original session and restores its writer on return.\nfunc (b *Attempt) timePhaseProgress() func() {\n\tout := b.s.Stderr\n\tb.s.Stderr = phaseProgressWriter{b, out}\n\treturn func() { b.s.Stderr = out }\n}\n"
+    }
+  },
+  "wrong": [
+    {
+      "name": "Timestamp tool lines too",
+      "scenario": "Timestamp stage boundaries but preserve per-tool progress across resume",
+      "step": "Then build-progress-phase-lines-show-elapsed: stage suffixes and unchanged tool lines are exactly:",
+      "files": {
+        "build/progress_phase.go": "package build\n\nimport (\n\t\"fmt\"\n\t\"io\"\n\t\"regexp\"\n\t\"strings\"\n\t\"time\"\n)\n\nvar phaseBoundary = regexp.MustCompile(`^kogen: (checking .+ before the Build changes anything|verifying \\(pass [0-9]+\\)|pass [0-9]+: .*|reviewing \\(review [0-9]+.*|review [0-9]+: .*|committing)$`)\n\n// phaseLine decorates only phase boundaries, never tool progress or diagnostics.\nfunc (b *Attempt) phaseLine(line string) string {\n\tif phaseBoundary.MatchString(line) || strings.HasPrefix(line, \"kogen: building (round \") {\n\t\treturn fmt.Sprintf(\"%s (%d s)\", line, b.elapsed()/time.Second)\n\t}\n\treturn line\n}\n\ntype phaseProgressWriter struct {\n\tb   *Attempt\n\tout io.Writer\n}\n\nfunc (w phaseProgressWriter) Write(p []byte) (int, error) {\n\tline := string(p)\n\tif strings.HasSuffix(line, \"\\n\") {\n\t\tline = w.b.phaseLine(strings.TrimSuffix(line, \"\\n\")) + \"\\n\"\n\t}\n\tn, err := io.WriteString(w.out, line)\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\tif n != len(line) {\n\t\treturn 0, io.ErrShortWrite\n\t}\n\treturn len(p), nil\n}\n\n// timePhaseProgress keeps the original session and restores its writer on return.\nfunc (b *Attempt) timePhaseProgress() func() {\n\tout := b.s.Stderr\n\tb.s.Stderr = phaseProgressWriter{b, out}\n\treturn func() { b.s.Stderr = out }\n}\n"
+      }
+    }
+  ]
+}

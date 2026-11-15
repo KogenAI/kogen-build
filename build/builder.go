@@ -363,7 +363,7 @@ func (b *Attempt) verifyStage(ctx context.Context, stage stageDef) (verify.Pass,
 	}
 	in := b.verifyInput(b.Pass)
 	in.Stage = &verify.Stage{ID: stage.ID, Checks: stage.Checks}
-	pass, err := verify.Verify(ctx, b.s, in)
+	pass, err := b.verifyProgress(ctx, in)
 	if err != nil {
 		return verify.Pass{}, err
 	}

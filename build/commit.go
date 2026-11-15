@@ -19,7 +19,7 @@ import (
 // reports drifted (the routing starts verification and review over); with restart false that
 // stops the Build instead: the resume of a failed commit never runs a new cycle.
 func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool) (drifted bool, err error) {
-	b.s.Progress("kogen: committing")
+	b.s.Progress(b.phaseProgress("kogen: committing"))
 	if err := b.s.Err(); err != nil {
 		return false, err
 	}

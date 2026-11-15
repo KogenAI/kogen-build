@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -329,7 +328,6 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	b.facts = facts
 	facts.inherit(b, b.Run)
 	b.Run, b.Parent, b.RootRun = run, &id, &root0
-	b.T0 = time.Now().UnixMilli()
 	b.AttemptUsage = core.ZeroTokens()
 	*out = b
 	s.Puts(fmt.Sprintf("resuming Build %s as %s (root %s)", id, run.ID, root0))

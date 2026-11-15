@@ -310,7 +310,7 @@ func (b *Attempt) verifyReusing(ctx context.Context, in verify.Input) (verify.Pa
 	cfg := *in.Config
 	cfg.Checks = d.run
 	in.Config = &cfg
-	pass, err := verify.Verify(ctx, b.s, in)
+	pass, err := b.verifyProgress(ctx, in)
 	if err != nil {
 		return verify.Pass{}, err
 	}

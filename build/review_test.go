@@ -1636,7 +1636,7 @@ func TestANativeApprovalOfContentsChangedWhileItsRequestWasInFlightIsNotApplied(
 	if !strings.HasPrefix(feedback, deliveredHead) || !strings.HasSuffix(feedback, "@@ -1 +1 @@\n-candidate\n+changed outside\n\n"+deliveredGreen) {
 		t.Fatalf("feedback %q", feedback)
 	}
-	contains(t, "progress", a.errs.String(), "kogen: review 1: the candidate changed after its contents were delivered; returning the changes to the reviewer\n")
+	contains(t, "progress", a.errs.String(), "kogen: review 1: the candidate changed after its contents were delivered; returning the changes to the reviewer (")
 	lacks(t, "progress", a.errs.String(), "candidate changed after approval")
 }
 

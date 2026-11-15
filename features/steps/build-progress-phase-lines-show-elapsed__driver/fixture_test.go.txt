@@ -1,0 +1,86 @@
+package build
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+type phaseElapsedExecutor struct{ *lineupExec }
+type phaseElapsedSession struct {
+	executor.Session
+	emit executor.Sink
+	role string
+}
+
+func (f phaseElapsedExecutor) Start(ctx context.Context, task executor.Task, emit executor.Sink) (executor.Session, error) {
+	s, err := f.lineupExec.Start(ctx, task, emit)
+	return phaseElapsedSession{s, emit, task.Role}, err
+}
+
+func (s phaseElapsedSession) Round(ctx context.Context, in executor.Input) (executor.RoundResult, error) {
+	result, err := s.Session.Round(ctx, in)
+	if s.role == executor.RoleBuild {
+		s.emit(map[string]any{"event": "executor_tool", "name": "Read", "arguments": map[string]any{"file_path": "input.txt"}, "result_error": false})
+		s.emit(map[string]any{"event": "executor_tool", "name": "Bash", "result_error": true})
+	}
+	return result, err
+}
+
+func TestPhaseElapsedAcceptance(t *testing.T) {
+	e := newEnv(t, func(c *project.Config) { c.Checks = []project.Check{{Name: "test", Run: "true"}} })
+	e.useLineup("")
+	e.credentials()
+	e.failingSigner()
+	result := map[string]string{}
+	synctest.Test(t, func(t *testing.T) {
+		f := newLineupExec(t)
+		f.build = func(n int, root string, in executor.Input) (executor.RoundResult, error) {
+			time.Sleep(205900 * time.Millisecond)
+			return externalWritesApp("candidate\n", executor.Usage{})(n, context.Background(), root, in)
+		}
+		f.review = func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error) {
+			time.Sleep(17250 * time.Millisecond)
+			return executor.RoundResult{Structured: verdictJSON("approve")}, nil
+		}
+		a := e.build(func(in *Input) {
+			in.External = func(project.Role) (executor.Executor, error) { return phaseElapsedExecutor{f}, nil }
+			in.Reviewer = nil
+		})
+		if a.err != nil || a.exit != 3 {
+			t.Fatalf("TestPhaseElapsedAcceptance Build: exit=%d err=%v\n%s\n%s", a.exit, a.err, a.out, a.errs)
+		}
+		result["fresh"] = a.errs.String()
+		id := e.onlyRun()
+		time.Sleep(100 * time.Second)
+		e.fixSigner()
+		r := e.resume(id, func(in *ResumeInput) {
+			in.Reviewer = nil
+			in.External = func(project.Role) (executor.Executor, error) { return phaseElapsedExecutor{f}, nil }
+		})
+		if r.err != nil || r.exit != 0 {
+			t.Fatalf("TestPhaseElapsedAcceptance Resume: exit=%d err=%v\n%s\n%s", r.exit, r.err, r.out, r.errs)
+		}
+		result["resumed"] = r.errs.String()
+		if e.prov.count() != 0 {
+			t.Fatal("TestPhaseElapsedAcceptance unexpectedly called a model")
+		}
+		if !strings.Contains(r.out.String(), "landed fixture") {
+			t.Fatal("TestPhaseElapsedAcceptance did not land")
+		}
+	})
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("PHASE_ELAPSED_RESULT"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
