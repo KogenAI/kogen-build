@@ -134,6 +134,7 @@ func (b *Attempt) details(reason string, report bool, providerFailure map[string
 		if len(edited) > 0 {
 			b.s.Puts("  edited: " + strings.Join(edited, ", "))
 		}
+		b.putSpend()
 		b.s.Puts("  run log: " + b.Run.LogPath)
 	}
 	outcome := map[string]any{"event": "outcome", "outcome": reason}

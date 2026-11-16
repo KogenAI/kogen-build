@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -123,14 +124,30 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 	if removalFailure != nil {
 		b.s.Puts(fmt.Sprintf("  note: could not remove the approval file %s: %s", approvalPath, removalFailure))
 	}
-	b.s.Puts(fmt.Sprintf("  repairs: %d · tokens: %s · time: %s", b.Repairs, b.Usage.Total(), duration(b.elapsed())))
+	b.putSpend()
+	return false, nil
+}
+
+// putSpend writes what the Build spent: the repairs line, then the executor lines. The
+// repairs line leaves out a native token total of exactly "0" when an executor line follows,
+// since that total does not count the executor's own usage.
+func (b *Attempt) putSpend() {
+	var executors []string
 	if x := b.Executor; x != nil && x.Name != executor.Native {
-		b.s.Puts("  executor: " + x.Name + " (" + executorUsageLine(x.Usage) + ")")
+		executors = append(executors, "  executor: "+x.Name+" ("+executorUsageLine(x.Usage)+")")
 	}
 	if x := b.ReviewExecutor; x != nil {
-		b.s.Puts("  review executor: " + x.Name + " (" + executorUsageLine(x.Usage) + ")")
+		executors = append(executors, "  review executor: "+x.Name+" ("+executorUsageLine(x.Usage)+")")
 	}
-	return false, nil
+	parts := []string{fmt.Sprintf("repairs: %d", b.Repairs)}
+	if tokens := b.Usage.Total(); tokens != "0" || len(executors) == 0 {
+		parts = append(parts, "tokens: "+tokens)
+	}
+	parts = append(parts, "time: "+duration(b.elapsed()))
+	b.s.Puts("  " + strings.Join(parts, " · "))
+	for _, line := range executors {
+		b.s.Puts(line)
+	}
 }
 
 func duration(d interface{ Seconds() float64 }) string {

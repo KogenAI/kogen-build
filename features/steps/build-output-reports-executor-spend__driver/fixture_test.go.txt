@@ -1,0 +1,100 @@
+package build
+
+import (
+	"context"
+	"os"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+func writeSpendResult(t *testing.T, text string) {
+	t.Helper()
+	if err := os.WriteFile(os.Getenv("SPEND_REPORT_RESULT"), []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSpendReportLandedExternal(t *testing.T) {
+	e := newEnv(t)
+	e.useLineup("")
+	var out string
+	synctest.Test(t, func(t *testing.T) {
+		f := newLineupExec(t)
+		f.build = func(n int, root string, in executor.Input) (executor.RoundResult, error) {
+			time.Sleep(205 * time.Second)
+			return externalWritesApp("candidate\n", executor.Usage{})(n, context.Background(), root, in)
+		}
+		f.review = func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error) {
+			return executor.RoundResult{Structured: verdictJSON("approve")}, nil
+		}
+		a := e.build(withLineup(f))
+		if a.err != nil || a.exit != 0 {
+			t.Fatalf("TestSpendReportLandedExternal: exit=%d err=%v\n%s\n%s", a.exit, a.err, a.out, a.errs)
+		}
+		out = a.out.String()
+	})
+	writeSpendResult(t, out)
+}
+
+func TestSpendReportLandedNative(t *testing.T) {
+	e := newEnv(t)
+	e.prov.then(landScript(e.prov)...)
+	a := e.build()
+	if a.err != nil || a.exit != 0 {
+		t.Fatalf("TestSpendReportLandedNative: exit=%d err=%v\n%s\n%s", a.exit, a.err, a.out, a.errs)
+	}
+	writeSpendResult(t, a.out.String())
+}
+
+func TestSpendReportRoundLimit(t *testing.T) {
+	e := newEnv(t)
+	e.useExecutor("")
+	f := newFakeExecutor(t, externalWritesApp("red\n", harnessUsage(100, 0, 40, 0.25)))
+	f.desc.Capabilities.MaxRounds = 2
+	a := e.build(withExecutor(f, nil))
+	if a.exit != 1 {
+		t.Fatalf("TestSpendReportRoundLimit: exit=%d\n%s", a.exit, a.shown())
+	}
+	writeSpendResult(t, a.out.String())
+}
+
+func TestSpendReportReviewBlocked(t *testing.T) {
+	e := newEnv(t)
+	e.useLineup("")
+	f := newLineupExec(t)
+	f.build = func(n int, root string, in executor.Input) (executor.RoundResult, error) {
+		return externalWritesApp("candidate\n", harnessUsage(100, 0, 40, 0.5))(n, context.Background(), root, in)
+	}
+	f.review = func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error) {
+		return executor.RoundResult{Structured: verdictJSON("changes", blockingFinding), Usage: harnessUsage(50, 10, 5, 0.25)}, nil
+	}
+	a := e.build(withLineup(f))
+	if a.exit == 0 || a.err != nil {
+		t.Fatalf("TestSpendReportReviewBlocked: exit=%d err=%v\n%s", a.exit, a.err, a.shown())
+	}
+	writeSpendResult(t, a.out.String())
+}
+
+func TestSpendReportNativeStop(t *testing.T) {
+	e := newEnv(t, func(c *project.Config) { c.Checks = []project.Check{{Name: "test", Run: "true"}} })
+	e.prov.then(refused())
+	a := e.build()
+	if a.exit != 4 {
+		t.Fatalf("TestSpendReportNativeStop: exit=%d\n%s", a.exit, a.shown())
+	}
+	writeSpendResult(t, a.out.String())
+}
+
+func TestSpendReportStartupStop(t *testing.T) {
+	e := newEnv(t)
+	e.hook("commit-msg", "printf changed >> "+stepsFile+"\n")
+	a := e.build()
+	if a.exit != 1 {
+		t.Fatalf("TestSpendReportStartupStop: exit=%d\n%s", a.exit, a.shown())
+	}
+	writeSpendResult(t, a.out.String())
+}
