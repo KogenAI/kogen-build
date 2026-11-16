@@ -68,8 +68,8 @@ type Attempt struct {
 	// a stop interrupted (baseline.go). Neither is persisted.
 	baselineRunning *baselineRunning
 	baselineStop    map[string]any
-	// studio is the snapshot a fresh Build loaded (nil on a resumed Build, whose saved window
-	// holds the block and whose State.StudioRules the receipt).
+	// studio is the snapshot a fresh Build loaded, or a resumed Build recovered from the cache
+	// that matches its State.StudioRules receipt (nil when the project is not configured).
 	studio *studioSnapshot
 }
 

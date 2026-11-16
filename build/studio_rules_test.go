@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -203,6 +205,84 @@ func TestStudioSnapshotResumeKeepsRecordedSnapshot(t *testing.T) {
 		if len(rules) != 1 || fmt.Sprint(rules[0]) != "map[id:rule-1 revision:3]" {
 			t.Fatalf("%s receipt after resume: %v", name, rules)
 		}
+	}
+}
+
+// stopInReview stops a configured Build inside its review and returns its id.
+func stopInReview(t *testing.T, e *env) string {
+	t.Helper()
+	e.prov.then(landScript(e.prov)...)
+	session := json.RawMessage(`{"input":[{"role":"user","content":"review"}]}`)
+	stop := &scriptedReviewer{review: func(ctx context.Context, b *Attempt, pass verify.Pass) (Approved, error) {
+		b.Review++
+		b.LastReview = &ReviewRecord{N: b.Review, Verdict: "pending", Findings: []map[string]any{}}
+		if err := b.Save(Continuation{Stage: StageReview, Pass: &pass, Review: session}); err != nil {
+			return Approved{}, err
+		}
+		return Approved{}, sys.Fail("provider", "unavailable", "the reviewer's provider is down", 4)
+	}}
+	if a := e.build(func(in *Input) { in.Reviewer = stop }); a.exit != 4 {
+		t.Fatalf("first exit %d\n%s", a.exit, a.shown())
+	}
+	return e.onlyRun()
+}
+
+// A resume whose token is missing, or whose cache is absent or no longer matches the recorded
+// receipt, stops with a rules error before any provider, reviewer or Studio request.
+func TestStudioSnapshotResumeStopsWhenRecordedRulesCannotBeRecovered(t *testing.T) {
+	cases := []struct {
+		name   string
+		break_ func(e *env, s *snapStudio)
+		want   []string
+	}{
+		{"token missing", func(e *env, s *snapStudio) { e.extraEnv = nil }, []string{"rules/refused", "token_missing"}},
+		{"cache absent", func(e *env, s *snapStudio) {
+			files, _ := filepath.Glob(filepath.Join(e.root, ".kogen/local/studio-rules/*.json"))
+			for _, f := range files {
+				os.Remove(f)
+			}
+		}, []string{"rules/hold"}},
+		{"cache overwritten by a later snapshot", func(e *env, s *snapStudio) {
+			s.set(0, 4, "Run every test twice.")
+			if _, err := rules.Load(context.Background(), e.root, rules.Options{Getenv: func(string) string { return snapToken }}); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{"rules/hold", "content_hash differs"}},
+		{"cache unverifiable", func(e *env, s *snapStudio) {
+			files, _ := filepath.Glob(filepath.Join(e.root, ".kogen/local/studio-rules/*.json"))
+			for _, f := range files {
+				raw, _ := os.ReadFile(f)
+				os.WriteFile(f, []byte(strings.Replace(string(raw), "focused test", "other test", 1)), 0o644)
+			}
+		}, []string{"rules/hold"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newSnapStudio(t, 3, "Run the focused test before finishing.")
+			e := snapEnv(t, s)
+			id := stopInReview(t, e)
+			c.break_(e, s)
+			studio, provider := s.requests(), e.prov.count()
+			reviewed := false
+			r := e.resume(id, func(in *ResumeInput) {
+				in.Reviewer = &scriptedReviewer{resume: func(ctx context.Context, b *Attempt) (Approved, error) {
+					reviewed = true
+					return approve(b, *b.Continuation.Pass), nil
+				}}
+			})
+			text := fmt.Sprint(r.err) + r.shown()
+			if r.exit == 0 || reviewed || s.requests() != studio || e.prov.count() != provider {
+				t.Fatalf("exit %d reviewed %v studio requests %d provider requests %d\n%s", r.exit, reviewed, s.requests()-studio, e.prov.count()-provider, text)
+			}
+			for _, want := range c.want {
+				if !strings.Contains(text, want) {
+					t.Fatalf("the stop does not name %q\n%s", want, text)
+				}
+			}
+			if strings.Contains(text, snapToken) {
+				t.Fatal("the token reached the output")
+			}
+		})
 	}
 }
 

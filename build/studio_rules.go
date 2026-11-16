@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -53,6 +54,11 @@ func loadStudioRules(ctx context.Context, s *sys.Session, root string) (*studioS
 	if err != nil {
 		return nil, studioFailure(err)
 	}
+	return studioFrom(snap), nil
+}
+
+// studioFrom is the receipt and the block of a snapshot the producer returned.
+func studioFrom(snap *rules.Snapshot) *studioSnapshot {
 	receipt := &StudioRules{
 		Origin: string(snap.Origin), ContentHash: snap.ContentHash, RetrievedAt: snap.RetrievedAt.UTC().Format(time.RFC3339),
 		FallbackReason: snap.FallbackReason, Scope: snap.Scope, Rules: []StudioRuleRef{},
@@ -60,7 +66,63 @@ func loadStudioRules(ctx context.Context, s *sys.Session, root string) (*studioS
 	for _, r := range snap.Rules {
 		receipt.Rules = append(receipt.Rules, StudioRuleRef{ID: r.ID, Revision: r.Revision})
 	}
-	return &studioSnapshot{receipt: receipt, message: map[string]any{"role": "user", "content": studioText(snap.Rules)}}, nil
+	return &studioSnapshot{receipt: receipt, message: map[string]any{"role": "user", "content": studioText(snap.Rules)}}
+}
+
+// offlineTransport never reaches a network: every request fails, so the producer's Load makes no
+// Studio request and returns its verified same-scope cache.
+type offlineTransport struct{}
+
+func (offlineTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("studio rules: no network request on resume")
+}
+
+// recoverStudioRules recovers the block of a resumed Build from the verified cache of the
+// producer, which must hold exactly the snapshot the receipt records. The receipt is not changed.
+// Any other outcome is a `rules` error: a missing token is rules/refused, every other reason
+// rules/hold, and the resume stops before any request.
+func recoverStudioRules(ctx context.Context, s *sys.Session, root string, receipt *StudioRules) (*studioSnapshot, error) {
+	snap, err := rules.Load(ctx, root, rules.Options{
+		Getenv: s.Getenv, Log: s.Progress, Client: &http.Client{Transport: offlineTransport{}},
+	})
+	if err != nil {
+		var e *rules.Error
+		if errors.As(err, &e) && e.Class == rules.ClassRefused {
+			return nil, studioFailure(err)
+		}
+		reason := err.Error()
+		if errors.As(err, &e) {
+			reason = e.Reason
+		} else if errors.Is(err, rules.ErrNotConfigured) {
+			reason = "the project no longer configures Studio rules"
+		}
+		return nil, sys.Fail("rules", "hold", "the recorded Studio rules cannot be recovered: "+reason, 3)
+	}
+	got := studioFrom(snap)
+	if why := receiptDiffers(receipt, got.receipt); why != "" {
+		return nil, sys.Fail("rules", "hold", "the cached Studio rules no longer match the Build's recorded snapshot: "+why, 3)
+	}
+	return got, nil
+}
+
+// receiptDiffers names the first way the recovered receipt differs from the recorded one in scope,
+// content hash, rule ids or revisions, in order; "" when they match.
+func receiptDiffers(want, got *StudioRules) string {
+	switch {
+	case want.Scope != got.Scope:
+		return "scope differs"
+	case want.ContentHash != got.ContentHash:
+		return "content_hash differs"
+	case len(want.Rules) != len(got.Rules):
+		return "rule count differs"
+	}
+	for i, w := range want.Rules {
+		g := got.Rules[i]
+		if w.ID != g.ID || revisionText(w.Revision) != revisionText(g.Revision) {
+			return "rule " + w.ID + " differs"
+		}
+	}
+	return ""
 }
 
 // studioFailure turns a producer error into the Build's refusal: its class and reason are in the
@@ -101,8 +163,8 @@ func studioText(rs []rules.Rule) string {
 	return b.String()
 }
 
-// studioMessage is the block of the Build's snapshot, nil when it has none or only a resumed
-// Build's saved conversation carries it.
+// studioMessage is the block of the Build's snapshot, nil when it has none (an unconfigured
+// project).
 func (b *Attempt) studioMessage() map[string]any {
 	if b.studio == nil {
 		return nil

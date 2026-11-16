@@ -309,6 +309,13 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	if why := b.externalReviewRefusal(); why != "" {
 		return refuse(id, why, "")
 	}
+	// A configured Build's applicable rule block is recovered before any request, from the
+	// producer's verified cache that must match the recorded receipt.
+	if b.StudioRules != nil {
+		if b.studio, err = recoverStudioRules(ctx, s, root, b.StudioRules); err != nil {
+			return err
+		}
+	}
 	root0 := id
 	if b.RootRun != nil {
 		root0 = *b.RootRun

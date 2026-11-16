@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation spans resume recovery of the snapshot, request assembly at two boundaries and state validation in build; the acceptance scenarios assert the receipt and the block together, so a Build that keeps provenance but omits the block fails them."}

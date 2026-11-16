@@ -1,0 +1,119 @@
+package build
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+func retainWrite(t *testing.T, out map[string]any) {
+	t.Helper()
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("RETAIN_RULES_RESULT"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func retainChild(e *env, parent string) string {
+	for _, x := range e.runIDs() {
+		if x != parent {
+			return x
+		}
+	}
+	return ""
+}
+
+// TestRetainRulesUsageLimit: an external builder stops at a usage limit; Studio then changes; the
+// resumed Build starts a fresh conversation whose first task must carry the recorded r3 block.
+func TestRetainRulesUsageLimit(t *testing.T) {
+	s := newSnapStudio(t, 3, "Run the focused test before finishing.")
+	e := snapEnv(t, s)
+	e.useExecutor("")
+	calls := 0
+	f := newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {
+		calls++
+		if calls == 1 {
+			if err := os.WriteFile(filepath.Join(root, "partial.txt"), []byte("partial"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			return executor.RoundResult{}, executor.Fail(executor.ReasonUsageLimit, "synthetic limit")
+		}
+		return externalWritesApp("candidate\n", harnessUsage(5, 1, 2, 0.1))(n, ctx, root, in)
+	})
+	reviews := 0
+	a := e.build(withExecutor(f, &reviews))
+	if a.exit == 0 || !strings.Contains(a.shown(), "executor/usage_limit") {
+		t.Fatalf("first stop %d %s", a.exit, a.shown())
+	}
+	id := e.onlyRun()
+	before := s.requests()
+	s.set(0, 4, "Run every test twice.")
+	r := e.resume(id, func(in *ResumeInput) {
+		in.External = func(project.Role) (executor.Executor, error) { return f, nil }
+		in.Reviewer = countingReviewer{approveWithoutReview{}, &reviews}
+	})
+	out := map[string]any{"exit": r.exit, "studio_requests_after_resume": s.requests() - before, "stderr": r.shown()}
+	if len(f.tasks) >= 2 {
+		out["request"] = f.tasks[1].Brief.Stable + f.tasks[1].Brief.Dynamic
+	}
+	if v, ok := e.result(retainChild(e, id))["studio_rules"]; ok {
+		out["receipt"] = v
+	}
+	retainWrite(t, out)
+}
+
+// TestRetainRulesReview: an external-executor Build stops inside its review; Studio then changes;
+// the resumed review round's input (what the reviewer's request is built from) must carry the r3
+// block while the receipt names it.
+func TestRetainRulesReview(t *testing.T) {
+	s := newSnapStudio(t, 3, "Run the focused test before finishing.")
+	e := snapEnv(t, s)
+	e.useExecutor("")
+	f := newFakeExecutor(t, externalWritesApp("candidate\n", harnessUsage(5, 1, 2, 0.1)))
+	session := json.RawMessage(`{"input":[{"role":"user","content":"review"}]}`)
+	first := &scriptedReviewer{review: func(ctx context.Context, b *Attempt, pass verify.Pass) (Approved, error) {
+		b.Review++
+		b.LastReview = &ReviewRecord{N: b.Review, Verdict: "pending", Findings: []map[string]any{}}
+		if err := b.Save(Continuation{Stage: StageReview, Pass: &pass, Review: session}); err != nil {
+			return Approved{}, err
+		}
+		return Approved{}, sys.Fail("provider", "unavailable", "the reviewer's provider is down", 4)
+	}}
+	a := e.build(func(in *Input) {
+		in.External = func(project.Role) (executor.Executor, error) { return f, nil }
+		in.Reviewer = first
+	})
+	if a.exit != 4 {
+		t.Fatalf("first exit %d\n%s", a.exit, a.shown())
+	}
+	id := e.onlyRun()
+	before := s.requests()
+	s.set(0, 4, "Run every test twice.")
+	seen := ""
+	second := &scriptedReviewer{resume: func(ctx context.Context, b *Attempt) (Approved, error) {
+		in := b.reviewInput(*b.Continuation.Pass)
+		raw, _ := json.Marshal(in.Evidence.Diagnostic)
+		seen = string(raw)
+		return approve(b, *b.Continuation.Pass), nil
+	}}
+	r := e.resume(id, func(in *ResumeInput) {
+		in.External = func(project.Role) (executor.Executor, error) { return f, nil }
+		in.Reviewer = second
+	})
+	out := map[string]any{"exit": r.exit, "studio_requests_after_resume": s.requests() - before, "stderr": r.shown(), "request": seen}
+	if v, ok := e.result(retainChild(e, id))["studio_rules"]; ok {
+		out["receipt"] = v
+	}
+	retainWrite(t, out)
+}
