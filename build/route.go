@@ -53,6 +53,7 @@ func (s steps) Verify(ctx context.Context, builderPass bool) (verify.Pass, bool,
 // without a valid verdict.
 func (s steps) Review(ctx context.Context, pass verify.Pass) (Approved, error) {
 	b := s.b
+	b.ReviewStart = pass.Tree
 	approved, err := b.reviewWithRetry(ctx, func() (Approved, error) { return b.deps.reviewer().Review(ctx, b, pass) })
 	if err != nil {
 		return Approved{}, err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/KogenAI/kogen-coordinator/git"
@@ -124,8 +125,32 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 	if removalFailure != nil {
 		b.s.Puts(fmt.Sprintf("  note: could not remove the approval file %s: %s", approvalPath, removalFailure))
 	}
+	if line := b.reviewRepairedLine(pass.Tree); line != "" {
+		b.s.Puts(line)
+	}
 	b.putSpend()
 	return false, nil
+}
+
+// maxRepairedPaths is how many repaired paths the landed summary names.
+const maxRepairedPaths = 5
+
+// reviewRepairedLine names the paths the review changed between the tree it started on and the
+// committed tree, or is empty when it changed nothing or the comparison is not possible.
+func (b *Attempt) reviewRepairedLine(committed string) string {
+	if b.ReviewStart == "" || committed == "" {
+		return ""
+	}
+	paths, err := b.repo.Changed(b.ReviewStart, committed)
+	if err != nil || len(paths) == 0 {
+		return ""
+	}
+	paths = slices.Sorted(slices.Values(paths))
+	line := "  review repaired: "
+	if len(paths) > maxRepairedPaths {
+		return line + strings.Join(paths[:maxRepairedPaths], ", ") + fmt.Sprintf(", and %d more", len(paths)-maxRepairedPaths)
+	}
+	return line + strings.Join(paths, ", ")
 }
 
 // putSpend writes what the Build spent: the repairs line, then the executor lines. The

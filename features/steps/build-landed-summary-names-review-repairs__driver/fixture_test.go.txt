@@ -1,0 +1,119 @@
+package build
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+func writeRepairSummaryResult(t *testing.T, text string) {
+	t.Helper()
+	if err := os.WriteFile(os.Getenv("REPAIR_SUMMARY_RESULT"), []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// repairSummaryExternal lands a Build whose external review round writes app.txt and any extra
+// files, then approves.
+func repairSummaryExternal(t *testing.T, name string, extra ...string) string {
+	e := newEnv(t)
+	e.useLineup("")
+	f := newLineupExec(t)
+	f.review = func(n int, root string, in executor.Input, task executor.Task) (executor.RoundResult, error) {
+		lineupWriteApp(t, root, "repaired\n")
+		for _, p := range extra {
+			writeFile(t, filepath.Join(root, p), "reviewer file\n", 0o644)
+		}
+		return executor.RoundResult{Structured: verdictJSON("approve")}, nil
+	}
+	a := e.build(withLineup(f))
+	if a.exit != 0 {
+		t.Fatalf("%s: exit %d\n%s", name, a.exit, a.shown())
+	}
+	return a.out.String()
+}
+
+func TestRepairSummaryExternalRepair(t *testing.T) {
+	writeRepairSummaryResult(t, repairSummaryExternal(t, "TestRepairSummaryExternalRepair"))
+}
+
+func TestRepairSummaryManyPaths(t *testing.T) {
+	writeRepairSummaryResult(t, repairSummaryExternal(t, "TestRepairSummaryManyPaths",
+		"r1.txt", "r2.txt", "r3.txt", "r4.txt", "r5.txt", "r6.txt"))
+}
+
+func TestRepairSummaryBuilderRepairOnly(t *testing.T) {
+	e := newEnv(t, func(c *project.Config) {
+		c.Checks = []project.Check{{Name: "count", Run: "printf 'check\\n' >> " + "/dev/null"}}
+	})
+	e.prov.then(
+		e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": "red\n"}, "finish", map[string]any{"summary": "first"}),
+		e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": "green\n"}, "finish", map[string]any{"summary": "second"}),
+	)
+	a := e.build()
+	if a.exit != 0 {
+		t.Fatalf("TestRepairSummaryBuilderRepairOnly: exit %d\n%s", a.exit, a.shown())
+	}
+	writeRepairSummaryResult(t, a.out.String())
+}
+
+// TestRepairSummaryNativeRepair: the builder repairs once after a red verification, then the
+// native reviewer repairs app.txt with write_file and approves.
+func TestRepairSummaryNativeRepair(t *testing.T) {
+	e := newEnv(t, func(c *project.Config) {
+		c.Checks = []project.Check{{Name: "count", Run: "printf 'check\\n' >> " + "/dev/null"}}
+	})
+	f := e.prov
+	f.then(
+		f.calls("write_file", map[string]any{"path": "app.txt", "content": "red\n"}, "finish", map[string]any{"summary": "first"}),
+		f.calls("write_file", map[string]any{"path": "app.txt", "content": "green\n"}, "finish", map[string]any{"summary": "second"}),
+	)
+	f.then(f.calls(append(writeApp("reviewer repair\n"), "submit_review", map[string]any{"verdict": "approve", "findings": []any{}})...))
+	a := e.reviewed()
+	if a.exit != 0 {
+		t.Fatalf("TestRepairSummaryNativeRepair: exit %d\n%s", a.exit, a.shown())
+	}
+	writeRepairSummaryResult(t, a.out.String())
+}
+
+// TestRepairSummaryResumedReview: the first review is interrupted before it approves; the
+// resumed review repairs app.txt and approves, and the landing still names the file.
+func TestRepairSummaryResumedReview(t *testing.T) {
+	e := newEnv(t)
+	e.prov.then(landScript(e.prov)...)
+	session := json.RawMessage(`{"input":[{"role":"user","content":"review"}]}`)
+	first := &scriptedReviewer{review: func(ctx context.Context, b *Attempt, pass verify.Pass) (Approved, error) {
+		b.Review++
+		b.LastReview = &ReviewRecord{N: b.Review, Verdict: "pending", Findings: []map[string]any{}}
+		if err := b.Save(Continuation{Stage: StageReview, Pass: &pass, Review: session}); err != nil {
+			return Approved{}, err
+		}
+		return Approved{}, sys.Fail("provider", "unavailable", "the reviewer's provider is down", 4)
+	}}
+	a := e.build(func(in *Input) { in.Reviewer = first })
+	if a.exit != 4 {
+		t.Fatalf("TestRepairSummaryResumedReview: exit %d\n%s", a.exit, a.shown())
+	}
+	second := &scriptedReviewer{resume: func(ctx context.Context, b *Attempt) (Approved, error) {
+		writeFile(t, filepath.Join(b.Root, "app.txt"), "resumed reviewer repair\n", 0o644)
+		pass, err := b.Verify(ctx)
+		if err != nil {
+			return Approved{}, err
+		}
+		rec := ReviewRecord{N: b.Review, Verdict: "approve", Findings: []map[string]any{}, Tree: pass.Tree}
+		b.LastReview = &rec
+		return Approved{Pass: pass, Review: rec}, nil
+	}}
+	r := e.resume(e.onlyRun(), func(in *ResumeInput) { in.Reviewer = second })
+	if r.exit != 0 {
+		t.Fatalf("TestRepairSummaryResumedReview: resume exit %d\n%s", r.exit, r.shown())
+	}
+	writeRepairSummaryResult(t, r.out.String())
+}

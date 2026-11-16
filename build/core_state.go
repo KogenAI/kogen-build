@@ -112,14 +112,17 @@ type State struct {
 	StartTree       string            `json:"start_tree"`
 	Phase           string            `json:"phase"` // "startup" or "building"
 	// T0 is when this run started, in Unix milliseconds.
-	T0               int64                          `json:"t0"`
-	Usage            Tokens                         `json:"usage"`
-	Round            int                            `json:"round"`
-	Pass             int                            `json:"pass"`
-	Review           int                            `json:"review"`
-	Repairs          int                            `json:"repairs"`
-	LastPass         *verify.Pass                   `json:"last_pass"`
-	LastReview       *ReviewRecord                  `json:"last_review"`
+	T0         int64         `json:"t0"`
+	Usage      Tokens        `json:"usage"`
+	Round      int           `json:"round"`
+	Pass       int           `json:"pass"`
+	Review     int           `json:"review"`
+	Repairs    int           `json:"repairs"`
+	LastPass   *verify.Pass  `json:"last_pass"`
+	LastReview *ReviewRecord `json:"last_review"`
+	// ReviewStart is the tree of the green pass the current review started on, kept so the
+	// landed summary can name what the review changed, also after a resume inside the review.
+	ReviewStart      string                         `json:"review_start,omitempty"`
 	Blocker          map[string]any                 `json:"blocker"`
 	Continuation     Continuation                   `json:"continuation"`
 	ApprovalBytes    string                         `json:"approval_bytes"` // base64
