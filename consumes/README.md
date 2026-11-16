@@ -5,7 +5,7 @@ each Kogen dependency: one suite per producer, at the version `go.mod` pins.
 
 | Suite | Producer module | Pins |
 | --- | --- | --- |
-| `consumes/kogen-coordinator/` | `github.com/KogenAI/kogen-coordinator` | `durable`, `git`, `project` and `route`: the Git custody, the project files, the Intent and approval formats and the verify → review → repair → commit routing |
+| `consumes/kogen-coordinator/` | `github.com/KogenAI/kogen-coordinator` | `durable`, `git`, `project`, `route` and `rules`: the Git custody, the project files, the Intent and approval formats, the verify → review → repair → commit routing and the scoped Studio rule snapshot |
 | `consumes/kogen-executor/` | `github.com/KogenAI/kogen-executor` | `agent`, `core`, `executor` and `thinking`: the executor contract, the persisted token, review and executor-state records and the builder's agent helpers |
 | `consumes/kogen-loop/` | `github.com/KogenAI/kogen-loop` | `api`, `loop`, `provider`, `sys` and `tools`: the model loop, the provider client and its cache, the session, errors and exit codes, and the native tools |
 | `consumes/kogen-review/` | `github.com/KogenAI/kogen-review` | `review`: the independent review's input, its `Env`, sessions, verdicts and material |
@@ -46,7 +46,7 @@ A use is every identifier in kogen-build's own non-test Go code (the packages `b
 `pkg.Name`, or to a method or field of one of its named types, named `pkg.Type.Member` by the type
 that declares the member. Import aliases, type aliases and re-exports (`build/core_names.go`) and
 members reached through returned values and struct fields are therefore counted. The uses were
-listed per dependency and package with this go/types listing (562 at HEAD: 112 kogen-coordinator,
+listed per dependency and package with this go/types listing (583 at HEAD: 133 kogen-coordinator,
 137 kogen-executor, 138 kogen-loop, 104 kogen-review, 71 kogen-verification) and compared with
 the identifiers each suite's tests name inside their bodies, using the same go/types resolution.
 The inventory below holds one row per use, under its suite: the use and the tests whose bodies name
@@ -170,6 +170,27 @@ it (the tests that assert it, and any that only arrange another assertion with i
 | `route.StageReviewRetry` | TestResumeContinuesAStoppedBuild, TestStageNamesAreThePersistedOnes |
 | `route.StageReviewVerify` | TestResumeContinuesAStoppedBuild, TestStageNamesAreThePersistedOnes |
 | `route.Steps` | TestCycleRoutesTheCandidate, TestResumeContinuesAStoppedBuild, TestStepsMethodSet |
+| `rules.Error` | TestRulesLoadFailuresAreClassified |
+| `rules.Error.Class` | TestRulesLoadFailuresAreClassified |
+| `rules.Error.Reason` | TestRulesLoadFailuresAreClassified |
+| `rules.ErrNotConfigured` | TestRulesLoadWithoutConfigurationIsNotConfigured |
+| `rules.Load` | TestRulesLoadSnapshotAndCache, TestRulesLoadFailuresAreClassified, TestRulesLoadWithoutConfigurationIsNotConfigured |
+| `rules.Options` | TestRulesLoadSnapshotAndCache |
+| `rules.Options.Getenv` | TestRulesLoadSnapshotAndCache |
+| `rules.Options.Log` | TestRulesLoadSnapshotAndCache |
+| `rules.Rule` | TestRulesLoadSnapshotAndCache |
+| `rules.Rule.ID` | TestRulesLoadSnapshotAndCache |
+| `rules.Rule.Revision` | TestRulesLoadSnapshotAndCache |
+| `rules.Rule.Text` | TestRulesLoadSnapshotAndCache |
+| `rules.Rule.Topic` | TestRulesLoadSnapshotAndCache |
+| `rules.Scope` | TestRulesLoadSnapshotAndCache |
+| `rules.Snapshot` | TestRulesLoadSnapshotAndCache |
+| `rules.Snapshot.ContentHash` | TestRulesLoadSnapshotAndCache |
+| `rules.Snapshot.FallbackReason` | TestRulesLoadSnapshotAndCache |
+| `rules.Snapshot.Origin` | TestRulesLoadSnapshotAndCache |
+| `rules.Snapshot.RetrievedAt` | TestRulesLoadSnapshotAndCache |
+| `rules.Snapshot.Rules` | TestRulesLoadSnapshotAndCache |
+| `rules.Snapshot.Scope` | TestRulesLoadSnapshotAndCache |
 
 ### kogen-executor
 

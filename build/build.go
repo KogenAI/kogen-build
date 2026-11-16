@@ -68,6 +68,9 @@ type Attempt struct {
 	// a stop interrupted (baseline.go). Neither is persisted.
 	baselineRunning *baselineRunning
 	baselineStop    map[string]any
+	// studio is the snapshot a fresh Build loaded (nil on a resumed Build, whose saved window
+	// holds the block and whose State.StudioRules the receipt).
+	studio *studioSnapshot
 }
 
 // noRunNotice follows a refusal that happened before any run was created (stdout, indented
@@ -310,6 +313,10 @@ func checked(ctx context.Context, s *sys.Session, in Input, repo *git.Repo, cfg 
 			return err
 		}
 	}
+	studio, err := loadStudioRules(ctx, s, root)
+	if err != nil {
+		return err
+	}
 	run, err := StartRun(root)
 	if err != nil {
 		return err
@@ -353,7 +360,10 @@ func checked(ctx context.Context, s *sys.Session, in Input, repo *git.Repo, cfg 
 			Usage: core.ZeroTokens(), AttemptUsage: core.ZeroTokens(), CacheIDs: map[string]string{},
 			StagePlan: plan, StageProgress: initialProgress(plan),
 		},
-		s: s, deps: in.Deps, repo: repo, cache: provider.NewCache(nil), facts: facts, intent: intent, model: intent.Model, diag: in.Context, ext: ext,
+		s: s, deps: in.Deps, repo: repo, cache: provider.NewCache(nil), facts: facts, intent: intent, model: intent.Model, diag: in.Context, ext: ext, studio: studio,
+	}
+	if studio != nil {
+		b.StudioRules = studio.receipt
 	}
 	*out = b
 	run.Event(map[string]any{"event": "start", "slug": slug, "start_head": start, "approved": approval.SHA256})

@@ -121,12 +121,18 @@ func (b *Attempt) startBuilder(ctx context.Context, brief executor.Brief) (execu
 		if b.diag != nil {
 			tail = []any{b.diag.message()}
 		}
+		if m := b.studioMessage(); m != nil {
+			tail = append(tail, m)
+		}
 		return nativeExecutor{b: b, tail: tail}.Start(ctx, task, nil)
 	}
 	if b.diag != nil {
 		// An external executor's first prompt is built from the brief alone: the frozen caller
 		// diagnostic follows the authority in it, exactly the message the native builder gets.
 		task.Brief.Stable += core.DiagnosticText(b.diag.message())
+	}
+	if m := b.studioMessage(); m != nil {
+		task.Brief.Stable += core.DiagnosticText(m)
 	}
 	task.Dir = filepath.Join(b.Run.Dir, "executor")
 	if err := os.MkdirAll(task.Dir, 0o700); err != nil {

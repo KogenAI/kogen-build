@@ -1,0 +1,279 @@
+package build
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+const studioToken = "synthetic-token-a"
+
+type studioFake struct {
+	srv    *httptest.Server
+	mu     sync.Mutex
+	status int
+	rev    int
+	text   string
+	count  int
+}
+
+func newStudioFake(t *testing.T, rev int, text string) *studioFake {
+	s := &studioFake{rev: rev, text: text}
+	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.count++
+		q := r.URL.Query()
+		repo := q.Get("repo")
+		if r.URL.Path != "/api/rules" || len(q) != 3 || q.Get("workspace_id") != "w1" || q.Get("product_id") != "p1" || (repo != "kogen-build" && repo != "kogen-other") {
+			http.Error(w, "bad query", 400)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+studioToken {
+			http.Error(w, "unauthorized", 401)
+			return
+		}
+		if s.status != 0 {
+			http.Error(w, "status", s.status)
+			return
+		}
+		fmt.Fprintf(w, `{"product":"p1","repo":%q,"rules":[{"id":"rule-1","revision":%d,"scope":"repo","topic":"tests","text":%q,"owner":"almir","overrides":null}]}`, repo, s.rev, s.text)
+	}))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+func (s *studioFake) set(status, rev int, text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status, s.rev, s.text = status, rev, text
+}
+
+func (s *studioFake) requests() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.count
+}
+
+func studioConfig(url, repo string) string {
+	return "version: 1\nurl: " + url + "\nworkspace_id: w1\nproduct_id: p1\nrepo: " + repo + "\ntoken_env: STUDIO_RULES_TOKEN\non_unavailable: hold\n"
+}
+
+func studioEnv(t *testing.T, configured bool, s *studioFake) *env {
+	t.Helper()
+	e := newEnv(t)
+	e.extraEnv = append(e.extraEnv, "STUDIO_RULES_TOKEN="+studioToken)
+	if configured {
+		e.write(".kogen/studio-rules.yaml", studioConfig(s.srv.URL, "kogen-build"))
+		e.run("git", "add", ".kogen/studio-rules.yaml")
+		e.run("git", "commit", "-qm", "studio rules config")
+		e.approve()
+	}
+	return e
+}
+
+func leaked(e *env, extra ...string) bool {
+	hit := false
+	filepath.Walk(filepath.Join(e.root, ".kogen/local"), func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			if b, _ := os.ReadFile(p); strings.Contains(string(b), studioToken) {
+				hit = true
+			}
+		}
+		return nil
+	})
+	for _, x := range extra {
+		if strings.Contains(x, studioToken) {
+			hit = true
+		}
+	}
+	return hit
+}
+
+func requestsText(e *env, from int) string {
+	var reqs []string
+	for _, r := range e.prov.rawRequests()[from:] {
+		reqs = append(reqs, string(r))
+	}
+	return strings.Join(reqs, "\n---\n")
+}
+
+// studioBuild runs one fresh Build and returns its observations. With land it scripts a
+// landing; otherwise the provider script is empty (a stop).
+func studioBuild(t *testing.T, e *env, s *studioFake, land bool) map[string]any {
+	t.Helper()
+	before := e.prov.count()
+	seen := map[string]bool{}
+	for _, id := range e.runIDs() {
+		seen[id] = true
+	}
+	if land {
+		e.prov.then(landScript(e.prov)...)
+	}
+	a := e.build()
+	out := map[string]any{"exit": a.exit, "stderr": fmt.Sprint(a.errs) + fmt.Sprint(a.err), "stdout": a.out.String()}
+	out["request"] = requestsText(e, before)
+	out["provider_requests"] = e.prov.count() - before
+	out["studio_requests"] = s.requests()
+	ids := e.runIDs()
+	sort.Strings(ids)
+	for _, id := range ids {
+		if !seen[id] {
+			res := e.result(id)
+			if r, ok := res["studio_rules"]; ok {
+				out["receipt"] = r
+			}
+		}
+	}
+	out["token_leaked"] = leaked(e, out["stderr"].(string), out["stdout"].(string), out["request"].(string))
+	return out
+}
+
+func writeStudioResult(t *testing.T, out map[string]any) {
+	t.Helper()
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("STUDIO_RULES_RESULT"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStudioRulesLive(t *testing.T) {
+	s := newStudioFake(t, 3, "Run the focused test before finishing.")
+	e := studioEnv(t, true, s)
+	writeStudioResult(t, studioBuild(t, e, s, true))
+}
+
+func TestStudioRulesChanged(t *testing.T) {
+	s := newStudioFake(t, 3, "Run the focused test before finishing.")
+	e := studioEnv(t, true, s)
+	studioBuild(t, e, s, false)
+	s.set(0, 4, "Run every test twice.")
+	writeStudioResult(t, studioBuild(t, e, s, true))
+}
+
+func TestStudioRulesOutage(t *testing.T) {
+	s := newStudioFake(t, 3, "Run the focused test before finishing.")
+	e := studioEnv(t, true, s)
+	studioBuild(t, e, s, false)
+	s.set(503, 3, "")
+	writeStudioResult(t, studioBuild(t, e, s, true))
+}
+
+func TestStudioRulesRevoked(t *testing.T) {
+	s := newStudioFake(t, 3, "Run the focused test before finishing.")
+	e := studioEnv(t, true, s)
+	studioBuild(t, e, s, false)
+	e.extraEnv = []string{"STUDIO_RULES_TOKEN=revoked-synthetic-token"}
+	writeStudioResult(t, studioBuild(t, e, s, true))
+}
+
+func TestStudioRulesUnavailable(t *testing.T) {
+	s := newStudioFake(t, 3, "x")
+	s.set(503, 3, "")
+	e := studioEnv(t, true, s)
+	writeStudioResult(t, studioBuild(t, e, s, true))
+}
+
+// TestStudioRulesForeign: a cache exists for repo kogen-build; the project is then configured
+// for repo kogen-other and Studio is down (503), so the only cache is another scope's.
+func TestStudioRulesForeign(t *testing.T) {
+	s := newStudioFake(t, 3, "Run the focused test before finishing.")
+	e := studioEnv(t, true, s)
+	studioBuild(t, e, s, false)
+	e.write(".kogen/studio-rules.yaml", studioConfig(s.srv.URL, "kogen-other"))
+	e.run("git", "add", ".kogen/studio-rules.yaml")
+	e.run("git", "commit", "-qm", "other repo scope")
+	e.approve()
+	s.set(503, 3, "")
+	writeStudioResult(t, studioBuild(t, e, s, true))
+}
+
+func TestStudioRulesUnconfigured(t *testing.T) {
+	s := newStudioFake(t, 3, "x")
+	e := studioEnv(t, false, s)
+	writeStudioResult(t, studioBuild(t, e, s, true))
+}
+
+// TestStudioRulesResume: the Build stops inside its review; Studio then changes; the resumed
+// Build keeps the recorded revision, makes no new Studio request and lands.
+func TestStudioRulesResume(t *testing.T) {
+	s := newStudioFake(t, 3, "Run the focused test before finishing.")
+	e := studioEnv(t, true, s)
+	e.prov.then(landScript(e.prov)...)
+	session := json.RawMessage(`{"input":[{"role":"user","content":"review"}]}`)
+	rev := &scriptedReviewer{review: func(ctx context.Context, b *Attempt, pass verify.Pass) (Approved, error) {
+		b.Review++
+		b.LastReview = &ReviewRecord{N: b.Review, Verdict: "pending", Findings: []map[string]any{}}
+		if err := b.Save(Continuation{Stage: StageReview, Pass: &pass, Review: session}); err != nil {
+			return Approved{}, err
+		}
+		return Approved{}, sys.Fail("provider", "unavailable", "the reviewer's provider is down", 4)
+	}}
+	a := e.build(func(in *Input) { in.Reviewer = rev })
+	if a.exit != 4 {
+		t.Fatalf("TestStudioRulesResume: first exit %d\n%s", a.exit, a.shown())
+	}
+	id := e.onlyRun()
+	sinceBuild := s.requests()
+	s.set(0, 4, "Run every test twice.")
+	rev2 := &scriptedReviewer{resume: func(ctx context.Context, b *Attempt) (Approved, error) {
+		return approve(b, *b.Continuation.Pass), nil
+	}}
+	r := e.resume(id, func(in *ResumeInput) { in.Reviewer = rev2 })
+	out := map[string]any{"exit": r.exit, "stderr": r.shown(), "studio_requests_after_resume": s.requests() - sinceBuild, "first_studio_requests": sinceBuild}
+	if v, ok := e.result(id)["studio_rules"]; ok {
+		out["receipt"] = v
+	}
+	_, state := e.checkpoint(id)
+	if v, ok := state["studio_rules"]; ok {
+		out["checkpoint_receipt"] = v
+	}
+	out["request"] = requestsText(e, 0)
+	writeStudioResult(t, out)
+}
+
+// TestStudioRulesReviewFinding: the reviewer records review-1.json through reviewEnv.Write,
+// the path every real reviewer uses. A finding that cites an applied rule id is linked to that
+// rule and its revision there; a finding that cites none is not.
+func TestStudioRulesReviewFinding(t *testing.T) {
+	s := newStudioFake(t, 3, "Run the focused test before finishing.")
+	e := studioEnv(t, true, s)
+	e.prov.then(landScript(e.prov)...)
+	rev := &scriptedReviewer{review: func(ctx context.Context, b *Attempt, pass verify.Pass) (Approved, error) {
+		b.Review++
+		findings := []any{
+			map[string]any{"severity": "note", "path": "app.txt", "line": 1, "message": "rule-1 says to run the focused test; it was not run"},
+			map[string]any{"severity": "note", "path": "README.md", "line": nil, "message": "unrelated remark"},
+		}
+		if err := (reviewEnv{b}).Write(fmt.Sprintf("review-%d.json", b.Review), map[string]any{"verdict": "approve", "findings": findings, "tree": pass.Tree}); err != nil {
+			return Approved{}, err
+		}
+		rec := ReviewRecord{N: b.Review, Verdict: "approve", Tree: pass.Tree, Findings: []map[string]any{}}
+		b.LastReview = &rec
+		return Approved{Pass: pass, Review: rec}, nil
+	}}
+	a := e.build(func(in *Input) { in.Reviewer = rev })
+	if a.exit != 0 {
+		t.Fatalf("TestStudioRulesReviewFinding: exit %d\n%s", a.exit, a.shown())
+	}
+	doc := e.jsonFile(e.runPath(e.onlyRun(), "review-1.json"))
+	findings, _ := doc["findings"].([]any)
+	if len(findings) != 2 {
+		t.Fatalf("TestStudioRulesReviewFinding: review-1.json findings = %v", doc["findings"])
+	}
+	writeStudioResult(t, map[string]any{"exit": a.exit, "finding0": findings[0], "finding1": findings[1]})
+}

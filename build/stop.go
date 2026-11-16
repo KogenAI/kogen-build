@@ -52,6 +52,9 @@ func (b *Attempt) result(outcome string, extra map[string]any) map[string]any {
 	if b.StageProgress != nil {
 		m["stage_progress"] = b.StageProgress.Value()
 	}
+	if b.StudioRules != nil {
+		m["studio_rules"] = b.StudioRules
+	}
 	if c := b.comparisonRecord(); c != nil {
 		m["check_comparison"] = c
 	}

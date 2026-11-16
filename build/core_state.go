@@ -162,6 +162,10 @@ type State struct {
 	// environment (checkreuse.go): a whole-Intent pass on the same key reuses the record. At most
 	// one record per configured check; absent until a check passed.
 	CheckResults []checkResult `json:"check_results,omitempty"`
+	// StudioRules is the receipt of the Studio rule snapshot this Build applied, loaded once when a
+	// fresh Build starts and kept as recorded through resume. Absent for a project without
+	// .kogen/studio-rules.yaml.
+	StudioRules *StudioRules `json:"studio_rules,omitempty"`
 }
 
 // ReviewRetry belongs to one exact green candidate tree. Automatic is true once the single

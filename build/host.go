@@ -68,7 +68,7 @@ func (b *Attempt) reviewed(res review.Result, err error) (Approved, error) {
 func (b *Attempt) reviewInput(pass verify.Pass) review.Input {
 	in := b.reviewSubject(pass)
 	in.Intent.Plan = b.NavigationIn(phaseReview)
-	in.Evidence.Diagnostic = slices.Concat(b.diagnosticMessages(), b.reviewBaselineMessage(pass))
+	in.Evidence.Diagnostic = slices.Concat(b.studioDiagnostic(b.diagnosticMessages()), b.reviewBaselineMessage(pass))
 	in.Evidence.BaselineFailing = len(b.baselineFailures()) > 0
 	in.Tools = review.Tools{
 		Native: func(enabled []string) *tools.Tools {
@@ -184,6 +184,8 @@ func (e reviewEnv) Progress(line string) {
 	}
 	e.b.s.Progress(line)
 }
-func (e reviewEnv) Event(event map[string]any)        { e.b.Run.Event(event) }
-func (e reviewEnv) Write(name string, data any) error { return e.b.Run.Write(name, data) }
-func (e reviewEnv) Err() error                        { return e.b.s.Err() }
+func (e reviewEnv) Event(event map[string]any) { e.b.Run.Event(event) }
+func (e reviewEnv) Write(name string, data any) error {
+	return e.b.Run.Write(name, e.b.annotateReview(name, data))
+}
+func (e reviewEnv) Err() error { return e.b.s.Err() }
