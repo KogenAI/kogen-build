@@ -74,7 +74,8 @@ func (b *Attempt) brief() (executor.Brief, error) {
 		"acceptance: " + acceptanceRun + " (runs " + featurePath + ")\n\n" +
 		"# Protected paths\n\n" +
 		protectedIntro + "\n" + strings.Join(baseline, "\n") + "\n\n" +
-		manifestNotice + "\n\n"
+		manifestNotice + "\n\n" +
+		sharedSupportNotice + "\n\n"
 	if len(stable) > provider.InputBudgetBytes {
 		return executor.Brief{}, sys.Fail("candidate", "context_budget_exceeded", fmt.Sprintf(
 			"builder: the stable authority alone is %d bytes, over the ceiling %d; "+

@@ -128,6 +128,9 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 	if line := b.reviewRepairedLine(pass.Tree); line != "" {
 		b.s.Puts(line)
 	}
+	if line := b.sharedSupportLine(pass.Tree); line != "" {
+		b.s.Puts(line)
+	}
 	b.putSpend()
 	return false, nil
 }

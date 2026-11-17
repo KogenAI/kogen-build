@@ -1,0 +1,136 @@
+package build
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// sharedSupportMarker records that the named fixture test ran to its end.
+func sharedSupportMarker(t *testing.T) {
+	t.Helper()
+	dir := os.Getenv("SHARED_SUPPORT_RESULT_DIR")
+	if dir == "" {
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, t.Name()), []byte("done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sharedSupportBuild commits the given files (and README text) as the project's baseline, runs
+// one scripted native Build that writes the given files and finishes, and returns the landed
+// summary and the first request the provider received.
+func sharedSupportBuild(t *testing.T, readme string, committed map[string]string, written map[string]string) (string, string) {
+	t.Helper()
+	e := newEnv(t)
+	e.write("README.md", readme)
+	add := []string{"README.md"}
+	for p, c := range committed {
+		e.write(p, c)
+		add = append(add, p)
+	}
+	e.run("git", append([]string{"add"}, add...)...)
+	e.run("git", "commit", "-q", "--allow-empty", "-m", "shared support baseline")
+	e.approve()
+	var pairs []any
+	for p, c := range written {
+		pairs = append(pairs, "write_file", map[string]any{"path": p, "content": c})
+	}
+	pairs = append(pairs, "finish", map[string]any{"summary": "done"})
+	e.prov.then(e.prov.calls(pairs...))
+	a := e.build()
+	if a.exit != 0 || a.err != nil {
+		t.Fatalf("exit %d err %v\n%s\n%s", a.exit, a.err, a.out, a.errs)
+	}
+	raw := e.prov.rawRequests()
+	if len(raw) == 0 {
+		t.Fatal("the provider received no request")
+	}
+	return a.out.String(), string(raw[0])
+}
+
+const sharedSupportLinePrefix = "  shared test support changed: "
+
+func sharedSupportLine(out string) (string, int) {
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	found, at := "", -1
+	for i, l := range lines {
+		if strings.Contains(l, "shared test support changed:") {
+			if at >= 0 {
+				return "", -2
+			}
+			found, at = l, i
+		}
+	}
+	return found, at
+}
+
+func TestAcceptanceSharedSupportBriefStatesTheRule(t *testing.T) {
+	_, request := sharedSupportBuild(t, "# Fixture project\n", nil, map[string]string{"app.txt": "candidate\n"})
+	for _, want := range []string{
+		"Shared test support is not edited unless the Intent names it",
+		"beside your own new test files",
+		"byte-identical",
+	} {
+		if !strings.Contains(request, want) {
+			t.Fatalf("the Build brief does not contain %q", want)
+		}
+	}
+	sharedSupportMarker(t)
+}
+
+func TestAcceptanceSharedSupportListedFileChangedIsNamed(t *testing.T) {
+	readme := "# Fixture project\n\n- `test/support/session.rb` is shared test support loaded by every test.\n"
+	out, _ := sharedSupportBuild(t, readme,
+		map[string]string{"test/support/session.rb": "def sign_in; end\n", "test/support/other.rb": "# other\n"},
+		map[string]string{"test/support/session.rb": "def sign_in(x); end\n", "test/support/other.rb": "# changed but not listed\n", "app.txt": "candidate\n"})
+	line, at := sharedSupportLine(out)
+	if line != sharedSupportLinePrefix+"test/support/session.rb" {
+		t.Fatalf("shared test support line = %q (index %d); summary:\n%s", line, at, out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if lines[at-1] != "  review: approved" || !strings.HasPrefix(lines[at+1], "  repairs: ") {
+		t.Fatalf("the line is not between the review and repairs lines:\n%s", out)
+	}
+	sharedSupportMarker(t)
+}
+
+func TestAcceptanceSharedSupportRequiredFirstFilesAndManifestAreNamed(t *testing.T) {
+	out, _ := sharedSupportBuild(t, "# Fixture project\n",
+		map[string]string{
+			"test/user_test.rb":                        "require \"test_helper\"\n# user\n",
+			"test/test_helper.rb":                      "require_relative \"test_helpers/session_test_helper\"\n# entry\n",
+			"test/test_helpers/session_test_helper.rb": "# session\n",
+			"test/test_helpers/unrelated.rb":           "# nothing requires this\n",
+			"Gemfile":                                  "source 'https://rubygems.org'\n",
+		},
+		map[string]string{
+			"test/user_test.rb":                        "require \"test_helper\"\n# edited test\n",
+			"test/test_helper.rb":                      "require_relative \"test_helpers/session_test_helper\"\n# entry changed\n",
+			"test/test_helpers/session_test_helper.rb": "# session changed\n",
+			"test/test_helpers/unrelated.rb":           "# changed but nothing requires it\n",
+			"Gemfile":                                  "gem 'x', require: false\n",
+			"app.txt":                                  "candidate\n",
+		})
+	line, at := sharedSupportLine(out)
+	if line != sharedSupportLinePrefix+"Gemfile, test/test_helper.rb, test/test_helpers/session_test_helper.rb" {
+		t.Fatalf("shared test support line = %q (index %d); summary:\n%s", line, at, out)
+	}
+	sharedSupportMarker(t)
+}
+
+func TestAcceptanceSharedSupportNewTestFilesOnlyHasNoLine(t *testing.T) {
+	readme := "# Fixture project\n\n- `test/support/session.rb` is shared test support loaded by every test.\n"
+	out, request := sharedSupportBuild(t, readme,
+		map[string]string{"test/support/session.rb": "def sign_in; end\n", "test/test_helper.rb": "require 'minitest/autorun'\n"},
+		map[string]string{"test/billing_test.rb": "# new test\n", "test/support/billing_helper.rb": "# new helper\n", "app.txt": "candidate\n"})
+	if strings.Contains(out, "shared test support changed") {
+		t.Fatalf("a Build that only adds new test files has the line:\n%s", out)
+	}
+	if !strings.Contains(request, "Shared test support is not edited unless the Intent names it") {
+		t.Fatal("the Build brief does not state the shared test support rule")
+	}
+	sharedSupportMarker(t)
+}

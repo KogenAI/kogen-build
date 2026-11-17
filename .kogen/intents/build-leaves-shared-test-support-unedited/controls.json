@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation touches the brief text, the builder instructions with their model-facing goldens, and the landed summary with start-commit path detection in package build; the acceptance fixture was vetted to compile and fail only on the missing behavior against the unchanged tree, and the Build writes the implementation."}

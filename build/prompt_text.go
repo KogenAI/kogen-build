@@ -5,6 +5,8 @@ const (
 	protectedIntro = `These files are the approved acceptance baseline. Approval freezes these bytes; it is not an exception or authorization to change them. write_file refuses them, and if any of them changes the Build stops at once without a commit:`
 
 	manifestNotice = `Dependency manifests and lockfiles that are not in this baseline remain editable inputs for approved implementation changes. Their editable portions do not authorize weakening, removing or bypassing a configured check or changing actual verification configuration. Preserve all configured checks, their commands and the behavior they verify. Protection is whole-file: if a combined check-definition manifest is listed above, it cannot be edited for dependencies either.`
+
+	sharedSupportNotice = `Shared test support is not edited unless the Intent names it: the files every test loads (the suite's entry or bootstrap file, shared helper and support modules, the test-environment configuration and dependency manifests) stay as they are, because an edit that makes your own tests pass can break other tests or the collection of results. When your tests need different behaviour from a shared helper, add a helper beside your own new test files (a new file, a local override, or inline code in the test) and leave the shared file byte-identical.`
 )
 
 // finishReminder ends the feedback of a red whole-Intent pass that goes back to the builder.
