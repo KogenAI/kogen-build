@@ -1,0 +1,301 @@
+package build
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/git"
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
+)
+
+const (
+	boundFixtureTracked   = "rounds/reproduce/tasks/round-%03d/reproduce-case-with-a-deliberately-long-directory-name-%02d/task-%05d-long-descriptive-file-name.txt"
+	boundFixtureUntracked = "rounds/reproduce/tasks-new/round-%03d/reproduce-case-with-a-deliberately-long-directory-name-%02d/task-%05d-long-descriptive-file-name.txt"
+	boundIndexLimit       = 65536
+)
+
+type boundFixture struct {
+	t      *testing.T
+	root   string
+	env    []string
+	b      *Attempt
+	all    []string
+	deep   string
+	readme string
+}
+
+func boundGit(t *testing.T, dir string, env []string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir, cmd.Env = dir, env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%.2000s", args, err, out)
+	}
+	return string(out)
+}
+
+// newBoundFixture builds a synthetic repository: bulk long paths when bulk, a README of
+// the given text, and one Attempt that composes the real builder brief. No provider is used.
+func newBoundFixture(t *testing.T, bulk int, readme string) *boundFixture {
+	t.Helper()
+	dir := physical(t, t.TempDir())
+	env := isolatedEnv()
+	initGit(t, dir, env)
+	f := &boundFixture{t: t, root: dir, env: env, readme: readme}
+	writeFile(t, filepath.Join(dir, "README.md"), readme, 0o644)
+	writeFile(t, filepath.Join(dir, "src/main.go"), "package main\n", 0o644)
+	writeFile(t, filepath.Join(dir, "docs/notes.md"), "notes\n", 0o644)
+	writeFile(t, filepath.Join(dir, ".kogen/intents/fixture/intent.md"), "# Fixture\nSlug: fixture\nModel: not applicable — fixture\n\nAcceptance:\n- .kogen/intents/fixture/acceptance.feature\n- features/steps/s.js\n\n## Tests\n- one: unit\n", 0o644)
+	writeFile(t, filepath.Join(dir, ".kogen/intents/fixture/acceptance.feature"), "Feature: F\n  Scenario: S\n    Given a thing\n", 0o644)
+	writeFile(t, filepath.Join(dir, "features/steps/s.js"), "// steps\n", 0o644)
+	for i := 0; i < bulk; i++ {
+		pat := boundFixtureTracked
+		if i%2 == 1 {
+			pat = boundFixtureUntracked
+		}
+		p := fmt.Sprintf(pat, i/1000, i/100%10, i)
+		writeFile(t, filepath.Join(dir, p), "x\n", 0o644)
+		if i == 7777 {
+			f.deep = p
+		}
+	}
+	if bulk > 0 {
+		boundGit(t, dir, env, "add", "--", "README.md", "src", "docs", "rounds/reproduce/tasks")
+	} else {
+		boundGit(t, dir, env, "add", "--", "README.md", "src", "docs")
+	}
+	f.all = strings.Split(strings.TrimRight(boundGit(t, dir, env, "ls-files", "--cached", "--others", "--exclude-standard"), "\n"), "\n")
+	intent, err := project.LoadIntent(dir, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := []string{"src/main.go"}
+	if f.deep != "" {
+		baseline = append(baseline, f.deep)
+	}
+	f.b = &Attempt{State: State{Root: dir, Slug: "fixture", Config: &project.Config{}, Baseline: baseline}, intent: intent, repo: git.New(dir, env)}
+	return f
+}
+
+// indexOf is the file index section of the dynamic evidence: from its "# Files" heading on.
+func indexOf(t *testing.T, dynamic string) string {
+	t.Helper()
+	i := strings.Index(dynamic, "# Files\n")
+	if i < 0 {
+		t.Fatalf("no \"# Files\" section in the dynamic evidence (%d bytes)", len(dynamic))
+	}
+	return dynamic[i:]
+}
+
+func sectionLines(index, heading string) []string {
+	i := strings.Index(index, heading+"\n")
+	if i < 0 {
+		return nil
+	}
+	rest := index[i+len(heading)+1:]
+	if j := strings.Index(rest, "\n## "); j >= 0 {
+		rest = rest[:j]
+	}
+	var out []string
+	for _, l := range strings.Split(rest, "\n") {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func metaCount(t *testing.T, index, key string) int {
+	t.Helper()
+	for _, l := range strings.Split(index, "\n") {
+		if v, ok := strings.CutPrefix(l, key+": "); ok {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil {
+				t.Fatalf("metadata line %q is not a number", l)
+			}
+			return n
+		}
+	}
+	t.Fatalf("no %q metadata line in the file index", key)
+	return 0
+}
+
+func TestBoundedIndexLargeRepoStaysBounded(t *testing.T) {
+	f := newBoundFixture(t, 25000, "# Fixture project\n")
+	if len(f.all) < 25000 {
+		t.Fatalf("fixture has %d paths, want at least 25000", len(f.all))
+	}
+	brief, err := f.b.brief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := indexOf(t, brief.Dynamic)
+	if len(index) > boundIndexLimit {
+		t.Fatalf("file index is %d bytes, want at most %d (listing of %d paths)", len(index), boundIndexLimit, len(f.all))
+	}
+	opening, err := f.b.openingMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := jsonText(opening)
+	if want := len(brief.Stable) + boundIndexLimit + 16384; len(wire) > want || len(wire) > 131072 {
+		t.Fatalf("native opening message serializes to %d bytes, want at most %d and 131072", len(wire), want)
+	}
+	prompt := "framing\n\n" + brief.Stable + "\n\n" + brief.Dynamic
+	if len(prompt) > len(brief.Stable)+boundIndexLimit+16384 {
+		t.Fatalf("executor first prompt is %d bytes", len(prompt))
+	}
+	if len(wire) < len(jsonText(provider.ContractBlocks(brief.Stable, ""))) {
+		t.Fatal("opening message lost the stable authority")
+	}
+	boundResult(t, "bounded")
+}
+
+func TestBoundedIndexMetadataIsTruthfulAndRequiredPathsListed(t *testing.T) {
+	f := newBoundFixture(t, 25000, "# Fixture project\n")
+	brief, err := f.b.brief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := indexOf(t, brief.Dynamic)
+	total, listed, omitted := metaCount(t, index, "total paths"), metaCount(t, index, "listed paths"), metaCount(t, index, "omitted paths")
+	if total != len(f.all) {
+		t.Fatalf("total paths: %d, repository has %d tracked and untracked paths", total, len(f.all))
+	}
+	if listed+omitted != total || omitted <= 0 {
+		t.Fatalf("listed %d + omitted %d != total %d, or nothing omitted", listed, omitted, total)
+	}
+	lines := sectionLines(index, "## Listed paths")
+	if len(lines) != listed {
+		t.Fatalf("## Listed paths has %d lines, listed paths says %d", len(lines), listed)
+	}
+	inRepo := map[string]bool{}
+	for _, p := range f.all {
+		inRepo[p] = true
+	}
+	for _, p := range lines {
+		if !inRepo[p] {
+			t.Fatalf("listed path %q is not a repository path", p)
+		}
+	}
+	for _, p := range []string{"src/main.go", f.deep, ".kogen/intents/fixture/acceptance.feature", "features/steps/s.js"} {
+		if !slices.Contains(lines, p) {
+			t.Fatalf("required path %q (protected or Intent acceptance path) is not listed individually", p)
+		}
+	}
+	dirs := sectionLines(index, "## Omitted directories")
+	sum := 0
+	var prefixes []string
+	for _, l := range dirs {
+		dir, rest, ok := strings.Cut(l, "/: ")
+		if !ok {
+			t.Fatalf("directory line %q is not \"<dir>/: <n> omitted paths\"", l)
+		}
+		n, err := strconv.Atoi(strings.TrimSuffix(rest, " omitted paths"))
+		if err != nil || !strings.HasSuffix(rest, " omitted paths") {
+			t.Fatalf("directory line %q has no count", l)
+		}
+		real := 0
+		for _, p := range f.all {
+			if strings.HasPrefix(p, dir+"/") && !slices.Contains(lines, p) {
+				real++
+			}
+		}
+		if real != n {
+			t.Fatalf("directory %s claims %d omitted paths, repository has %d", dir, n, real)
+		}
+		for _, q := range prefixes {
+			if strings.HasPrefix(dir+"/", q+"/") || strings.HasPrefix(q+"/", dir+"/") {
+				t.Fatalf("omitted directories %s and %s overlap", q, dir)
+			}
+		}
+		prefixes = append(prefixes, dir)
+		sum += n
+	}
+	if sum != omitted {
+		t.Fatalf("omitted directories sum to %d, omitted paths says %d", sum, omitted)
+	}
+	if !strings.Contains(index, "omitted paths still exist") {
+		t.Fatal("the index does not say that omitted paths still exist")
+	}
+	boundResult(t, "metadata")
+}
+
+func TestBoundedIndexOmittedPathStaysAccessible(t *testing.T) {
+	f := newBoundFixture(t, 25000, "# Fixture project\n")
+	brief, err := f.b.brief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := sectionLines(indexOf(t, brief.Dynamic), "## Listed paths")
+	omittedPath := ""
+	for _, p := range f.all {
+		if strings.HasPrefix(p, "rounds/reproduce/tasks-new/") && !slices.Contains(listed, p) {
+			omittedPath = p
+			break
+		}
+	}
+	if omittedPath == "" {
+		t.Fatal("no untracked bulk path was omitted from the index")
+	}
+	if strings.Contains(brief.Dynamic, omittedPath) || strings.Contains(brief.Stable, omittedPath) {
+		t.Fatalf("omitted path %s appears in the brief", omittedPath)
+	}
+	got, err := readFile(f.root, omittedPath)
+	if err != nil || string(got) != "x\n" {
+		t.Fatalf("omitted but real path %s is not readable: %v %q", omittedPath, err, got)
+	}
+	grep := boundGit(t, f.root, f.env, "grep", "--untracked", "-l", "x", "--", omittedPath)
+	if strings.TrimSpace(grep) != omittedPath {
+		t.Fatalf("search does not reach %s: %q", omittedPath, grep)
+	}
+	boundResult(t, "access")
+}
+
+func TestBoundedIndexSmallRepoIsUnchanged(t *testing.T) {
+	f := newBoundFixture(t, 0, "# Fixture project\n")
+	brief, err := f.b.brief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# Files\n\n" + strings.Join(f.all, "\n") + "\n"
+	if brief.Dynamic != want {
+		t.Fatalf("small repository dynamic evidence changed\n got: %q\nwant: %q", brief.Dynamic, want)
+	}
+	if strings.Contains(brief.Dynamic, "omitted") {
+		t.Fatal("a small repository index carries omission metadata")
+	}
+	if !strings.Contains(brief.Stable, "# Fixture project") || !strings.Contains(brief.Stable, "# Intent: Fixture") {
+		t.Fatal("small repository stable authority lost the README or the Intent")
+	}
+	boundResult(t, "small")
+}
+
+func TestBoundedIndexIrreducibleAuthorityFailsBeforeAnyProvider(t *testing.T) {
+	f := newBoundFixture(t, 25000, strings.Repeat("r", provider.InputBudgetBytes+4096))
+	_, err := f.b.brief()
+	var se *sys.Error
+	if !errors.As(err, &se) || se.Class != "candidate" || se.Reason != "context_budget_exceeded" || se.Exit != 1 {
+		t.Fatalf("irreducible authority did not return the typed context budget failure: %#v", err)
+	}
+	boundResult(t, "irreducible")
+}
+
+func boundResult(t *testing.T, name string) {
+	t.Helper()
+	if p := os.Getenv("BOUND_INDEX_RESULT_DIR"); p != "" {
+		if err := os.WriteFile(filepath.Join(p, name), []byte("ok\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

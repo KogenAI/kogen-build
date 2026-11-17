@@ -1,0 +1,33 @@
+package build
+
+import "testing"
+
+// TestBoundedIndexSelectionIsDeterministic builds the brief twice on one repository and once on
+// a second, identically populated repository in another folder: the bounded index must be
+// byte-identical each time, and bounded each time.
+func TestBoundedIndexSelectionIsDeterministic(t *testing.T) {
+	a := newBoundFixture(t, 25000, "# Fixture project\n")
+	first, err := a.b.brief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(indexOf(t, first.Dynamic)); n > boundIndexLimit {
+		t.Fatalf("file index is %d bytes, want at most %d", n, boundIndexLimit)
+	}
+	again, err := a.b.brief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != first {
+		t.Fatal("a second brief of the same repository differs from the first")
+	}
+	b := newBoundFixture(t, 25000, "# Fixture project\n")
+	other, err := b.b.brief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.Dynamic != first.Dynamic {
+		t.Fatal("an identically populated repository in another folder gives a different file index")
+	}
+	boundResult(t, "determinism")
+}

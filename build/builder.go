@@ -75,11 +75,18 @@ func (b *Attempt) brief() (executor.Brief, error) {
 		"# Protected paths\n\n" +
 		protectedIntro + "\n" + strings.Join(baseline, "\n") + "\n\n" +
 		manifestNotice + "\n\n"
+	if len(stable) > provider.InputBudgetBytes {
+		return executor.Brief{}, sys.Fail("candidate", "context_budget_exceeded", fmt.Sprintf(
+			"builder: the stable authority alone is %d bytes, over the ceiling %d; "+
+				"ordinary Refine and new exact approval are required if scope must change.",
+			len(stable), provider.InputBudgetBytes), 1)
+	}
 	files, err := b.repo.OK("ls-files", "--cached", "--others", "--exclude-standard")
 	if err != nil {
 		return executor.Brief{}, err
 	}
-	return executor.Brief{Stable: stable, Dynamic: b.baselineText() + "# Files\n\n" + files}, nil
+	required := append(slices.Clone(b.Baseline), b.intent.Acceptance...)
+	return executor.Brief{Stable: stable, Dynamic: b.baselineText() + fileIndex(files, required)}, nil
 }
 
 // drive is the builder's conversation (LOOP-1..7), whichever executor runs it: a round (the

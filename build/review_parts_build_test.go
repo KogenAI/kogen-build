@@ -291,7 +291,8 @@ func TestReviewInPartsMandatoryMaterialStopsBeforeSending(t *testing.T) {
 	e.useLineup("")
 	// The README of the Build's start is the project instructions: an oversized one is in the
 	// start revision, as a builder's edit of it is no longer authority.
-	e.write("README.md", strings.Repeat("a README line that every review prompt carries\n", 12000))
+	// It is sized so that the builder brief still fits the ceiling and the review prompt does not.
+	e.write("README.md", strings.Repeat("a README line that every review prompt carries\n", 10700))
 	e.run("git", "add", "README.md")
 	e.run("git", "commit", "-qm", "large README")
 	e.approve()
