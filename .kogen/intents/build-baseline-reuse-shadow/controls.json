@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation needs the receipt store, key and pass hooks inside Build's baseline and verification flow, and the request's Verification snapshot dependency has not landed; the Build writes it, and the Go acceptance test already distinguishes the specified behavior."}

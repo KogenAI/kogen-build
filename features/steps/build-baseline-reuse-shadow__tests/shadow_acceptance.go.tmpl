@@ -1,0 +1,180 @@
+package build
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+)
+
+func shadowEnv(t *testing.T, command ...string) (*env, string) {
+	t.Helper()
+	var checks []project.Check
+	for i, c := range command {
+		name := string(rune('a' + i))
+		checks = append(checks, project.Check{Name: name, Run: `echo ` + name + ` >> "$KBO_LOG"` + c})
+	}
+	e, log := reuseEnv(t, checks...)
+	return e, log
+}
+
+// shadowBuild approves the Intent as it is now (a landed Build consumes its approval), runs one Build and
+// returns the run that Build created, never an earlier one.
+func shadowBuild(e *env, finishes int) string {
+	e.t.Helper()
+	known := map[string]bool{}
+	for _, id := range e.runIDs() {
+		known[id] = true
+	}
+	for i := 0; i < finishes; i++ {
+		e.prov.then(e.prov.calls("finish", map[string]any{"summary": "done"}), refused())
+	}
+	e.approve()
+	e.build()
+	var fresh []string
+	for _, id := range e.runIDs() {
+		if !known[id] {
+			fresh = append(fresh, id)
+		}
+	}
+	if len(fresh) != 1 {
+		e.t.Fatalf("this Build created runs %v, want exactly one new run", fresh)
+	}
+	return fresh[0]
+}
+
+func shadowEvents(e *env, id, name string) []map[string]any { return eventsNamed(e.events(id), name) }
+
+func shadowFor(t *testing.T, e *env, id, check string) map[string]any {
+	t.Helper()
+	for _, ev := range shadowEvents(e, id, "reuse_shadow") {
+		if ev["name"] == check {
+			return ev
+		}
+	}
+	t.Fatalf("no reuse_shadow event for %s in %v", check, shadowEvents(e, id, "reuse_shadow"))
+	return nil
+}
+
+func baselineResult(e *env, id, check string) map[string]any {
+	for _, ev := range e.events(id) {
+		if ev["event"] == "command_result" && ev["name"] == check {
+			return ev
+		}
+	}
+	return nil
+}
+
+func receiptFile(e *env) string { return filepath.Join(e.root, ".git", "kogen-reuse-shadow") }
+
+func TestReuseShadowAcceptance(t *testing.T) {
+	t.Run("s1", func(t *testing.T) {
+		e, log := shadowEnv(t, "", "")
+		first := shadowBuild(e, 1)
+		before := len(executionsOf(t, log))
+		second := shadowBuild(e, 1)
+		for _, c := range []string{"a", "b"} {
+			ev := shadowFor(t, e, second, c)
+			eq(t, "would_reuse "+c, ev["would_reuse"], any(true))
+			eq(t, "receipt "+c, ev["receipt"], any(e.runPath(first, "log.jsonl")))
+			eq(t, "actual_status "+c, ev["actual_status"], any(float64(0)))
+			if r := baselineResult(e, second, c); r == nil || r["status"] != float64(0) {
+				t.Fatalf("no green command_result for %s: %v", c, r)
+			}
+		}
+		if got := len(executionsOf(t, log)); got < before+2 {
+			t.Fatalf("checks did not run again: %d executions before the second Build, %d after", before, got)
+		}
+	})
+	t.Run("s2", func(t *testing.T) {
+		e, _ := shadowEnv(t, "", "")
+		shadowBuild(e, 1)
+		e.write("other.txt", "one more file\n")
+		e.gitOut("add", "-A")
+		e.gitOut("commit", "-m", "one more file")
+		second := shadowBuild(e, 1)
+		ev := shadowFor(t, e, second, "a")
+		eq(t, "would_reuse", ev["would_reuse"], any(false))
+		eq(t, "receipt", ev["receipt"], any(""))
+	})
+	t.Run("s3", func(t *testing.T) {
+		e, log := shadowEnv(t, `; test -f "$KBO_OPEN"`)
+		shadowBuild(e, 1)
+		writeFile(t, filepath.Join(filepath.Dir(log), "gate-open"), "open\n", 0o644)
+		second := shadowBuild(e, 1)
+		ev := shadowFor(t, e, second, "a")
+		eq(t, "would_reuse", ev["would_reuse"], any(false))
+		eq(t, "actual_status", ev["actual_status"], any(float64(0)))
+	})
+	t.Run("s4", func(t *testing.T) {
+		e, _ := shadowEnv(t, `; test "$KOGEN_ATTEMPT_ID" != second`)
+		e.extraEnv = append(e.extraEnv, "KOGEN_ATTEMPT_ID=first")
+		shadowBuild(e, 1)
+		e.extraEnv[len(e.extraEnv)-1] = "KOGEN_ATTEMPT_ID=second"
+		second := shadowBuild(e, 1)
+		ev := shadowFor(t, e, second, "a")
+		eq(t, "would_reuse", ev["would_reuse"], any(true))
+		eq(t, "actual_status", ev["actual_status"], any(float64(1)))
+		eq(t, "agrees", ev["agrees"], any(false))
+		bc := shadowEvents(e, second, "baseline_checks")
+		if len(bc) != 1 || len(bc[0]["failing"].([]any)) != 1 || bc[0]["failing"].([]any)[0] != "a" {
+			t.Fatalf("baseline_checks: %v", bc)
+		}
+	})
+	t.Run("s5", func(t *testing.T) {
+		for _, mode := range []string{"unwritable", "corrupt"} {
+			e, _ := shadowEnv(t, "", "")
+			if mode == "unwritable" {
+				if err := os.Mkdir(receiptFile(e), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeFile(t, receiptFile(e), "not json\n{\n", 0o644)
+			}
+			id := shadowBuild(e, 1)
+			eq(t, mode+" outcome", e.result(id)["outcome"], any("landed"))
+			bc := shadowEvents(e, id, "baseline_checks")
+			if len(bc) != 1 || len(bc[0]["failing"].([]any)) != 0 {
+				t.Fatalf("%s baseline_checks: %v", mode, bc)
+			}
+			un := shadowEvents(e, id, "reuse_shadow_unavailable")
+			if len(un) != 1 || strings.TrimSpace(un[0]["reason"].(string)) == "" {
+				t.Fatalf("%s reuse_shadow_unavailable events: %v", mode, un)
+			}
+		}
+	})
+	t.Run("s6", func(t *testing.T) {
+		// The golden list is the event names this baseline run logged on the tree before the shadow existed.
+		golden := "start response_budget command command_result command command_result baseline_checks phase_duration provider_attempt request tool_call phase_duration check_reuse check_identity command step_sweep command_result command step_sweep command_result pass phase_duration provider_attempt outcome phase_duration"
+		e, _ := shadowEnv(t, "", "; false")
+		id := shadowBuild(e, 1)
+		var got []string
+		for _, ev := range e.events(id) {
+			name, _ := ev["event"].(string)
+			if name != "reuse_shadow" {
+				got = append(got, name)
+			}
+		}
+		eq(t, "event names", strings.Join(got, " "), golden)
+		bc := shadowEvents(e, id, "baseline_checks")
+		eq(t, "failing", bc[0]["failing"], any([]any{"b"}))
+	})
+	t.Run("s7", func(t *testing.T) {
+		e, _ := shadowEnv(t, "", "")
+		e.prov.then(e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": "candidate\n"}, "finish", map[string]any{"summary": "done"}))
+		e.approve()
+		e.build()
+		first := e.onlyRun()
+		eq(t, "outcome", e.result(first)["outcome"], any("landed"))
+		second := shadowBuild(e, 1)
+		ev := shadowFor(t, e, second, "a")
+		eq(t, "would_reuse", ev["would_reuse"], any(true))
+		eq(t, "receipt", ev["receipt"], any(e.runPath(first, "log.jsonl")))
+		raw, _ := os.ReadFile(receiptFile(e))
+		if !strings.Contains(string(raw), `"source":"pass"`) {
+			t.Fatalf("no pass receipt in %s", raw)
+		}
+	})
+}

@@ -106,7 +106,7 @@ func TestPhaseElapsedFailureAndReviewResume(t *testing.T) {
 			return externalWritesApp("candidate\n", executor.Usage{})(n, context.Background(), root, in)
 		}
 		a := e.build(withLineup(f))
-		if !regexp.MustCompile(`(?m)^kogen: pass 1: test failed \([0-9]+ s\)$`).MatchString(a.errs.String()) {
+		if !regexp.MustCompile(`(?m)^kogen: pass 1: test( \(exit [0-9]+\))? failed \([0-9]+ s\)$`).MatchString(a.errs.String()) {
 			t.Fatalf("red pass progress: %s", a.errs.String())
 		}
 	})

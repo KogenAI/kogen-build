@@ -95,6 +95,10 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 		}
 	}
 	var executed []verify.CommandResult
+	var shadow *baselineShadow
+	if len(b.Config.Checks) > 0 {
+		shadow = b.reuseShadowBegin(before.tree)
+	}
 	for i, c := range b.Config.Checks {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -115,6 +119,7 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 		}
 		b.s.Progress(b.phaseProgress("kogen: checking " + c.Name + " before the Build changes anything"))
 		b.baselineRunning = &baselineRunning{name: c.Name, command: c.Run, started: time.Now()}
+		probe := shadow.probe(c.Run)
 		b.Run.Event(map[string]any{"event": "command", "name": c.Name, "command": c.Run, "before_change": true})
 		started := time.Now()
 		b.baselineRunning.started = started
@@ -132,6 +137,7 @@ func (b *Attempt) recordBaseline(ctx context.Context) error {
 		wall := ended.Sub(started).Milliseconds()
 		b.Run.Event(map[string]any{"event": "command_result", "name": c.Name, "status": r.Status, "output": Cap(r.Output),
 			"started_at": isoTime(started), "ended_at": isoTime(ended), "wall_ms": wall})
+		shadow.observe(probe, c.Name, r.Status, wall)
 		timings = append(timings, map[string]any{"name": c.Name, "started_at": isoTime(started), "ended_at": isoTime(ended), "wall_ms": wall})
 		result := verify.CommandResult{Name: c.Name, Command: c.Run, Status: r.Status, Output: verify.Cap(r.Output)}
 		b.CheckBaseline = append(b.CheckBaseline, result)
@@ -188,6 +194,7 @@ func (b *Attempt) baselineFailures() []verify.CommandResult {
 // baseline or without a result in that pass is "not run": nothing is inferred as unchanged or
 // green. It is nil when no baseline was collected.
 func (b *Attempt) comparison() []checkComparison {
+	b.recordPassReceipts()
 	if len(b.CheckBaseline) == 0 {
 		return nil
 	}

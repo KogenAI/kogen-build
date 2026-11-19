@@ -8,5 +8,10 @@ github.com/KogenAI/kogen-review v0.0.0-20261113154643-47c694035e56 h1:5KPEgXWH0D
 github.com/KogenAI/kogen-review v0.0.0-20261113154643-47c694035e56/go.mod h1:GerfruyyxJ+W0DGad6OzxbMVvTZKmakjYcXwXwccjmo=
 github.com/KogenAI/kogen-verification v0.0.0-20261111114253-4a379220bdb1 h1:u8SZRQIsNFg+3zkMCjmcABwXntAM1SUXqFTyDqyaJoo=
 github.com/KogenAI/kogen-verification v0.0.0-20261111114253-4a379220bdb1/go.mod h1:b3TIpodtSQnpvmfgd8lXd5PtiNNn4Y/fQM+IsTj8tQA=
+github.com/KogenAI/kogen-verification v0.0.0-20261119103050-38d68a15fa0a h1:Zl+ABbS+U6lS8NVlMgwCpnbO/NrfSyD/mB9Vm7f1IWI=
+github.com/KogenAI/kogen-verification v0.0.0-20261119103050-38d68a15fa0a/go.mod h1:b3TIpodtSQnpvmfgd8lXd5PtiNNn4Y/fQM+IsTj8tQA=
+golang.org/x/mod v0.41.0/go.mod h1:Ek9pY8RKWXwsWvd3rQiHYtMqkjSUV+s1Rj7j4H5Ur6o=
+golang.org/x/sync v0.24.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
 golang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=
 golang.org/x/text v0.43.0/go.mod h1:hbSIYA/amXcRXTFSZqh8tWHEoqRvvbKPJ2uz/KU+a+s=
+golang.org/x/tools v0.51.0/go.mod h1:9eEncMayCV6zRMGhR5eZEC2iBx98qWcF1HZ9Z7wJOoA=
