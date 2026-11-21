@@ -69,10 +69,10 @@ type Attempt struct {
 	// a stop interrupted (baseline.go). Neither is persisted.
 	baselineRunning *baselineRunning
 	baselineStop    map[string]any
-	// approved holds the approved bytes of every baseline file, and restored whether this
-	// attempt has already used its one restore (BaselineRestored). Neither is persisted.
+	// approved holds the approved bytes of every baseline file for the one restore of an
+	// attempt (BaselineRestored); it is not persisted. Whether the restore was used is
+	// State.RestoreUsed, which is.
 	approved map[string]approvedFile
-	restored bool
 	// studio is the snapshot a fresh Build loaded, or a resumed Build recovered from the cache
 	// that matches its State.StudioRules receipt (nil when the project is not configured).
 	studio *studioSnapshot
@@ -554,7 +554,7 @@ func (b *Attempt) captureApproved() {
 // the approved bytes are unknown it does nothing (returns ""), and BaselineIntact then
 // refuses as it always has.
 func (b *Attempt) BaselineRestored() (string, error) {
-	if b.restored || b.approved == nil {
+	if b.RestoreUsed || b.approved == nil {
 		return "", nil
 	}
 	_, changed, added, err := b.baselineDiff()
@@ -566,7 +566,7 @@ func (b *Attempt) BaselineRestored() (string, error) {
 			return "", nil
 		}
 	}
-	b.restored = true
+	b.RestoreUsed = true
 	for _, p := range changed {
 		if err := b.restoreFile(p, b.approved[p]); err != nil {
 			return "", err

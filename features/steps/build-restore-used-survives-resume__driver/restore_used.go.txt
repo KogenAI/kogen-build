@@ -1,0 +1,95 @@
+package build
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+// Acceptance driver of build-restore-used-survives-resume: copied into build/ as a _test.go
+// file by the acceptance steps, run by name, and removed again.
+
+const accEdit = "printf changed >> "
+
+func accUsedRestoreRun(e *env, resumes int) (id string, orig string) {
+	e.t.Helper()
+	f := e.prov
+	orig = e.read(stepsFile)
+	id, _ = e.interruptedAtRequest(f.calls("shell", map[string]any{"command": accEdit + stepsFile}))
+	if got := e.read(stepsFile); got != orig {
+		e.t.Fatalf("the first edit was not restored: %q", got)
+	}
+	for i := 0; i < resumes; i++ {
+		id = accResumeInterrupted(e, id)
+	}
+	return id, orig
+}
+
+// accResumeInterrupted resumes id, interrupts the resumed run at its first request and
+// returns the resumed run's id.
+func accResumeInterrupted(e *env, id string) string {
+	e.t.Helper()
+	before := map[string]bool{}
+	for _, r := range e.runIDs() {
+		before[r] = true
+	}
+	opened := make(chan struct{})
+	e.prov.replace(hang(opened))
+	e.credentials()
+	s, _, _ := e.session()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Resume(context.Background(), s, ResumeInput{Deps: e.deps(), Project: e.root, ID: id})
+	}()
+	<-opened
+	s.Interrupt("SIGINT")
+	<-done
+	for _, r := range e.runIDs() {
+		if !before[r] {
+			return r
+		}
+	}
+	e.t.Fatal("the resume created no run")
+	return ""
+}
+
+func accSecondEditRefused(t *testing.T, resumes int) {
+	e := newEnv(t)
+	id, orig := accUsedRestoreRun(e, resumes)
+	e.prov.replace(e.prov.calls("shell", map[string]any{"command": accEdit + stepsFile}, "finish", map[string]any{"summary": "x"}))
+	r := e.resume(id)
+	if r.exit != 1 || !strings.Contains(r.shown(), "baseline_changed") {
+		t.Fatalf("the second protected edit was not refused: exit %d\n%s", r.exit, r.shown())
+	}
+	if got := e.read(stepsFile); got != orig+"changed" {
+		t.Fatalf("the file was restored a second time: %q", got)
+	}
+}
+
+func TestAccRestoreUsedKeptByResume(t *testing.T)     { accSecondEditRefused(t, 0) }
+func TestAccRestoreUsedKeptByTwoResumes(t *testing.T) { accSecondEditRefused(t, 1) }
+
+func accUnusedStillRestored(t *testing.T, dropKey bool) {
+	e := newEnv(t)
+	f := e.prov
+	orig := e.read(stepsFile)
+	id, _ := e.interruptedAtRequest(f.calls("write_file", map[string]any{"path": "app.txt", "content": "candidate\n"}))
+	if dropKey {
+		doc, state := e.checkpoint(id)
+		delete(state, "restore_used")
+		doc["state"] = state
+		e.writeCheckpoint(id, doc)
+	}
+	f.replace(f.calls("shell", map[string]any{"command": accEdit + stepsFile}, "finish", map[string]any{"summary": "x"}))
+	r := e.resume(id)
+	if r.exit != 0 || r.err != nil {
+		t.Fatalf("the resume did not land: exit %d err %v\n%s", r.exit, r.err, r.shown())
+	}
+	if got := e.read(stepsFile); got != orig {
+		t.Fatalf("the first edit was not restored: %q", got)
+	}
+}
+
+func TestAccUnusedRestoreAvailableAfterResume(t *testing.T) { accUnusedStillRestored(t, false) }
+func TestAccRecordWithoutRestoreUsedResumes(t *testing.T)   { accUnusedStillRestored(t, true) }

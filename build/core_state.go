@@ -106,11 +106,15 @@ type State struct {
 	Start           string            `json:"start"`
 	Baseline        []string          `json:"baseline"`
 	BaselineDigests map[string]string `json:"baseline_digests"`
-	Excluded        []string          `json:"excluded"`
-	Run             *Run              `json:"run"`
-	GitIndex        string            `json:"git_index"`
-	StartTree       string            `json:"start_tree"`
-	Phase           string            `json:"phase"` // "startup" or "building"
+	// RestoreUsed is whether the attempt has used its one baseline restore, so a resumed
+	// attempt does not restore a protected file a second time. A record without the key
+	// resumes as not used.
+	RestoreUsed bool     `json:"restore_used"`
+	Excluded    []string `json:"excluded"`
+	Run         *Run     `json:"run"`
+	GitIndex    string   `json:"git_index"`
+	StartTree   string   `json:"start_tree"`
+	Phase       string   `json:"phase"` // "startup" or "building"
 	// T0 is when this run started, in Unix milliseconds.
 	T0         int64         `json:"t0"`
 	Usage      Tokens        `json:"usage"`
