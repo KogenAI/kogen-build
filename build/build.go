@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -68,6 +69,10 @@ type Attempt struct {
 	// a stop interrupted (baseline.go). Neither is persisted.
 	baselineRunning *baselineRunning
 	baselineStop    map[string]any
+	// approved holds the approved bytes of every baseline file, and restored whether this
+	// attempt has already used its one restore (BaselineRestored). Neither is persisted.
+	approved map[string]approvedFile
+	restored bool
 	// studio is the snapshot a fresh Build loaded, or a resumed Build recovered from the cache
 	// that matches its State.StudioRules receipt (nil when the project is not configured).
 	studio *studioSnapshot
@@ -365,6 +370,7 @@ func checked(ctx context.Context, s *sys.Session, in Input, repo *git.Repo, cfg 
 	if studio != nil {
 		b.StudioRules = studio.receipt
 	}
+	b.captureApproved()
 	*out = b
 	run.Event(map[string]any{"event": "start", "slug": slug, "start_head": start, "approved": approval.SHA256})
 	run.Event(agent.BudgetEvent(in.Deps.Client))
@@ -477,11 +483,28 @@ func (b *Attempt) BaselineIntact() error {
 	if err := project.ValidateSource(b.SourceProvenance); err != nil {
 		return err
 	}
-	now, err := project.Baseline(b.Root, b.Slug, b.Config)
+	all, _, _, err := b.baselineDiff()
 	if err != nil {
 		return err
 	}
-	var changed []string
+	if len(all) > 0 {
+		return baselineChangedError(all)
+	}
+	return nil
+}
+
+func baselineChangedError(changed []string) error {
+	return sys.Fail("candidate", "baseline_changed", "the Build changed acceptance files: "+strings.Join(changed, ", ")+
+		"; nothing was committed; review the files, then approve again or discard the edits", 1)
+}
+
+// baselineDiff is every path that differs from the approved baseline (changed files first, then
+// added ones), with the changed and the added paths on their own.
+func (b *Attempt) baselineDiff() (all, changed, added []string, err error) {
+	now, err := project.Baseline(b.Root, b.Slug, b.Config)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	for _, p := range b.Baseline {
 		if fileDigest(b.Root, p) != b.BaselineDigests[p] {
 			changed = append(changed, p)
@@ -489,14 +512,107 @@ func (b *Attempt) BaselineIntact() error {
 	}
 	for _, p := range now {
 		if !slices.Contains(b.Baseline, p) {
-			changed = append(changed, p)
+			added = append(added, p)
 		}
 	}
-	if len(changed) > 0 {
-		return sys.Fail("candidate", "baseline_changed", "the Build changed acceptance files: "+strings.Join(changed, ", ")+
-			"; nothing was committed; review the files, then approve again or discard the edits", 1)
+	return slices.Concat(changed, added), changed, added, nil
+}
+
+// approvedFile is a baseline file as approved: its bytes and mode, or that it was missing.
+type approvedFile struct {
+	data    []byte
+	mode    os.FileMode
+	missing bool
+}
+
+// captureApproved keeps the approved bytes of the baseline, for the one restore of an attempt.
+// A file that does not match its approved digest is not kept (it cannot be restored).
+func (b *Attempt) captureApproved() {
+	b.approved = map[string]approvedFile{}
+	for _, p := range b.Baseline {
+		if fileDigest(b.Root, p) != b.BaselineDigests[p] {
+			continue
+		}
+		path := filepath.Join(b.Root, p)
+		info, err := os.Stat(path)
+		if err != nil {
+			b.approved[p] = approvedFile{missing: true}
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		b.approved[p] = approvedFile{data: data, mode: info.Mode().Perm()}
 	}
-	return nil
+}
+
+// BaselineRestored is the baseline guard's call after a shell call. The first time in an
+// attempt that the baseline differs from the approved one it puts every changed file back to
+// its approved bytes, removes every added file and returns the message the Build is shown;
+// the baseline is then as approved. Without a difference, on any later difference and when
+// the approved bytes are unknown it does nothing (returns ""), and BaselineIntact then
+// refuses as it always has.
+func (b *Attempt) BaselineRestored() (string, error) {
+	if b.restored || b.approved == nil {
+		return "", nil
+	}
+	_, changed, added, err := b.baselineDiff()
+	if err != nil || len(changed)+len(added) == 0 {
+		return "", err
+	}
+	for _, p := range changed {
+		if _, ok := b.approved[p]; !ok {
+			return "", nil
+		}
+	}
+	b.restored = true
+	for _, p := range changed {
+		if err := b.restoreFile(p, b.approved[p]); err != nil {
+			return "", err
+		}
+	}
+	for _, p := range added {
+		if err := os.RemoveAll(filepath.Join(b.Root, p)); err != nil {
+			return "", err
+		}
+	}
+	if all, _, _, err := b.baselineDiff(); err != nil {
+		return "", err
+	} else if len(all) > 0 {
+		return "", baselineChangedError(all)
+	}
+	var parts []string
+	if len(changed) > 0 {
+		parts = append(parts, "restored to the approved bytes: "+strings.Join(changed, ", "))
+	}
+	if len(added) > 0 {
+		parts = append(parts, "removed (added files): "+strings.Join(added, ", "))
+	}
+	return "Note: acceptance files cannot be edited. The shell call changed them, so they were " + strings.Join(parts, "; ") +
+		". Continue without editing acceptance files; a second edit in this attempt ends the Build.", nil
+}
+
+func (b *Attempt) restoreFile(p string, f approvedFile) error {
+	path := filepath.Join(b.Root, p)
+	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+	}
+	if f.missing {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, f.data, f.mode); err != nil {
+		return err
+	}
+	return os.Chmod(path, f.mode)
 }
 
 func (b *Attempt) headIntact() error {

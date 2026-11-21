@@ -164,6 +164,25 @@ func (n *nativeSession) Round(ctx context.Context, in executor.Input) (executor.
 			return b.Save(Continuation{Stage: StageTool, Owner: "build", Input: input})
 		},
 		HandleCall: func(ctx context.Context, call tools.Call) (loop.Handled, error) {
+			if call.Name == "shell" {
+				// The first edit of an acceptance file in an attempt is restored, and the Build is told.
+				out, err := tl.CallContext(ctx, call)
+				if err != nil {
+					return loop.Handled{}, err
+				}
+				out = out.Cut()
+				if err := ctx.Err(); err != nil {
+					return loop.Handled{}, err
+				}
+				note, err := b.BaselineRestored()
+				if err != nil {
+					return loop.Handled{}, err
+				}
+				if note != "" {
+					out.Text = strings.TrimRight(out.Text, "\n") + "\n\n" + note
+				}
+				return loop.Handled{Handled: true, Output: out}, nil
+			}
 			if call.Name != ReportBlockerTool {
 				return loop.Handled{}, nil
 			}

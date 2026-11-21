@@ -446,3 +446,20 @@ func TestBuildAnthropicInvalidProviderFailureReachesResultAndOutcome(t *testing.
 		}
 	}
 }
+
+func TestASecondShellEditOfAnAcceptanceFileInTheSameAttemptIsRefused(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	f := e.prov
+	before := e.head()
+	edit := map[string]any{"command": "printf changed >> " + stepsFile}
+	f.then(
+		f.calls("shell", edit),
+		f.calls("shell", edit),
+		f.calls("finish", map[string]any{"summary": "done"}))
+	a := e.build()
+	eq(t, "exit", a.exit, 1)
+	contains(t, "feedback", strings.Join(f.toolOutputs(), "\n"), "acceptance files cannot be edited")
+	contains(t, "stdout", a.out.String(), "candidate/baseline_changed: the Build changed acceptance files: "+stepsFile)
+	eq(t, "HEAD", e.head(), before)
+}

@@ -1,0 +1,118 @@
+package build
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+const restoreControls = ".kogen/intents/fixture/controls.json"
+const restoreExtra = ".kogen/intents/fixture/extra-note.txt"
+const restoreApproved = "{\"deferred\":\"approved bytes\"}\n"
+
+// restoreMarker records that the named fixture test ran to its end.
+func restoreMarker(t *testing.T) {
+	t.Helper()
+	dir := os.Getenv("RESTORE_ACCEPTANCE_RESULT_DIR")
+	if dir == "" {
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, t.Name()), []byte("done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// restoreEnv is a fixture project whose approved Intent includes a controls file.
+func restoreEnv(t *testing.T) *env {
+	t.Helper()
+	e := newEnv(t)
+	e.write(restoreControls, restoreApproved)
+	e.approve()
+	return e
+}
+
+// restoreShellResponse is one provider response holding one shell call, so the provider
+// receives the shell's output in its next request.
+func restoreShellResponse(e *env, command string) handler {
+	return e.prov.calls("shell", map[string]any{"command": command})
+}
+
+func restoreShown(e *env) string { return strings.Join(e.prov.toolOutputs(), "\n") }
+
+func restoreSaysCannotEdit(shown string) bool {
+	return strings.Contains(strings.ToLower(shown), "acceptance files cannot be edited")
+}
+
+func TestAcceptanceRestoreAppendedControlsFile(t *testing.T) {
+	e := restoreEnv(t)
+	before := e.head()
+	e.prov.then(
+		restoreShellResponse(e, "printf 'extra line\\n' >> "+restoreControls),
+		e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": "candidate\n"},
+			"finish", map[string]any{"summary": "done"}))
+	a := e.build()
+	if a.exit != 0 || a.err != nil {
+		t.Fatalf("the attempt did not succeed: exit %d err %v\n%s\n%s", a.exit, a.err, a.out, a.errs)
+	}
+	if got := e.read(restoreControls); got != restoreApproved {
+		t.Fatalf("the controls file is %q, want the approved bytes %q", got, restoreApproved)
+	}
+	if e.head() == before {
+		t.Fatalf("nothing was committed:\n%s", a.out)
+	}
+	shown := restoreShown(e)
+	if !strings.Contains(shown, restoreControls) || !restoreSaysCannotEdit(shown) {
+		t.Fatalf("the Build was not shown a message naming %s and saying acceptance files cannot be edited; tool outputs:\n%s", restoreControls, shown)
+	}
+	restoreMarker(t)
+}
+
+func TestAcceptanceRestoreRemovesAddedIntentFile(t *testing.T) {
+	e := restoreEnv(t)
+	e.prov.then(
+		restoreShellResponse(e, "printf 'note\\n' > "+restoreExtra),
+		e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": "candidate\n"},
+			"finish", map[string]any{"summary": "done"}))
+	a := e.build()
+	if a.exit != 0 || a.err != nil {
+		t.Fatalf("the attempt did not succeed: exit %d err %v\n%s\n%s", a.exit, a.err, a.out, a.errs)
+	}
+	if _, err := os.Stat(filepath.Join(e.root, restoreExtra)); !os.IsNotExist(err) {
+		t.Fatalf("the added file %s is still present (stat err %v)", restoreExtra, err)
+	}
+	shown := restoreShown(e)
+	if !strings.Contains(shown, restoreExtra) || !restoreSaysCannotEdit(shown) {
+		t.Fatalf("the Build was not shown a message naming %s and saying acceptance files cannot be edited; tool outputs:\n%s", restoreExtra, shown)
+	}
+	restoreMarker(t)
+}
+
+func TestAcceptanceSecondEditFailsTheAttempt(t *testing.T) {
+	e := restoreEnv(t)
+	before := e.head()
+	e.prov.then(
+		restoreShellResponse(e, "printf 'first\\n' >> "+restoreControls),
+		restoreShellResponse(e, "printf 'second\\n' >> "+restoreControls),
+		e.prov.calls("finish", map[string]any{"summary": "done"}))
+	a := e.build()
+	if a.exit == 0 {
+		t.Fatalf("the attempt succeeded after two edits:\n%s", a.out)
+	}
+	// The first edit was restored and the Build was told, so the Build reached its second call.
+	shown := restoreShown(e)
+	if !strings.Contains(shown, restoreControls) || !restoreSaysCannotEdit(shown) {
+		t.Fatalf("after the first edit the Build was not shown a message naming %s and saying acceptance files cannot be edited; tool outputs:\n%s", restoreControls, shown)
+	}
+	if got := e.read(restoreControls); got != restoreApproved+"second\n" {
+		t.Fatalf("the controls file is %q, want the approved bytes plus only the second edit %q", got, restoreApproved+"second\n")
+	}
+	out := a.out.String()
+	if !strings.Contains(out, "the Build changed acceptance files") || !strings.Contains(out, restoreControls) {
+		t.Fatalf("the refusal does not say 'the Build changed acceptance files' naming %s:\n%s", restoreControls, out)
+	}
+	if e.head() != before {
+		t.Fatalf("a commit was made: HEAD %s -> %s", before, e.head())
+	}
+	restoreMarker(t)
+}

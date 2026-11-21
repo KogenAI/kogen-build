@@ -186,16 +186,24 @@ func TestMalformedEmptyAndUnprotectedBlockerReportsGrantNoWrites(t *testing.T) {
 func TestAcceptingABlockerStillRequiresTheOriginalHeadAndProtectedBytes(t *testing.T) {
 	t.Parallel()
 	// ExUnit: test/integration/builder_blocker_test.exs: LOOP-7 accepting a blocker still requires the original HEAD and protected bytes
-	for _, c := range []struct{ mutation, expected string }{
-		{"printf changed >> " + stepsFile, "baseline_changed"},
-		{"git -c commit.gpgsign=false commit --allow-empty -qm moved", "head_moved"},
-		{"git update-ref -d HEAD", "head_moved"},
+	// The first shell edit of an acceptance file is restored, so the baseline case edits twice.
+	for _, c := range []struct {
+		mutation, expected string
+		shells             int
+	}{
+		{"printf changed >> " + stepsFile, "baseline_changed", 2},
+		{"git -c commit.gpgsign=false commit --allow-empty -qm moved", "head_moved", 1},
+		{"git update-ref -d HEAD", "head_moved", 1},
 	} {
 		t.Run(c.expected+" "+c.mutation, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t)
 			f := e.prov
-			f.then(f.calls("shell", map[string]any{"command": c.mutation}, "report_blocker", blockerReport(stepsFile)))
+			var pairs []any
+			for range c.shells {
+				pairs = append(pairs, "shell", map[string]any{"command": c.mutation})
+			}
+			f.then(f.calls(append(pairs, "report_blocker", blockerReport(stepsFile))...))
 			before := e.authority()
 			a := e.build()
 			eq(t, "exit", a.exit, 1)
@@ -324,4 +332,47 @@ func TestTheGroundingCandidateIsTheLatestWholeIntentOrStagePass(t *testing.T) {
 	eq(t, "later stage-gate pass", b.latestPass().N, 3)
 	b.LastPass = nil
 	eq(t, "stage-gate pass only", b.latestPass().N, 3)
+}
+
+func TestTheFirstShellEditOfAnAcceptanceFileIsRestoredAndTheBuildIsTold(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	f := e.prov
+	before := e.head()
+	f.then(
+		f.calls("shell", map[string]any{"command": "printf changed >> " + stepsFile}),
+		f.calls("write_file", map[string]any{"path": "app.txt", "content": "candidate\n"},
+			"finish", map[string]any{"summary": "done"}))
+	a := e.build()
+	if a.exit != 0 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	eq(t, "step file", e.read(stepsFile), "// steps\n")
+	if e.head() == before {
+		t.Fatal("nothing was committed")
+	}
+	feedback := strings.Join(f.toolOutputs(), "\n")
+	contains(t, "feedback", feedback, stepsFile)
+	contains(t, "feedback", feedback, "acceptance files cannot be edited")
+}
+
+func TestAnAcceptanceFileAddedByShellIsRemovedAndNamed(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	f := e.prov
+	added := ".kogen/intents/" + testSlug + "/extra.txt"
+	f.then(
+		f.calls("shell", map[string]any{"command": "printf note > " + added}),
+		f.calls("write_file", map[string]any{"path": "app.txt", "content": "candidate\n"},
+			"finish", map[string]any{"summary": "done"}))
+	a := e.build()
+	if a.exit != 0 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	if _, err := os.Stat(filepath.Join(e.root, added)); !os.IsNotExist(err) {
+		t.Fatalf("the added file is still present (stat err %v)", err)
+	}
+	feedback := strings.Join(f.toolOutputs(), "\n")
+	contains(t, "feedback", feedback, added)
+	contains(t, "feedback", feedback, "acceptance files cannot be edited")
 }

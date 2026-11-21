@@ -229,6 +229,7 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	if !sameConfig(cfg, b.Config) || !slices.Equal(baseline, b.Baseline) {
 		return refuse(id, "baseline/configuration changed", "")
 	}
+	b.captureApproved()
 	// An external review role is served by its own executor on resume too, never natively.
 	if reviewer, err := selectReviewer(in.Deps, b.Config.Models["review"]); err != nil {
 		return err
