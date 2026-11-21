@@ -1,0 +1,153 @@
+package build
+
+import (
+	"encoding/json"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/core"
+)
+
+// rhxReset runs one reset of the build window that already holds `prior` archive references and
+// returns the decoded reset message, its raw content and the Attempt after the reset.
+func rhxReset(t *testing.T, prior int) (map[string]any, string, *Attempt, []HistoryRef) {
+	t.Helper()
+	e := newEnv(t)
+	run, err := StartRun(e.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opening := map[string]any{"role": "user", "content": "opening message of the build"}
+	var history []HistoryRef
+	for i := 1; i <= prior; i++ {
+		history = append(history, HistoryRef{
+			Path:   filepath.Join(run.Dir, "working-context", "build", itoa(i)+".json"),
+			SHA256: core.HashHex([]byte("archive " + itoa(i))),
+		})
+	}
+	if history == nil {
+		history = []HistoryRef{}
+	}
+	b := &Attempt{
+		State: State{
+			Root: e.root, Start: e.head(), Excluded: []string{}, Repairs: 1, Run: run,
+			ApprovalBytes: encodeBase64([]byte(`{"sha256":"` + strings.Repeat("a", 64) + `"}`)),
+			Continuation:  Continuation{Stage: StageBuilder},
+			WorkingContext: map[string]*OwnerContext{
+				"build": {Mandatory: []any{opening}, Observations: []any{}, History: append([]HistoryRef{}, history...)},
+			},
+		},
+		deps: e.deps(), repo: e.gitRepo(), s: sessionOf(e),
+	}
+	input := []any{opening}
+	for i := 1; i <= 4; i++ {
+		call := "call" + itoa(i)
+		input = append(input,
+			map[string]any{"type": "function_call", "call_id": call, "name": "shell", "arguments": `{"command":"cat big"}`},
+			map[string]any{"type": "function_call_output", "call_id": call, "output": strings.Repeat("x", 150_000)},
+		)
+	}
+	tools := []any{map[string]any{"type": "function", "name": "sample", "parameters": map[string]any{"type": "object"}}}
+	reduced, err := b.prepareContext("build", defaultRole(), "policy text", input, tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range reduced {
+		m, _ := it.(map[string]any)
+		s, _ := m["content"].(string)
+		if m["role"] == "user" && strings.HasPrefix(s, "Local working-window reset\n") {
+			var msg map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(s, "Local working-window reset\n")), &msg); err != nil {
+				t.Fatal(err)
+			}
+			return msg, s, b, history
+		}
+	}
+	t.Fatal("no reset message in the reduced input")
+	return nil, "", nil, nil
+}
+
+func rhxPaths(t *testing.T, msg map[string]any) []string {
+	t.Helper()
+	list, _ := msg["history"].([]any)
+	var paths []string
+	for _, r := range list {
+		paths = append(paths, r.(map[string]any)["path"].(string))
+	}
+	return paths
+}
+
+func rhxNumbers(paths []string) []string {
+	var n []string
+	for _, p := range paths {
+		n = append(n, strings.TrimSuffix(filepath.Base(p), ".json"))
+	}
+	return n
+}
+
+func TestResetHistoryAcceptance(t *testing.T) {
+	_ = project.Role{}
+	t.Run("s1", func(t *testing.T) {
+		msg, _, _, _ := rhxReset(t, 200)
+		got := strings.Join(rhxNumbers(rhxPaths(t, msg)), ",")
+		eq(t, "listed archive numbers", got, "194,195,196,197,198,199,200,201")
+	})
+	t.Run("s2", func(t *testing.T) {
+		msg, _, _, _ := rhxReset(t, 200)
+		om, ok := msg["history_omitted"].(map[string]any)
+		if !ok {
+			t.Fatalf("no history_omitted object: %v", msg["history_omitted"])
+		}
+		eq(t, "count", om["count"], any(float64(193)))
+		first, _ := om["first"].(string)
+		last, _ := om["last"].(string)
+		if !strings.HasSuffix(first, "/1.json") || !strings.HasSuffix(last, "/193.json") {
+			t.Fatalf("first %q last %q", first, last)
+		}
+		if s, _ := om["note"].(string); s == "" {
+			t.Fatal("history_omitted has no note")
+		}
+	})
+	t.Run("s3", func(t *testing.T) {
+		_, _, b, prior := rhxReset(t, 200)
+		saved := b.WorkingContext["build"].History
+		eq(t, "saved history length", len(saved), 201)
+		for i, h := range prior {
+			if saved[i] != h {
+				t.Fatalf("saved reference %d changed: %v want %v", i+1, saved[i], h)
+			}
+		}
+		if got := filepath.Base(saved[200].Path); got != "201.json" {
+			t.Fatalf("the new archive is %s", got)
+		}
+	})
+	t.Run("s4", func(t *testing.T) {
+		_, short, _, _ := rhxReset(t, 100)
+		_, long, _, _ := rhxReset(t, 400)
+		d := len(long) - len(short)
+		if d < 0 {
+			d = -d
+		}
+		if d > 64 {
+			t.Fatalf("reset messages of %d and %d bytes differ by %d (limit 64)", len(short), len(long), d)
+		}
+	})
+	t.Run("s5a", func(t *testing.T) {
+		msg, _, _, _ := rhxReset(t, 7)
+		eq(t, "7 prior: listed", len(rhxPaths(t, msg)), 8)
+		if _, ok := msg["history_omitted"]; ok {
+			t.Fatal("7 prior references: history_omitted present")
+		}
+	})
+	t.Run("s5b", func(t *testing.T) {
+		msg, _, _, _ := rhxReset(t, 8)
+		eq(t, "8 prior: listed", len(rhxPaths(t, msg)), 8)
+		om, ok := msg["history_omitted"].(map[string]any)
+		if !ok {
+			t.Fatal("8 prior references: no history_omitted")
+		}
+		eq(t, "8 prior: count", om["count"], any(float64(1)))
+	})
+}

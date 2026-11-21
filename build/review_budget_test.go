@@ -209,7 +209,13 @@ func TestReviewBudgetResetDoesNotRepeatCatalogPartsYetKeepsCustodyAndDelivery(t 
 	history := reset["history"].([]any)
 	eq(t, "reset history", history, []any{map[string]any{"path": archive.Path, "sha256": archive.SHA256}})
 	note := reset["history_in_catalog"].(map[string]any)
-	eq(t, "omitted count", note["count"], any(float64(n)))
+	// The catalog filter applies inside the window of 8 references (the new archive and the 7 before
+	// it); the older references are counted in history_omitted.
+	eq(t, "omitted count", note["count"], any(float64(resetHistoryWindow-1)))
+	older := reset["history_omitted"].(map[string]any)
+	eq(t, "history_omitted count", older["count"], any(float64(n+1-resetHistoryWindow)))
+	eq(t, "history_omitted first", older["first"], any(s.parts[0].Path))
+	eq(t, "history_omitted last", older["last"], any(s.parts[n-resetHistoryWindow].Path))
 	contains(t, "note", note["note"].(string), "listed in full in the pinned candidate source catalog of the mandatory opening message")
 	// Every omitted reference really is listed verbatim in the mandatory opening.
 	catalog := strings.Join(mandatoryTexts(got[:len(s.opening)]), "\n")
@@ -257,7 +263,8 @@ func TestReviewBudgetResetDoesNotRepeatCatalogPartsYetKeepsCustodyAndDelivery(t 
 		map[string]any{"path": archive.Path, "sha256": archive.SHA256},
 		map[string]any{"path": state.History[n+1].Path, "sha256": state.History[n+1].SHA256},
 	})
-	eq(t, "second omitted count", reset2["history_in_catalog"].(map[string]any)["count"], any(float64(n)))
+	// Two archives now sit in the window of 8, so six pinned parts stay inside it.
+	eq(t, "second omitted count", reset2["history_in_catalog"].(map[string]any)["count"], any(float64(resetHistoryWindow-2)))
 	unread, err = b.materialUnread(got2)
 	if err != nil {
 		t.Fatal(err)

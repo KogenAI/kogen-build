@@ -199,7 +199,10 @@ func batchExpect(t *testing.T, s *budgetScenario, got []any, full []string, unre
 			t.Fatalf("deferred part %v is not listed unread", part)
 		}
 	}
-	eq(t, "history in catalog", reset["history_in_catalog"].(map[string]any)["count"], any(float64(n)))
+	// The catalog filter applies inside the window of resetHistoryWindow references: the window
+	// holds the archives after the pinned parts and, before them, the newest pinned parts.
+	archives := len(b.WorkingContext["review"].History) - n
+	eq(t, "history in catalog", reset["history_in_catalog"].(map[string]any)["count"], any(float64(resetHistoryWindow-archives)))
 	if err := b.validateWorkingContext(); err != nil {
 		t.Fatal(err)
 	}

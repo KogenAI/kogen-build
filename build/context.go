@@ -274,9 +274,13 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		}
 		w.archive = append(archive, '\n')
 		w.history = append(slices.Clone(state.History), HistoryRef{Path: path, SHA256: core.HashHex(w.archive)})
-		refs := make([]any, 0, len(w.history))
+		// Only the new archive and the resetHistoryWindow-1 before it are listed; the saved
+		// history and the checkpoint keep every reference.
+		listFrom := max(0, len(w.history)-resetHistoryWindow)
+		refs := make([]any, 0, len(w.history)-listFrom)
 		inCatalog := 0
-		for i, h := range w.history {
+		for i := listFrom; i < len(w.history); i++ {
+			h := w.history[i]
 			ref := map[string]any{"path": h.Path, "sha256": h.SHA256}
 			// The new archive is always carried.
 			if encoded, err := core.EncodeJSON(ref); i < len(state.History) && err == nil && listedIn(mandatoryText, string(encoded)) {
@@ -312,6 +316,14 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		if delivery != nil {
 			// A reviewer that cannot tell what it already received rebuilds it in every window.
 			reset["review_delivery"] = delivery
+		}
+		if listFrom > 0 {
+			reset["history_omitted"] = map[string]any{
+				"count": listFrom,
+				"first": w.history[0].Path,
+				"last":  w.history[listFrom-1].Path,
+				"note":  "These older archived windows are not listed; they stay in native custody and are read by path.",
+			}
 		}
 		if inCatalog > 0 {
 			reset["history_in_catalog"] = map[string]any{
@@ -441,6 +453,9 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		owner, measured.RenderedBytes, next.RenderedBytes, agent.InputBudgetBytes, reservedOutputTokens, path, suffix))
 	return window.reduced, nil
 }
+
+// resetHistoryWindow is the number of archive references (the new one included) a reset message lists.
+const resetHistoryWindow = 8
 
 // resetWindow is what one working-window reset keeps: the archive of the input it replaces,
 // the history and observations with it, the mandatory messages (the opening and the reset) and

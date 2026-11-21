@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -408,4 +409,138 @@ func TestIrreducibleAuthorityRefusesWithoutArchiveOrCheckoutChanges(t *testing.T
 		t.Fatal("an archive was written")
 	}
 	eq(t, "index", e.state()["index"], index)
+}
+
+// recentHistoryReset runs one reset of a build window that already holds `prior` synthetic
+// archive references and returns the decoded reset message, its raw length and the Attempt.
+func recentHistoryReset(t *testing.T, prior int) (map[string]any, int, *Attempt) {
+	t.Helper()
+	e := newEnv(t)
+	run, err := StartRun(e.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opening := map[string]any{"role": "user", "content": "opening message of the build"}
+	history := []HistoryRef{}
+	for i := 1; i <= prior; i++ {
+		history = append(history, HistoryRef{
+			Path:   filepath.Join(run.Dir, "working-context", "build", strings.Repeat("d", 40), itoa(i)+".json"),
+			SHA256: core.HashHex([]byte("archive " + itoa(i))),
+		})
+	}
+	b := &Attempt{
+		State: State{
+			Root: e.root, Start: e.head(), Excluded: []string{}, Repairs: 1, Run: run,
+			ApprovalBytes: encodeBase64([]byte(`{"sha256":"` + strings.Repeat("a", 64) + `"}`)),
+			Continuation:  Continuation{Stage: StageBuilder},
+			WorkingContext: map[string]*OwnerContext{
+				"build": {Mandatory: []any{opening}, Observations: []any{}, History: slices.Clone(history)},
+			},
+		},
+		deps: e.deps(), repo: e.gitRepo(), s: sessionOf(e),
+	}
+	input := []any{opening}
+	for i := 1; i <= 4; i++ {
+		call := "call" + itoa(i)
+		input = append(input,
+			map[string]any{"type": "function_call", "call_id": call, "name": "shell", "arguments": `{"command":"cat big"}`},
+			map[string]any{"type": "function_call_output", "call_id": call, "output": strings.Repeat("x", 150_000)},
+		)
+	}
+	tools := []any{map[string]any{"type": "function", "name": "sample", "parameters": map[string]any{"type": "object"}}}
+	reduced, err := b.prepareContext("build", defaultRole(), "policy text", input, tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range reduced {
+		m, _ := it.(map[string]any)
+		s, _ := m["content"].(string)
+		if m["role"] == "user" && strings.HasPrefix(s, "Local working-window reset\n") {
+			var msg map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(s, "Local working-window reset\n")), &msg); err != nil {
+				t.Fatal(err)
+			}
+			return msg, len(s), b
+		}
+	}
+	t.Fatal("no reset message in the reduced input")
+	return nil, 0, nil
+}
+
+func listedArchiveNumbers(t *testing.T, msg map[string]any) []string {
+	t.Helper()
+	list, _ := msg["history"].([]any)
+	var n []string
+	for _, r := range list {
+		p := r.(map[string]any)["path"].(string)
+		n = append(n, strings.TrimSuffix(filepath.Base(p), ".json"))
+	}
+	return n
+}
+
+func TestTheResetMessageListsTheNewArchiveAndTheSevenBeforeIt(t *testing.T) {
+	t.Parallel()
+	msg, _, b := recentHistoryReset(t, 200)
+	eq(t, "listed", strings.Join(listedArchiveNumbers(t, msg), ","), "194,195,196,197,198,199,200,201")
+	om, ok := msg["history_omitted"].(map[string]any)
+	if !ok {
+		t.Fatalf("no history_omitted: %v", msg["history_omitted"])
+	}
+	eq(t, "count", om["count"], any(float64(193)))
+	if first, _ := om["first"].(string); !strings.HasSuffix(first, "/1.json") {
+		t.Fatalf("first %q", om["first"])
+	}
+	if last, _ := om["last"].(string); !strings.HasSuffix(last, "/193.json") {
+		t.Fatalf("last %q", om["last"])
+	}
+	if s, _ := om["note"].(string); s == "" {
+		t.Fatal("no note")
+	}
+	// The saved working context keeps every reference, in order.
+	saved := b.WorkingContext["build"].History
+	eq(t, "saved length", len(saved), 201)
+	for i, h := range saved {
+		eq(t, "saved reference", filepath.Base(h.Path), itoa(i+1)+".json")
+	}
+}
+
+func TestTheResetMessageDoesNotGrowWithTheNumberOfResets(t *testing.T) {
+	t.Parallel()
+	_, short, _ := recentHistoryReset(t, 100)
+	_, long, _ := recentHistoryReset(t, 400)
+	d := max(long-short, short-long)
+	if d > 64 {
+		t.Fatalf("reset messages of %d and %d bytes differ by %d (limit 64)", short, long, d)
+	}
+}
+
+func TestAWindowOfEightReferencesHasNoOmittedObject(t *testing.T) {
+	t.Parallel()
+	msg, _, _ := recentHistoryReset(t, 7)
+	eq(t, "listed", len(listedArchiveNumbers(t, msg)), 8)
+	if _, ok := msg["history_omitted"]; ok {
+		t.Fatal("history_omitted present for 8 references")
+	}
+	msg, _, _ = recentHistoryReset(t, 0)
+	eq(t, "listed with no prior", strings.Join(listedArchiveNumbers(t, msg), ","), "1")
+	if _, ok := msg["history_omitted"]; ok {
+		t.Fatal("history_omitted present for 1 reference")
+	}
+}
+
+func TestNineReferencesListEightAndOmitOne(t *testing.T) {
+	t.Parallel()
+	msg, _, _ := recentHistoryReset(t, 8)
+	eq(t, "listed", strings.Join(listedArchiveNumbers(t, msg), ","), "2,3,4,5,6,7,8,9")
+	om, ok := msg["history_omitted"].(map[string]any)
+	if !ok {
+		t.Fatal("no history_omitted")
+	}
+	eq(t, "count", om["count"], any(float64(1)))
+	first, _ := om["first"].(string)
+	last, _ := om["last"].(string)
+	eq(t, "first is last", first, last)
+	if !strings.HasSuffix(first, "/1.json") {
+		t.Fatalf("first %q", first)
+	}
 }
