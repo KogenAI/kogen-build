@@ -1,0 +1,122 @@
+package build
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/core"
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+func TestStalledExternalAcceptance(t *testing.T) {
+	var want struct {
+		Staged       bool
+		Same         bool
+		Sequence     []int
+		Rounds       int
+		Passes       int
+		Outcome      string
+		Exit         int
+		Message      []string
+		Lacks        []string
+		Stage        string
+		Failing      string
+		StallEvents  int
+		RepeatEvents int
+	}
+	if err := json.Unmarshal([]byte(os.Getenv("STALLED_WANT")), &want); err != nil {
+		t.Fatal(err)
+	}
+	var e *env
+	if want.Staged {
+		e, _ = stagedEnv(t, []string{"echo scoped-red; exit 23"})
+	} else {
+		e = newEnv(t)
+		feature := "Feature: Stalled\n"
+		for i := 1; i <= 7; i++ {
+			feature += fmt.Sprintf("  Scenario: Failure %d\n    Then requirement %d holds\n", i, i)
+		}
+		e.write(project.FeaturePath(testSlug), feature)
+		scenarios, err := project.ParseGherkin(feature)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for count := 0; count <= 7; count++ {
+			events := []obj{documentMessage(project.FeaturePath(testSlug), scenarios)}
+			for i, s := range scenarios {
+				status := "PASSED"
+				if i < count {
+					status = "FAILED"
+				}
+				events = append(events, caseMessages(s, i+1, project.FeaturePath(testSlug), statuses(repeat(status, len(s.Steps))...))...)
+			}
+			var lines []string
+			for _, event := range events {
+				b, err := core.EncodeJSON(event)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lines = append(lines, string(b))
+			}
+			writeFile(t, filepath.Join(e.aux, fmt.Sprintf("report-%d", count)), strings.Join(lines, "\n")+"\n", 0644)
+		}
+		script := filepath.Join(e.aux, "stalled.sh")
+		writeFile(t, script, "#!/bin/sh\nn=$(sed -n '1p' app.txt)\ncp '"+e.aux+"/report-'\"$n\" \"$KOGEN_ACCEPTANCE_REPORT\"\nif test \"$n\" != 0; then echo fixed-failure-message; exit 1; fi\n", 0755)
+		cfg, err := project.LoadConfig(e.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Acceptance.Run = script
+		e.writeConfig(cfg)
+		e.run("git", "add", ".kogen/project.yaml")
+		e.run("git", "commit", "-qm", "acceptance configuration")
+		e.approve()
+	}
+	content := func(n int) string {
+		count := want.Sequence[len(want.Sequence)-1]
+		if n <= len(want.Sequence) {
+			count = want.Sequence[n-1]
+		}
+		if want.Same {
+			return fmt.Sprintf("%d\nsame\n", count)
+		}
+		return fmt.Sprintf("%d\nround-%d\n", count, n)
+	}
+	e.useExecutor("")
+	reviews := 0
+	f := newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {
+		return externalWritesApp(content(n), executor.Usage{})(n, ctx, root, in)
+	})
+	f.reportsWrites = true
+	a := e.build(withExecutor(f, &reviews))
+	if a.exit != want.Exit {
+		t.Fatalf("exit %d want %d\n%s", a.exit, want.Exit, a.shown())
+	}
+	id := e.onlyRun()
+	eq(t, "outcome", e.result(id)["outcome"], any(want.Outcome))
+	eq(t, "rounds", len(f.seen()), want.Rounds)
+	if want.Passes >= 0 {
+		eq(t, "pass events", passEvents(t, e, id), want.Passes)
+	}
+	out := a.out.String()
+	for _, text := range want.Message {
+		contains(t, "stop message", out, text)
+	}
+	for _, text := range want.Lacks {
+		if strings.Contains(out, text) {
+			t.Fatalf("stop output must not contain %q:\n%s", text, out)
+		}
+	}
+	if want.Stage != "" {
+		// the stage is named apart from the failing check's own name
+		contains(t, "stage named beside the failing check", strings.ReplaceAll(out, want.Failing, ""), want.Stage)
+	}
+	eq(t, "executor_no_progress events", len(eventsNamed(e.events(id), "executor_no_progress")), want.StallEvents)
+	eq(t, "no_progress events", len(eventsNamed(e.events(id), "no_progress")), want.RepeatEvents)
+}

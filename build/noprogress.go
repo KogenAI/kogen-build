@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/KogenAI/kogen-executor/core"
-	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
 )
@@ -54,7 +53,8 @@ const externalNoProgressPasses = 3
 
 // externalStalled is the external executor's no-progress rule: the third consecutive clean red
 // pass with the same failing-set fingerprint over the same candidate tree records
-// executor_no_progress and stops like the round cap.
+// executor_no_progress and stops as candidate/no_progress, naming the stage when a stage gate
+// failed, the failing checks and the acceptance scenarios that did not pass.
 func (b *Attempt) externalStalled(stage string, pass verify.Pass) error {
 	w := &b.noEdit
 	if pass.Green || !pass.Clean || len(pass.Moved) != 0 || len(pass.Failing) == 0 {
@@ -75,7 +75,16 @@ func (b *Attempt) externalStalled(stage string, pass verify.Pass) error {
 		"event": "executor_no_progress", "rounds": b.Executor.Rounds,
 		"fingerprint": fingerprint, "failing": core.NonNil(pass.Failing),
 	})
-	return executor.RoundLimit(b.Executor.Rounds)
+	e := sys.Fail("candidate", "no_progress", "the external executor stalled: "+itoa(externalNoProgressPasses)+
+		" consecutive verification passes over the same candidate tree have identical failures; edits are left in place", 1)
+	if stage != "" {
+		e.Lines = append(e.Lines, "stage: "+stage)
+	}
+	e.Lines = append(e.Lines, "failing: "+strings.Join(pass.Failing, ", "))
+	if items := missingAcceptanceItems(pass); len(items) > 0 {
+		e.Lines = append(e.Lines, "scenarios: "+strings.Join(items, ", "))
+	}
+	return e
 }
 
 // failureFingerprint identifies the failing evidence independently of the candidate tree.

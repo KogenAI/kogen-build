@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/executor"
@@ -32,14 +33,41 @@ func TestExternalNoProgressStopsOnThirdIdenticalRed(t *testing.T) {
 	if a.exit != 1 {
 		t.Fatalf("exit %d\n%s", a.exit, a.shown())
 	}
-	contains(t, "stdout", a.out.String(), "candidate/executor_round_limit: the executor used its 3 rounds without a verified, reviewed candidate; the candidate is left in place\n")
+	contains(t, "stdout", a.out.String(), "candidate/no_progress: the external executor stalled: 3 consecutive verification passes over the same candidate tree have identical failures; edits are left in place\n")
+	contains(t, "stdout", a.out.String(), "  failing: ")
 	contains(t, "stdout", a.out.String(), "  edited: app.txt\n")
 	eq(t, "rounds", len(f.seen()), 3)
 	eq(t, "reviews", reviews, 0)
 	id := e.onlyRun()
 	eq(t, "events", countEvents(e.events(id), "executor_no_progress"), 1)
 	eq(t, "pass events", passEvents(t, e, id), 3)
-	eq(t, "outcome", e.result(id)["outcome"], any("executor_round_limit"))
+	eq(t, "outcome", e.result(id)["outcome"], any("no_progress"))
+}
+
+// The same streak on the staged path stops as no_progress naming the stage and its failing check.
+func TestExternalNoProgressOnTheStagedPathNamesTheStage(t *testing.T) {
+	t.Parallel()
+	e, _ := stagedEnv(t, []string{"echo scoped-red; exit 23"})
+	e.useExecutor("")
+	reviews := 0
+	f := newFakeExecutor(t, externalWritesApp("red\n", harnessUsage(1, 0, 1, 0)))
+	f.reportsWrites = true
+	a := e.build(withExecutor(f, &reviews))
+	if a.exit != 1 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	out := a.out.String()
+	contains(t, "stdout", out, "candidate/no_progress: the external executor stalled")
+	contains(t, "stage line", out, "  stage: foundation\n")
+	contains(t, "failing line", out, "  failing: stage-foundation-1\n")
+	if strings.Contains(out, "executor_round_limit") {
+		t.Fatalf("stop output must not name the round limit:\n%s", out)
+	}
+	eq(t, "rounds", len(f.seen()), 3)
+	eq(t, "reviews", reviews, 0)
+	id := e.onlyRun()
+	eq(t, "events", countEvents(e.events(id), "executor_no_progress"), 1)
+	eq(t, "outcome", e.result(id)["outcome"], any("no_progress"))
 }
 
 func TestExternalRoundsWithoutEditsGetANoticeThenStopAsNoProgress(t *testing.T) {
