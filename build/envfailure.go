@@ -1,22 +1,49 @@
 package build
 
 import (
+	"strings"
+
 	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
 )
 
-// envMemory is the environment failures (check name to failure text) of the previous builder
-// pass of this Build attempt, and that pass's number. Like noEditWatch it is not part of the
-// State: a resumed Build starts without it.
+// envFailure is one check's environment failure: its kind and the first line verify.EnvFailure returned.
+type envFailure struct {
+	kind string
+	line string
+}
+
+// envMemory is the environment failures (check name to kind and first line) of the previous
+// builder pass of this Build attempt, and that pass's number. Like noEditWatch it is not part of
+// the State: a resumed Build starts without it.
 type envMemory struct {
 	pass     int
-	failures map[string]string
+	failures map[string]envFailure
+}
+
+// envFailureKind classifies a line verify.EnvFailure returned by the phrases that function
+// recognises: timeout, disk, memory or the file limit.
+func envFailureKind(line string) string {
+	switch {
+	case strings.HasPrefix(line, "panic: test timed out after "):
+		return "timeout"
+	case strings.Contains(line, "no space left on device"):
+		return "disk"
+	case strings.Contains(line, "cannot allocate memory"),
+		strings.Contains(line, "out of memory"),
+		strings.Contains(line, "Out of memory: Killed process"):
+		return "memory"
+	case strings.Contains(line, "too many open files"):
+		return "files"
+	}
+	return "other"
 }
 
 // hostOrBaseStop is the host-or-base rule (LOOP-7) for a builder pass: the whole-Intent pass
 // after a builder round and a stage gate. A check of the pass that fails with an environment
-// failure (verify.EnvFailure) the previous builder pass's same check already failed with stops
-// the Build before any other decision about the pass. Every builder pass replaces the memory.
+// failure (verify.EnvFailure) of the same kind as the previous builder pass's same check
+// stops the Build, whether or not the first lines match exactly, before any other decision about
+// the pass. Every builder pass replaces the memory.
 func (b *Attempt) hostOrBaseStop(pass verify.Pass) error {
 	previous := b.env
 	b.env = envMemory{pass: pass.N}
@@ -28,10 +55,11 @@ func (b *Attempt) hostOrBaseStop(pass verify.Pass) error {
 			continue
 		}
 		if b.env.failures == nil {
-			b.env.failures = map[string]string{}
+			b.env.failures = map[string]envFailure{}
 		}
-		b.env.failures[r.Name] = text
-		if stop == nil && previous.failures[r.Name] == text {
+		kind := envFailureKind(text)
+		b.env.failures[r.Name] = envFailure{kind: kind, line: text}
+		if prev, seen := previous.failures[r.Name]; stop == nil && seen && prev.kind == kind {
 			stop, failure = &pass.Checks[i], text
 		}
 	}

@@ -79,3 +79,78 @@ func TestRepeatedHostTimeoutInTwoGatesOfAStageStopsTheBuild(t *testing.T) {
 		t.Fatal("a builder round ran after the stop")
 	}
 }
+
+// kindStopEnv runs a Build whose single check "lint" prints the given line while app.txt starts
+// with the marker of the pass (a, b), and whose builder writes a-1, b-2 and then ready.
+func kindStopEnv(t *testing.T, checks ...project.Check) *env {
+	t.Helper()
+	e := newEnv(t, func(c *project.Config) { c.Checks = checks })
+	f := e.prov
+	for _, w := range []string{"a-1", "b-2", "ready"} {
+		f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": w + "\n"}, "finish", map[string]any{"summary": "round"}))
+	}
+	return e
+}
+
+func kindStopScript(first, second string) string {
+	return "if grep -q '^a' app.txt; then echo '" + first + "'; exit 1; fi; if grep -q '^b' app.txt; then echo '" + second + "'; exit 1; fi"
+}
+
+func kindStopNone(t *testing.T, e *env) {
+	t.Helper()
+	a := e.build()
+	if a.exit != 0 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	eq(t, "events", len(eventsNamed(e.events(e.onlyRun()), "host_or_base_failure")), 0)
+}
+
+func TestHostStopSameKindDifferentLinesStopsQuotingTheSecond(t *testing.T) {
+	t.Parallel()
+	e := kindStopEnv(t, project.Check{Name: "lint", Run: kindStopScript("write /tmp/a: no space left on device", "write /tmp/b: no space left on device")})
+	a := e.build()
+	if a.exit != 3 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	out := a.out.String()
+	contains(t, "stop", out, "environment/host_or_base_failure: check lint failed the same way in verification passes 1 and 2: write /tmp/b: no space left on device; this failure is in the host or the base")
+	contains(t, "failure line", out, "  failure: write /tmp/b: no space left on device\n")
+	eq(t, "requests", len(e.prov.requests()), 2)
+	id := e.onlyRun()
+	eq(t, "outcome", e.result(id)["outcome"], any("host_or_base_failure"))
+	evs := eventsNamed(e.events(id), "host_or_base_failure")
+	eq(t, "events", len(evs), 1)
+	eq(t, "event failure", evs[0]["failure"], any("write /tmp/b: no space left on device"))
+}
+
+func TestHostStopDifferentKindInThePreviousPassDoesNotStop(t *testing.T) {
+	t.Parallel()
+	kindStopNone(t, kindStopEnv(t, project.Check{Name: "lint", Run: kindStopScript("no space left on device", "cannot allocate memory")}))
+}
+
+func TestHostStopOrdinaryFailureInThePreviousPassDoesNotStop(t *testing.T) {
+	t.Parallel()
+	kindStopNone(t, kindStopEnv(t, project.Check{Name: "lint", Run: kindStopScript("--- FAIL: TestX", "no space left on device")}))
+}
+
+func TestHostStopMemoryIsPerCheckName(t *testing.T) {
+	t.Parallel()
+	kindStopNone(t, kindStopEnv(t,
+		project.Check{Name: "lint", Run: "if grep -q '^a' app.txt; then echo 'no space left on device'; exit 1; fi"},
+		project.Check{Name: "test", Run: "if grep -q '^b' app.txt; then echo 'no space left on device'; exit 1; fi"},
+	))
+}
+
+func TestHostStopIdenticalLinesStillStop(t *testing.T) {
+	t.Parallel()
+	e := kindStopEnv(t, project.Check{Name: "lint", Run: kindStopScript("too many open files", "too many open files")})
+	a := e.build()
+	if a.exit != 3 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	contains(t, "stop", a.out.String(), "environment/host_or_base_failure: check lint failed the same way in verification passes 1 and 2: too many open files; this failure is in the host or the base")
+	evs := eventsNamed(e.events(e.onlyRun()), "host_or_base_failure")
+	eq(t, "events", len(evs), 1)
+	eq(t, "event failure", evs[0]["failure"], any("too many open files"))
+	eq(t, "event passes", evs[0]["passes"], any([]any{float64(1), float64(2)}))
+}

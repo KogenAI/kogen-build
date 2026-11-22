@@ -1,0 +1,91 @@
+package build
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+)
+
+func hostStopScript(marker, body string) string {
+	return "if grep -q '^" + marker + "' app.txt; then " + body + "; exit 1; fi"
+}
+
+func hostStopEnv(t *testing.T, checks []project.Check, writes []string) *env {
+	t.Helper()
+	e := newEnv(t, func(c *project.Config) { c.Checks = checks })
+	f := e.prov
+	for _, w := range writes {
+		f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": w + "\n"}, "finish", map[string]any{"summary": "round"}))
+	}
+	return e
+}
+
+func hostStopExpectStop(t *testing.T, e *env, check, failure string) {
+	t.Helper()
+	a := e.build()
+	if a.exit != 3 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	out := a.out.String()
+	contains(t, "stop", out, "environment/host_or_base_failure: check "+check+" failed the same way in verification passes 1 and 2: "+failure+"; this failure is in the host or the base")
+	contains(t, "failure line", out, "  failure: "+failure+"\n")
+	contains(t, "check line", out, "  check: "+check+" (")
+	eq(t, "requests", len(e.prov.requests()), 2)
+	id := e.onlyRun()
+	eq(t, "outcome", e.result(id)["outcome"], any("host_or_base_failure"))
+	evs := eventsNamed(e.events(id), "host_or_base_failure")
+	eq(t, "events", len(evs), 1)
+	eq(t, "event check", evs[0]["check"], any(check))
+	eq(t, "event failure", evs[0]["failure"], any(failure))
+	eq(t, "event passes", evs[0]["passes"], any([]any{float64(1), float64(2)}))
+}
+
+func hostStopExpectNoStop(t *testing.T, e *env) {
+	t.Helper()
+	a := e.build()
+	if a.exit != 0 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	eq(t, "events", len(eventsNamed(e.events(e.onlyRun()), "host_or_base_failure")), 0)
+	if strings.Contains(a.out.String(), "host_or_base_failure") {
+		t.Fatalf("output names a host or base stop\n%s", a.shown())
+	}
+}
+
+func TestHostStopAcc1DiskLinesNamingDifferentFiles(t *testing.T) {
+	t.Parallel()
+	lint := hostStopScript("a", "echo 'write /tmp/a: no space left on device'") + "; " + hostStopScript("b", "echo 'write /tmp/b: no space left on device'")
+	e := hostStopEnv(t, []project.Check{{Name: "lint", Run: lint}}, []string{"a-1", "b-2", "ready"})
+	hostStopExpectStop(t, e, "lint", "write /tmp/b: no space left on device")
+}
+
+func TestHostStopAcc2DifferentKinds(t *testing.T) {
+	t.Parallel()
+	lint := hostStopScript("a", "echo 'no space left on device'") + "; " + hostStopScript("b", "echo 'cannot allocate memory'")
+	e := hostStopEnv(t, []project.Check{{Name: "lint", Run: lint}}, []string{"a-1", "b-2", "ready"})
+	hostStopExpectNoStop(t, e)
+}
+
+func TestHostStopAcc3OrdinaryFailureThenDisk(t *testing.T) {
+	t.Parallel()
+	lint := hostStopScript("a", "echo '--- FAIL: TestX'") + "; " + hostStopScript("b", "echo 'no space left on device'")
+	e := hostStopEnv(t, []project.Check{{Name: "lint", Run: lint}}, []string{"a-1", "b-2", "ready"})
+	hostStopExpectNoStop(t, e)
+}
+
+func TestHostStopAcc4DifferentChecks(t *testing.T) {
+	t.Parallel()
+	e := hostStopEnv(t, []project.Check{
+		{Name: "lint", Run: hostStopScript("a", "echo 'no space left on device'")},
+		{Name: "test", Run: hostStopScript("b", "echo 'no space left on device'")},
+	}, []string{"a-1", "b-2", "ready"})
+	hostStopExpectNoStop(t, e)
+}
+
+func TestHostStopAcc5IdenticalLines(t *testing.T) {
+	t.Parallel()
+	lint := hostStopScript("a", "echo 'write /tmp/a: no space left on device'") + "; " + hostStopScript("b", "echo 'write /tmp/a: no space left on device'")
+	e := hostStopEnv(t, []project.Check{{Name: "lint", Run: lint}}, []string{"a-1", "b-2", "ready"})
+	hostStopExpectStop(t, e, "lint", "write /tmp/a: no space left on device")
+}
