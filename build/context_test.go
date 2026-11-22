@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/core"
@@ -542,5 +543,72 @@ func TestNineReferencesListEightAndOmitOne(t *testing.T) {
 	eq(t, "first is last", first, last)
 	if !strings.HasSuffix(first, "/1.json") {
 		t.Fatalf("first %q", first)
+	}
+}
+
+func TestShortenOutputCutsAtCharacterBoundaries(t *testing.T) {
+	text := strings.Repeat("é", 5000) // two bytes per character; 10000 bytes
+	got := shortenOutput(text)
+	if !utf8.ValidString(got) {
+		t.Fatal("the shortened output is not valid UTF-8")
+	}
+	if !strings.HasPrefix(got, strings.Repeat("é", 1024)+"\n") || !strings.HasSuffix(got, "\n"+strings.Repeat("é", 1024)) {
+		t.Fatalf("the first and last 2048 bytes are not kept: %.60q", got)
+	}
+	if !strings.Contains(got, "\n[5904 bytes omitted from this output]\n") {
+		t.Fatalf("the omitted count is not stated: %.100q", got[2040:2100])
+	}
+	// A cut inside a three-byte character moves back (head) or forward (tail) to a boundary.
+	cut := shortenOutput("a" + strings.Repeat("€", 3000))
+	if !utf8.ValidString(cut) {
+		t.Fatal("a cut inside a character produced invalid UTF-8")
+	}
+}
+
+func TestShortenTieBreakTakesTheLaterOutputOfEqualSizeFirst(t *testing.T) {
+	big := func(tag string) string { return strings.Repeat(tag, 6000)[:6000] }
+	items := func(sizeFirst, sizeSecond int) []any {
+		return []any{
+			map[string]any{"role": "user", "content": "open"},
+			map[string]any{"type": "message", "role": "assistant", "id": "m", "content": "go"},
+			map[string]any{"type": "function_call", "call_id": "c0", "name": "shell", "arguments": "{}"},
+			map[string]any{"type": "function_call", "call_id": "c1", "name": "shell", "arguments": "{}"},
+			map[string]any{"type": "function_call_output", "call_id": "c0", "output": big("x")[:sizeFirst]},
+			map[string]any{"type": "function_call_output", "call_id": "c1", "output": big("y")[:sizeSecond]},
+		}
+	}
+	e := newEnv(t)
+	run, err := StartRun(e.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Attempt{
+		State: State{Root: e.root, Start: e.head(), Excluded: []string{}, Run: run,
+			ApprovalBytes: encodeBase64([]byte(`{"sha256":"` + strings.Repeat("a", 64) + `"}`)),
+			Continuation:  Continuation{Stage: StageBuilder}, WorkingContext: map[string]*OwnerContext{}},
+		deps: e.deps(), repo: e.gitRepo(), s: sessionOf(e),
+	}
+	// An opening that fills the window up to a few thousand bytes below the ceiling: the
+	// reset window with two 6000-byte outputs does not fit, one shortened output does.
+	m, err := tools.Measure(b.bodyOf(defaultRole(), "p", []any{}, nil, "build"), providerRole(defaultRole()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := items(6000, 6000)
+	in[0] = map[string]any{"role": "user", "content": strings.Repeat("a", m.InputBudgetBytes-13000)}
+	// An earlier exchange makes the whole input exceed the ceiling, so that a reset happens.
+	earlier := []any{
+		map[string]any{"type": "function_call", "call_id": "e0", "name": "shell", "arguments": "{}"},
+		map[string]any{"type": "function_call_output", "call_id": "e0", "output": big("z")},
+	}
+	in = append(in[:1], append(earlier, in[1:]...)...)
+	sent, err := b.prepareContext("build", defaultRole(), "p", in, nil)
+	if err != nil {
+		t.Fatalf("prepareContext refused: %v", err)
+	}
+	outs := sent[len(sent)-2:]
+	first, second := outs[0].(map[string]any)["output"].(string), outs[1].(map[string]any)["output"].(string)
+	if len(first) != 6000 || len(second) >= 6000 {
+		t.Fatalf("outputs of %d and %d bytes: equal sizes must shorten the later one first", len(first), len(second))
 	}
 }

@@ -264,8 +264,9 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 	mandatoryText := mandatoryTexts(state.Mandatory)
 	// construct is the reset window of one input: its observations, the archive of exactly
 	// that input, the reset message and the request that keeps the mandatory opening, the
-	// reset and the newest exchange. deferred is nil unless pinned reads were deferred.
-	construct := func(in []any, deferred []int) (resetWindow, agent.Measurement, error) {
+	// reset and the newest exchange of sent (the input, or the input with outputs shortened
+	// or deferred). deferred is nil unless pinned reads were deferred.
+	construct := func(in, sent []any, deferred []int) (resetWindow, agent.Measurement, error) {
 		var w resetWindow
 		w.observations = uniqueItems(append(slices.Clone(state.Observations), observationsOf(in)...))
 		archive, err := core.EncodeJSON(map[string]any{"input": in})
@@ -344,13 +345,13 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		}
 		message := map[string]any{"role": "user", "content": resetMarker + string(encoded)}
 		w.mandatory = append(slices.Clone(state.Mandatory), message)
-		w.reduced = append(slices.Clone(w.mandatory), thinking.Strip(newestExchange(in))...)
+		w.reduced = append(slices.Clone(w.mandatory), thinking.Strip(newestExchange(sent))...)
 		next, err := agent.Measure(b.bodyOf(role, instructions, w.reduced, tools, owner), providerRole(role))
 		return w, next, err
 	}
 	var window resetWindow
 	var next agent.Measurement
-	if window, next, err = construct(input, nil); err != nil {
+	if window, next, err = construct(input, input, nil); err != nil {
 		return nil, err
 	}
 	mand, err := agent.Measure(b.bodyOf(role, instructions, window.mandatory, tools, owner), providerRole(role))
@@ -371,10 +372,48 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		for k := len(deferrals) - 1; k >= 0 && refused(); k-- {
 			substituted[deferrals[k].index] = deferrals[k].item
 			parts := custody.deferredParts(b.Root, substituted, deferrals[k:])
-			if window, next, err = construct(substituted, parts); err != nil {
+			if window, next, err = construct(substituted, substituted, parts); err != nil {
 				return nil, err
 			}
 			suffix = fmt.Sprintf("; deferred %d pinned part reads", len(deferrals)-k)
+		}
+	}
+	if refused() && owner == "build" && mand.Fits {
+		// The newest exchange is an unsplittable call batch. Its oversized outputs are
+		// shortened one at a time, largest first, until the window fits; the archive keeps
+		// the full original input.
+		kept := newestExchange(input)
+		start := len(input) - len(kept)
+		type candidate struct{ index, size int }
+		var candidates []candidate
+		for j, item := range kept {
+			m, _ := item.(map[string]any)
+			if out, ok := m["output"].(string); ok && m["type"] == "function_call_output" && len(out) > shortenAbove {
+				candidates = append(candidates, candidate{start + j, len(out)})
+			}
+		}
+		slices.SortStableFunc(candidates, func(a, c candidate) int {
+			if a.size != c.size {
+				return c.size - a.size
+			}
+			return c.index - a.index
+		})
+		shortened := slices.Clone(input)
+		for n, c := range candidates {
+			if !refused() {
+				break
+			}
+			item := shortened[c.index].(map[string]any)
+			replacement := map[string]any{}
+			for k, v := range item {
+				replacement[k] = v
+			}
+			replacement["output"] = shortenOutput(item["output"].(string))
+			shortened[c.index] = replacement
+			if window, next, err = construct(input, shortened, nil); err != nil {
+				return nil, err
+			}
+			suffix = fmt.Sprintf("; shortened %d outputs", n+1)
 		}
 	}
 	breakdown := func() map[string]any {
@@ -452,6 +491,28 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 	b.s.Progress(fmt.Sprintf("kogen: %s local reset %d -> %d bytes; ceiling %d; reserve %d; history %s%s",
 		owner, measured.RenderedBytes, next.RenderedBytes, agent.InputBudgetBytes, reservedOutputTokens, path, suffix))
 	return window.reduced, nil
+}
+
+// shortenAbove is the size, in bytes, above which an output of the newest exchange may be
+// shortened; shortenKeep is how many bytes of its start and of its end a shortened output keeps.
+const (
+	shortenAbove = 4096
+	shortenKeep  = 2048
+)
+
+// shortenOutput keeps the first and the last shortenKeep bytes of text (each cut at a
+// character boundary) and states between them, on one line, how many bytes are omitted.
+func shortenOutput(text string) string {
+	end := shortenKeep
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	begin := len(text) - shortenKeep
+	for begin < len(text) && !utf8.RuneStart(text[begin]) {
+		begin++
+	}
+	head, tail := text[:end], text[begin:]
+	return fmt.Sprintf("%s\n[%d bytes omitted from this output]\n%s", head, len(text)-len(head)-len(tail), tail)
 }
 
 // resetHistoryWindow is the number of archive references (the new one included) a reset message lists.

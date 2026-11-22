@@ -1,0 +1,233 @@
+package build
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-executor/core"
+	agent "github.com/KogenAI/kogen-loop/tools"
+)
+
+// numbered returns exactly size bytes of numbered lines, so that every byte position of the
+// text is distinct from the others within it and from every other tag.
+func numbered(tag string, size int) string {
+	var sb strings.Builder
+	for n := 0; sb.Len() < size; n++ {
+		fmt.Fprintf(&sb, "%s-%06d abcdefgh\n", tag, n)
+	}
+	return sb.String()[:size]
+}
+
+// exchange is one assistant message, a parallel batch of shell calls and their outputs.
+func exchange(tag string, sizes ...int) []any {
+	items := []any{map[string]any{"type": "message", "role": "assistant", "id": "msg_" + tag, "content": "running " + tag}}
+	for i := range sizes {
+		items = append(items, map[string]any{"type": "function_call", "call_id": fmt.Sprintf("call_%s_%d", tag, i), "name": "shell",
+			"arguments": fmt.Sprintf(`{"command":"echo %s %d"}`, tag, i)})
+	}
+	for i, size := range sizes {
+		items = append(items, map[string]any{"type": "function_call_output", "call_id": fmt.Sprintf("call_%s_%d", tag, i),
+			"output": numbered(fmt.Sprintf("%s%d", tag, i), size)})
+	}
+	return items
+}
+
+type shortenFixture struct {
+	b       *Attempt
+	limit   int
+	opening int // mandatory bytes of an opening of 1000 bytes
+}
+
+func newShortenFixture(t *testing.T) *shortenFixture {
+	t.Helper()
+	e := newEnv(t)
+	run, err := StartRun(e.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Attempt{
+		State: State{
+			Root: e.root, Start: e.head(), Excluded: []string{}, Repairs: 2, Run: run,
+			ApprovalBytes: encodeBase64([]byte(`{"sha256":"` + strings.Repeat("a", 64) + `"}`)),
+			Continuation:  Continuation{Stage: StageBuilder}, WorkingContext: map[string]*OwnerContext{},
+		},
+		deps: e.deps(), repo: e.gitRepo(), s: sessionOf(e),
+	}
+	f := &shortenFixture{b: b}
+	m, err := agent.Measure(b.bodyOf(defaultRole(), "policy text", []any{}, nil, "build"), providerRole(defaultRole()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.limit = m.InputBudgetBytes
+	// A newest exchange that no shortening can fit (every output is at most 4096 bytes) makes
+	// the refusal report the mandatory bytes of the opening and the reset message.
+	sizes := make([]int, 150)
+	for i := range sizes {
+		sizes[i] = 4000
+	}
+	_, err = b.prepareContext("build", defaultRole(), "policy text", append([]any{opening(1000)}, exchange("probe", sizes...)...), nil)
+	if err == nil {
+		t.Fatal("the calibration window was accepted")
+	}
+	found := regexp.MustCompile(`mandatory (\d+) bytes`).FindStringSubmatch(err.Error())
+	if found == nil {
+		t.Fatalf("no mandatory bytes in %q", err)
+	}
+	f.opening, _ = strconv.Atoi(found[1])
+	b.WorkingContext = map[string]*OwnerContext{} // the refusal remembered the calibration opening
+	return f
+}
+
+func opening(n int) map[string]any {
+	return map[string]any{"role": "user", "content": strings.Repeat("a", n)}
+}
+
+// input is an opening message that leaves `room` bytes (negative: lacks them) between the
+// mandatory window and the ceiling, an earlier exchange and the newest exchange.
+func (f *shortenFixture) input(room int, newest ...int) []any {
+	n := 1000 + (f.limit - room - f.opening)
+	in := append([]any{opening(n)}, exchange("earlier", 4000, 4000, 4000, 4000)...)
+	return append(in, exchange("newest", newest...)...)
+}
+
+func (f *shortenFixture) prepare(in []any) ([]any, error) {
+	return f.b.prepareContext("build", defaultRole(), "policy text", in, nil)
+}
+
+func outputsOf(items []any) []string {
+	var out []string
+	for _, it := range items {
+		if m := it.(map[string]any); m["type"] == "function_call_output" {
+			out = append(out, m["output"].(string))
+		}
+	}
+	return out
+}
+
+const shortenRoom = 19000
+
+func TestShortenLaterOutputFirst(t *testing.T) {
+	f := newShortenFixture(t)
+	in := f.input(shortenRoom, 12000, 12000)
+	reduced, err := f.prepare(in)
+	if err != nil {
+		t.Fatalf("prepareContext refused: %v", err)
+	}
+	tail := reduced[len(reduced)-5:]
+	got := outputsOf(tail)
+	want := outputsOf(in[len(in)-5:])
+	if len(got) != 2 {
+		t.Fatalf("%d outputs in the newest exchange", len(got))
+	}
+	if got[0] != want[0] {
+		t.Fatalf("the earlier output was changed (%d bytes, was %d)", len(got[0]), len(want[0]))
+	}
+	later := got[1]
+	if len(later) >= 4400 {
+		t.Fatalf("the later output was not shortened: %d bytes", len(later))
+	}
+	if !strings.HasPrefix(later, want[1][:2048]) || !strings.HasSuffix(later, want[1][len(want[1])-2048:]) {
+		t.Fatalf("the later output does not keep the first and last 2048 bytes")
+	}
+	if len(later) < 4096+1 || !strings.Contains(later[2048:len(later)-2048], "7904") {
+		t.Fatalf("the omitted byte count 7904 is not stated between the kept parts: %q", later[2048:len(later)-2048])
+	}
+}
+
+func TestShortenKeepsCallsAndIdentifiers(t *testing.T) {
+	f := newShortenFixture(t)
+	in := f.input(shortenRoom, 12000, 12000)
+	reduced, err := f.prepare(in)
+	if err != nil {
+		t.Fatalf("prepareContext refused: %v", err)
+	}
+	if len(reduced) < 5 {
+		t.Fatalf("%d items sent", len(reduced))
+	}
+	got, want := reduced[len(reduced)-5:], in[len(in)-5:]
+	for i := range want {
+		g, _ := core.EncodeJSON(got[i])
+		w, _ := core.EncodeJSON(want[i])
+		gm, wm := got[i].(map[string]any), want[i].(map[string]any)
+		if wm["type"] == "function_call_output" {
+			if gm["type"] != "function_call_output" || gm["call_id"] != wm["call_id"] {
+				t.Fatalf("item %d lost its call identifier: %s", i, g)
+			}
+			continue
+		}
+		if string(g) != string(w) {
+			t.Fatalf("item %d changed:\n got %.200s\nwant %.200s", i, g, w)
+		}
+	}
+}
+
+func TestShortenArchiveHoldsTheFullInput(t *testing.T) {
+	f := newShortenFixture(t)
+	in := f.input(shortenRoom, 12000, 12000)
+	want, err := core.EncodeJSON(map[string]any{"input": in})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = append(want, '\n')
+	if _, err := f.prepare(in); err != nil {
+		t.Fatalf("prepareContext refused: %v", err)
+	}
+	history := f.b.WorkingContext["build"].History
+	if len(history) != 1 {
+		t.Fatalf("history %v", history)
+	}
+	data, err := os.ReadFile(history[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(want) {
+		t.Fatalf("the archive (%d bytes) is not the encoded original input (%d bytes)", len(data), len(want))
+	}
+	if history[0].SHA256 != core.HashHex(data) {
+		t.Fatalf("the recorded sha256 %s is not the hash of the archive file", history[0].SHA256)
+	}
+}
+
+func TestShortenStillRefusesWhenTheMandatoryWindowDoesNotFit(t *testing.T) {
+	f := newShortenFixture(t)
+	in := f.input(-1000, 12000, 12000)
+	measured, err := agent.Measure(f.b.bodyOf(defaultRole(), "policy text", in, nil, "build"), providerRole(defaultRole()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.prepare(in)
+	if err == nil {
+		t.Fatal("an over-ceiling mandatory window was accepted")
+	}
+	prefix := fmt.Sprintf("candidate/context_budget_exceeded: build: measured %d bytes; mandatory ", measured.RenderedBytes)
+	found := regexp.MustCompile(`^(\d+) bytes; ceiling 524288, output reserve 131072 tokens\. Retained checkpoint `).FindStringSubmatch(strings.TrimPrefix(err.Error(), prefix))
+	if !strings.HasPrefix(err.Error(), prefix) || found == nil {
+		t.Fatalf("refusal text differs:\n got %.400s\nwant it to start %q, name the mandatory bytes, ceiling 524288 and the 131072 token reserve", err, prefix)
+	}
+	if mandatory, _ := strconv.Atoi(found[1]); mandatory <= f.limit {
+		t.Fatalf("the refusal reports %d mandatory bytes, which fit the ceiling %d", mandatory, f.limit)
+	}
+	if _, err := os.Stat(filepath.Join(f.b.Run.Dir, "working-context")); !os.IsNotExist(err) {
+		t.Fatal("an archive was written")
+	}
+}
+
+func TestShortenLeavesAFittingWindowAlone(t *testing.T) {
+	f := newShortenFixture(t)
+	in := f.input(shortenRoom, 5000, 5000)
+	reduced, err := f.prepare(in)
+	if err != nil {
+		t.Fatalf("prepareContext refused: %v", err)
+	}
+	if got := outputsOf(reduced[len(reduced)-5:]); len(got) != 2 || got[0] != numbered("newest0", 5000) || got[1] != numbered("newest1", 5000) {
+		t.Fatalf("outputs changed although the window fits: %d outputs", len(got))
+	}
+	if len(f.b.WorkingContext["build"].History) != 1 {
+		t.Fatal("no reset happened, so the case proves nothing")
+	}
+}
