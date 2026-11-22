@@ -150,12 +150,48 @@ func firstFailure(pass verify.Pass) string {
 	return ""
 }
 
+// firstFailureQuoteRunes is the most characters of a failing check's output line that the no-edit
+// notice and stop quote.
+const firstFailureQuoteRunes = 200
+
+// firstFailureQuote is the first nonblank output line of the failing check the pass names as its
+// first failure, trimmed and cut to firstFailureQuoteRunes characters. It is empty when the first
+// failure is an acceptance scenario, no failing check has that name, or its output has no
+// nonblank line.
+func firstFailureQuote(pass verify.Pass) string {
+	if len(missingAcceptanceItems(pass)) > 0 || len(pass.Failing) == 0 {
+		return ""
+	}
+	name := pass.Failing[0]
+	for _, r := range pass.Checks {
+		if r.Name != name || r.Status == 0 {
+			continue
+		}
+		for _, line := range strings.Split(r.Output, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if runes := []rune(line); len(runes) > firstFailureQuoteRunes {
+				line = string(runes[:firstFailureQuoteRunes])
+			}
+			return line
+		}
+		return ""
+	}
+	return ""
+}
+
 // noEditNotice is the whole message to a builder whose round left the tree of a red pass as it was.
 func noEditNotice(round int, pass verify.Pass) string {
 	n := itoa(pass.N)
+	quote := ""
+	if q := firstFailureQuote(pass); q != "" {
+		quote = "First line of its output: " + q + "\n"
+	}
 	return "Round " + itoa(round) + " made no edits: the candidate is byte-identical to the tree verification pass " + n +
 		" checked, so it was not verified again; pass " + n + " is still red.\n" +
-		"Make an edit toward the first named failure: " + firstFailure(pass) + ".\n" +
+		"Make an edit toward the first named failure: " + firstFailure(pass) + ".\n" + quote +
 		"If a correct implementation cannot make it pass because a protected file is wrong, report a protected-file blocker " +
 		"with its paths, the contradiction and your observed evidence instead.\n" +
 		"Another round without edits stops the Build as no_progress (no edits)."
@@ -217,10 +253,15 @@ func (b *Attempt) noEditRound(stage string) (feedback string, check bool, err er
 		"candidate tree: " + pass.Tree,
 		"failing: " + strings.Join(pass.Failing, ", "),
 		"first failure: " + firstFailure(pass),
-		"rounds without edits: " + itoa(w.noEdits) + " of " + itoa(w.rounds),
-		"No further verification or model request was made. Fix the named failure by hand, or `kogen intent resume " +
-			b.Run.ID + "` to verify again and give the builder the feedback again.",
 	}
+	if q := firstFailureQuote(pass); q != "" {
+		e.Lines = append(e.Lines, "first failure output: "+q)
+	}
+	e.Lines = append(e.Lines,
+		"rounds without edits: "+itoa(w.noEdits)+" of "+itoa(w.rounds),
+		"No further verification or model request was made. Fix the named failure by hand, or `kogen intent resume "+
+			b.Run.ID+"` to verify again and give the builder the feedback again.",
+	)
 	return "", false, e
 }
 

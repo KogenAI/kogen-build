@@ -1,0 +1,157 @@
+package build
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+)
+
+// nqoRed is a script that fails with the printed output while app.txt starts a line with a-1.
+func nqoRed(printf string) string {
+	return "if grep -q '^a-1' app.txt; then " + printf + "; exit 1; fi"
+}
+
+func nqoChecks(first string) []project.Check {
+	return []project.Check{
+		{Name: "lint", Run: "echo lint note"},
+		{Name: "test", Run: nqoRed(first)},
+	}
+}
+
+// nqoNotice runs a Build whose first round writes appFirst and whose second round makes no edit,
+// and returns the notice the builder received for the second round.
+func nqoNotice(t *testing.T, checks []project.Check, appFirst string) string {
+	t.Helper()
+	e := newEnv(t, func(c *project.Config) { c.Checks = checks })
+	f := e.prov
+	f.then(
+		f.calls("write_file", map[string]any{"path": "app.txt", "content": appFirst + "\n"}, "finish", map[string]any{"summary": "first"}),
+		says("The round is complete."),
+		f.calls("write_file", map[string]any{"path": "app.txt", "content": "ready\n"}, "finish", map[string]any{"summary": "the rest"}),
+	)
+	a := e.build()
+	if a.exit != 0 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	reqs := f.requests()
+	eq(t, "model requests", len(reqs), 3)
+	return lastInput(reqs[2])
+}
+
+// nqoStop runs a Build whose rounds after the first make no edit and returns its stdout and run id.
+func nqoStop(t *testing.T, checks []project.Check, appFirst string) (string, string) {
+	t.Helper()
+	e := newEnv(t, func(c *project.Config) { c.Checks = checks })
+	f := e.prov
+	f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": appFirst + "\n"}, "finish", map[string]any{"summary": "first"}))
+	f.then(sayings(12)...)
+	a := e.build()
+	if a.exit != 1 || a.err != nil {
+		t.Fatalf("exit %d err %v\n%s", a.exit, a.err, a.shown())
+	}
+	id := e.onlyRun()
+	out := a.out.String()
+	contains(t, "stop", out, "candidate/no_progress: no edits: round 3 made no edits after the builder was told round 2 made none; verification pass 1 is still red and was not run again; edits are left in place\n")
+	eq(t, "model requests", f.count(), 3)
+	return out, id
+}
+
+const nqoNoticeTail = "If a correct implementation cannot make it pass because a protected file is wrong, report a protected-file blocker with its paths, the contradiction and your observed evidence instead.\n" +
+	"Another round without edits stops the Build as no_progress (no edits)."
+
+// nqoNoticeIs checks the notice: the existing sentences unchanged, and when quote is not empty the
+// sentence `First line of its output: <quote>` right after the sentence naming first, whether the
+// builder separates the two sentences with a line break or a space.
+func nqoNoticeIs(t *testing.T, got, first, quote string) {
+	t.Helper()
+	head := "Round 2 made no edits: the candidate is byte-identical to the tree verification pass 1 checked, so it was not verified again; pass 1 is still red.\n" +
+		"Make an edit toward the first named failure: " + first + "."
+	if quote == "" {
+		eq(t, "the notice", got, head+"\n"+nqoNoticeTail)
+		return
+	}
+	for _, sep := range []string{"\n", " "} {
+		if got == head+sep+"First line of its output: "+quote+"\n"+nqoNoticeTail {
+			return
+		}
+	}
+	t.Fatalf("the notice does not have the sentence %q right after the sentence naming %q:\n%s", "First line of its output: "+quote, first, got)
+}
+
+func nqoStopTail(id string) string {
+	return "  rounds without edits: 2 of 3\n  No further verification or model request was made. Fix the named failure by hand, or `kogen intent resume " + id +
+		"` to verify again and give the builder the feedback again.\n"
+}
+
+const nqoFirstOutput = "printf '\\n   \\n   --- FAIL: TestX   \\nlast line\\n'"
+
+func TestNoEditQuoteAcc1Notice(t *testing.T) {
+	t.Parallel()
+	nqoNoticeIs(t, nqoNotice(t, nqoChecks(nqoFirstOutput), "a-1"), "test", "--- FAIL: TestX")
+}
+
+func TestNoEditQuoteAcc2Stop(t *testing.T) {
+	t.Parallel()
+	out, id := nqoStop(t, nqoChecks(nqoFirstOutput), "a-1")
+	contains(t, "stop lines", out, "  failing: test\n  first failure: test\n  first failure output: --- FAIL: TestX\n"+nqoStopTail(id))
+}
+
+func TestNoEditQuoteAcc3Cut(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("é", 300)
+	want := strings.Repeat("é", 200)
+	checks := nqoChecks("echo '" + long + "'")
+	nqoNoticeIs(t, nqoNotice(t, checks, "a-1"), "test", want)
+	out, id := nqoStop(t, checks, "a-1")
+	contains(t, "stop lines", out, "  first failure: test\n  first failure output: "+want+"\n"+nqoStopTail(id))
+	exact := strings.Repeat("x", 200)
+	nqoNoticeIs(t, nqoNotice(t, nqoChecks("echo '"+exact+"'"), "a-1"), "test", exact)
+}
+
+func TestNoEditQuoteAcc4AcceptanceScenarioFirst(t *testing.T) {
+	t.Parallel()
+	// app.txt "red" fails the acceptance scenario; the checks would fail on its a-1 line but do not run after it.
+	checks := nqoChecks(nqoFirstOutput)
+	e := newEnv(t, func(c *project.Config) { c.Checks = checks })
+	f := e.prov
+	f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": "red\na-1\n"}, "finish", map[string]any{"summary": "first"}))
+	f.then(sayings(12)...)
+	a := e.build()
+	if a.exit != 1 || a.err != nil {
+		t.Fatalf("exit %d err %v\n%s", a.exit, a.err, a.shown())
+	}
+	id := e.onlyRun()
+	out := a.out.String()
+	contains(t, "stop lines", out, "  failing: acceptance\n  first failure: failed: First (line 2)\n"+nqoStopTail(id))
+	if strings.Contains(out, "first failure output") {
+		t.Fatalf("the stop names an output line\n%s", out)
+	}
+
+	n := newEnv(t, func(c *project.Config) { c.Checks = checks })
+	g := n.prov
+	g.then(
+		g.calls("write_file", map[string]any{"path": "app.txt", "content": "red\na-1\n"}, "finish", map[string]any{"summary": "first"}),
+		says("The round is complete."),
+		g.calls("write_file", map[string]any{"path": "app.txt", "content": "ready\n"}, "finish", map[string]any{"summary": "the rest"}),
+	)
+	if b := n.build(); b.exit != 0 {
+		t.Fatalf("exit %d\n%s", b.exit, b.shown())
+	}
+	reqs := g.requests()
+	eq(t, "model requests", len(reqs), 3)
+	nqoNoticeIs(t, lastInput(reqs[2]), "failed: First (line 2)", "")
+}
+
+func TestNoEditQuoteAcc5NoOutput(t *testing.T) {
+	t.Parallel()
+	for name, printf := range map[string]string{"empty": "true", "blank lines": "printf '\\n  \\n\\t\\n'"} {
+		checks := []project.Check{{Name: "test", Run: nqoRed(printf)}}
+		nqoNoticeIs(t, nqoNotice(t, checks, "a-1"), "test", "")
+		out, id := nqoStop(t, checks, "a-1")
+		contains(t, name+": stop lines", out, "  failing: test\n  first failure: test\n"+nqoStopTail(id))
+		if strings.Contains(out, "first failure output") {
+			t.Fatalf("%s: the stop names an output line\n%s", name, out)
+		}
+	}
+}

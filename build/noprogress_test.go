@@ -375,3 +375,61 @@ func TestNoEditRoundVerifiesAgainOnlyAfterAHostFailedRedPass(t *testing.T) {
 		})
 	}
 }
+
+// The notice quotes the first nonblank trimmed output line of the first failing check, cut to 200
+// characters, and quotes nothing for an acceptance scenario or a check without output.
+func TestNoEditNoticeQuotesTheFirstOutputLineOfTheFirstFailingCheck(t *testing.T) {
+	t.Parallel()
+	const head = "Make an edit toward the first named failure: test.\n"
+	scenario := &verify.Acceptance{Scenarios: []verify.ScenarioResult{{Name: "Add overflows", Line: 12, Status: "failed"}}}
+	for _, tc := range []struct {
+		name string
+		pass verify.Pass
+		want string
+	}{
+		{"first nonblank line, trimmed", verify.Pass{N: 1, Failing: []string{"test"}, Checks: []verify.CommandResult{
+			{Name: "lint", Status: 0, Output: "lint note\n"},
+			{Name: "test", Status: 1, Output: "\n  \n  --- FAIL: TestX  \nlast line\n"},
+		}}, head + "First line of its output: --- FAIL: TestX\n"},
+		{"other failing check is not quoted", verify.Pass{N: 1, Failing: []string{"test", "vet"}, Checks: []verify.CommandResult{
+			{Name: "vet", Status: 1, Output: "vet says\n"},
+			{Name: "test", Status: 1, Output: "test says\n"},
+		}}, head + "First line of its output: test says\n"},
+		{"300 characters cut to 200", verify.Pass{N: 1, Failing: []string{"test"}, Checks: []verify.CommandResult{
+			{Name: "test", Status: 1, Output: strings.Repeat("é", 300) + "\n"},
+		}}, head + "First line of its output: " + strings.Repeat("é", 200) + "\n"},
+		{"200 characters kept", verify.Pass{N: 1, Failing: []string{"test"}, Checks: []verify.CommandResult{
+			{Name: "test", Status: 1, Output: strings.Repeat("x", 200)},
+		}}, head + "First line of its output: " + strings.Repeat("x", 200) + "\n"},
+		{"blank output", verify.Pass{N: 1, Failing: []string{"test"}, Checks: []verify.CommandResult{
+			{Name: "test", Status: 1, Output: " \n\t\n"},
+		}}, head},
+		{"acceptance scenario first", verify.Pass{N: 1, Failing: []string{"acceptance", "test"}, Acceptance: scenario, Checks: []verify.CommandResult{
+			{Name: "test", Status: 1, Output: "boom\n"},
+		}}, "Make an edit toward the first named failure: failed: Add overflows (line 12).\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := noEditNotice(2, tc.pass)
+			if !strings.Contains(got, tc.want+"If a correct implementation") {
+				t.Fatalf("the notice does not contain %q right before the blocker sentence:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
+// The stop gains the output line right after the first failure line; every other line is kept.
+func TestNoEditStopQuotesTheFirstOutputLineAfterTheFirstFailureLine(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, func(c *project.Config) {
+		c.Checks = []project.Check{{Name: "test", Run: "if grep -q '^a-1' app.txt; then printf '\\n  --- FAIL: TestX \\nlast\\n'; exit 1; fi"}}
+	})
+	e.prov.then(e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": "a-1\n"}, "finish", map[string]any{"summary": "first"}))
+	e.prov.then(sayings(12)...)
+	a := e.build()
+	if a.exit != 1 || a.err != nil {
+		t.Fatalf("exit %d err %v\n%s", a.exit, a.err, a.shown())
+	}
+	id := e.onlyRun()
+	contains(t, "stop lines", a.out.String(), "  failing: test\n  first failure: test\n  first failure output: --- FAIL: TestX\n  rounds without edits: 2 of 3\n"+
+		"  No further verification or model request was made. Fix the named failure by hand, or `kogen intent resume "+id+"` to verify again and give the builder the feedback again.\n")
+}
