@@ -41,6 +41,19 @@ func requireContextUnavailable(t *testing.T, label string, err error) {
 	}
 }
 
+// requireDetailNames asserts the refusal detail names the offending field and no other.
+func requireDetailNames(t *testing.T, label string, err error, field string) {
+	t.Helper()
+	requireContextUnavailable(t, label, err)
+	detail := err.(*sys.Error).Detail
+	fields := map[string]string{"text": "text", "source path": "source path", "SHA-256": "SHA-256"}
+	for name, word := range fields {
+		if has := strings.Contains(detail, word); has != (name == field) {
+			t.Fatalf("%q: detail %q names %s = %v, want only %q", label, detail, name, has, field)
+		}
+	}
+}
+
 func TestDiagnosticDataIsBoundedOriginalUTF8(t *testing.T) {
 	t.Parallel()
 	// ExUnit: test/kogen/build_context_test.exs: bounded original UTF-8 bytes and exact text
@@ -55,7 +68,7 @@ func TestDiagnosticDataIsBoundedOriginalUTF8(t *testing.T) {
 		}
 	}
 	for _, text := range []string{"", " \t\r\n ", "\xff", strings.Repeat("x", 262_145), strings.Repeat("é", 131_073)} {
-		requireContextUnavailable(t, text[:min(len(text), 16)], diagnostic(text).Validate())
+		requireDetailNames(t, text[:min(len(text), 16)], diagnostic(text).Validate(), "text")
 	}
 }
 
@@ -63,22 +76,30 @@ func TestDiagnosticDataShapeAndDigestAreExact(t *testing.T) {
 	t.Parallel()
 	// ExUnit: test/kogen/build_context_test.exs: exact shape and digest independently of the source filesystem
 	good := diagnostic("valid")
-	for name, bad := range map[string]*Diagnostic{
-		"nil":               nil,
-		"wrong digest":      {Text: "valid", SourcePath: "/inaccessible/label", SHA256: strings.Repeat("0", 64)},
-		"empty label":       {Text: "valid", SourcePath: "", SHA256: good.SHA256},
-		"relative label":    {Text: "valid", SourcePath: "relative", SHA256: good.SHA256},
-		"label not UTF-8":   {Text: "valid", SourcePath: "/\xff", SHA256: good.SHA256},
-		"digest not UTF-8":  {Text: "valid", SourcePath: "/label", SHA256: "\xff"},
-		"upper-case digest": {Text: "valid", SourcePath: "/label", SHA256: strings.ToUpper(good.SHA256)},
+	for name, c := range map[string]struct {
+		bad   *Diagnostic
+		field string
+	}{
+		"wrong digest":      {&Diagnostic{Text: "valid", SourcePath: "/inaccessible/label", SHA256: strings.Repeat("0", 64)}, "SHA-256"},
+		"empty label":       {&Diagnostic{Text: "valid", SourcePath: "", SHA256: good.SHA256}, "source path"},
+		"relative label":    {&Diagnostic{Text: "valid", SourcePath: "relative", SHA256: good.SHA256}, "source path"},
+		"label not UTF-8":   {&Diagnostic{Text: "valid", SourcePath: "/\xff", SHA256: good.SHA256}, "source path"},
+		"digest not UTF-8":  {&Diagnostic{Text: "valid", SourcePath: "/label", SHA256: "\xff"}, "SHA-256"},
+		"upper-case digest": {&Diagnostic{Text: "valid", SourcePath: "/label", SHA256: strings.ToUpper(good.SHA256)}, "SHA-256"},
 	} {
-		err := bad.Validate()
+		err := c.bad.Validate()
 		if err == nil {
 			t.Fatalf("%s accepted", name)
 		}
-		if e, ok := err.(interface{ Error() string }); !ok || !strings.HasPrefix(e.Error(), "intent/context_unavailable: ") {
+		requireDetailNames(t, name, err, c.field)
+		if !strings.HasPrefix(err.Error(), "intent/context_unavailable: ") {
 			t.Fatalf("%s: %v", name, err)
 		}
+	}
+	if err := (*Diagnostic)(nil).Validate(); err == nil {
+		t.Fatal("nil accepted")
+	} else {
+		requireContextUnavailable(t, "nil", err)
 	}
 	if err := good.Validate(); err != nil {
 		t.Fatal(err)
@@ -129,7 +150,7 @@ func TestDiagnosticDataThatIsNotValidRefusesBeforeAnyEffect(t *testing.T) {
 	e := newEnv(t)
 	a := e.build(func(in *Input) { in.Context = &Diagnostic{Text: "x", SourcePath: "relative", SHA256: digestOf("x")} })
 	eq(t, "exit", a.exit, 2)
-	contains(t, "output", a.shown(), "intent/context_unavailable: expected bounded nonblank UTF-8 diagnostic data with an absolute source label and matching SHA-256\n")
+	contains(t, "output", a.shown(), "intent/context_unavailable: diagnostic source path must be an absolute UTF-8 path\n")
 	if len(e.runIDs()) != 0 || e.prov.count() != 0 {
 		t.Fatal("effects before the refusal")
 	}

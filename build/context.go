@@ -40,19 +40,27 @@ func contextUnavailable() *sys.Error {
 		"expected bounded nonblank UTF-8 diagnostic data with an absolute source label and matching SHA-256", 2)
 }
 
+// invalidDiagnostic is the refusal for one offending field; the detail names only that field.
+func invalidDiagnostic(detail string) *sys.Error {
+	return sys.Fail("intent", "context_unavailable", detail, 2)
+}
+
 // Validate refuses diagnostic data that is not bounded nonblank UTF-8 text with an absolute
-// source label and the SHA-256 of the text (intent/context_unavailable, exit 2).
+// source path and the SHA-256 of the text (intent/context_unavailable, exit 2). The detail
+// names the offending field: the text, the source path or the SHA-256.
 func (d *Diagnostic) Validate() error {
 	if d == nil {
 		return contextUnavailable()
 	}
+	if !utf8.ValidString(d.Text) || len(d.Text) > maxDiagnostic || strings.TrimSpace(d.Text) == "" {
+		return invalidDiagnostic("diagnostic text must be nonblank UTF-8 of at most 262144 bytes")
+	}
+	if !utf8.ValidString(d.SourcePath) || !strings.HasPrefix(d.SourcePath, "/") {
+		return invalidDiagnostic("diagnostic source path must be an absolute UTF-8 path")
+	}
 	sum := sha256.Sum256([]byte(d.Text))
-	ok := utf8.ValidString(d.Text) && utf8.ValidString(d.SourcePath) && utf8.ValidString(d.SHA256) &&
-		len(d.Text) <= maxDiagnostic && strings.TrimSpace(d.Text) != "" &&
-		d.SourcePath != "" && strings.HasPrefix(d.SourcePath, "/") &&
-		d.SHA256 == hex.EncodeToString(sum[:])
-	if !ok {
-		return contextUnavailable()
+	if !utf8.ValidString(d.SHA256) || d.SHA256 != hex.EncodeToString(sum[:]) {
+		return invalidDiagnostic("diagnostic SHA-256 must equal the lower-case hex digest of the diagnostic data")
 	}
 	return nil
 }
