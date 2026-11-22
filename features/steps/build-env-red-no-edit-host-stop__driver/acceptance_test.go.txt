@@ -1,0 +1,175 @@
+package build
+
+import (
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+const envRedTimeoutLine = "panic: test timed out after 10m0s"
+
+func envRedNoNotice(t *testing.T, e *env) {
+	t.Helper()
+	for i, req := range e.prov.requests() {
+		if strings.Contains(lastInput(req), "made no edits") {
+			t.Fatalf("request %d gave the builder a no-edit notice:\n%s", i+1, lastInput(req))
+		}
+	}
+}
+
+func envRedExpectStop(t *testing.T, e *env, check, failure string) {
+	t.Helper()
+	a := e.build()
+	if a.exit != 3 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	out := a.out.String()
+	contains(t, "stop", out, "environment/host_or_base_failure: check "+check+" failed the same way in verification passes 1 and 2: "+failure+"; this failure is in the host or the base")
+	if strings.Contains(out, "no_progress") {
+		t.Fatalf("output names no_progress\n%s", a.shown())
+	}
+	envRedNoNotice(t, e)
+	id := e.onlyRun()
+	eq(t, "outcome", e.result(id)["outcome"], any("host_or_base_failure"))
+	eq(t, "passes", e.result(id)["passes"], any(float64(2)))
+	eq(t, "pass events", passEvents(t, e, id), 2)
+	evs := eventsNamed(e.events(id), "host_or_base_failure")
+	eq(t, "events", len(evs), 1)
+	eq(t, "event check", evs[0]["check"], any(check))
+}
+
+func envRedWrite(f *fakeProvider, text string) handler {
+	return f.calls("write_file", map[string]any{"path": "app.txt", "content": text + "\n"}, "finish", map[string]any{"summary": "round"})
+}
+
+func TestEnvRedAcc1TimeoutRepeatedAfterANoEditRound(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, func(c *project.Config) {
+		c.Checks = []project.Check{{Name: "test", Run: "if grep -q '^slow' app.txt; then echo '" + envRedTimeoutLine + "'; exit 1; fi"}}
+	})
+	f := e.prov
+	f.then(envRedWrite(f, "slow-1"), says("The failure is the host's; I made no edit."))
+	envRedExpectStop(t, e, "test", envRedTimeoutLine)
+	eq(t, "requests", len(f.requests()), 2)
+	eq(t, "candidate", e.read("app.txt"), "slow-1\n")
+}
+
+func TestEnvRedAcc2OrdinaryFailureInTheSecondPassIsOrdinaryFeedback(t *testing.T) {
+	t.Parallel()
+	counter := shellQuote(t.TempDir() + "/count")
+	script := "if ! grep -q '^slow' app.txt; then exit 0; fi; n=$(cat " + counter + " 2>/dev/null || echo 0); echo $((n+1)) > " + counter +
+		"; if [ \"$n\" = 0 ]; then echo '" + envRedTimeoutLine + "'; else echo '--- FAIL: TestX'; fi; exit 1"
+	e := newEnv(t, func(c *project.Config) { c.Checks = []project.Check{{Name: "test", Run: script}} })
+	f := e.prov
+	f.then(envRedWrite(f, "slow-1"), says("No edit this round."), envRedWrite(f, "ready"))
+	a := e.build()
+	if a.exit != 0 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	id := e.onlyRun()
+	eq(t, "host events", len(eventsNamed(e.events(id), "host_or_base_failure")), 0)
+	eq(t, "outcome", e.result(id)["outcome"], any("landed"))
+	envRedNoNotice(t, e)
+	reqs := f.requests()
+	eq(t, "requests", len(reqs), 3)
+	in := lastInput(reqs[2])
+	if !strings.HasPrefix(in, "Verification pass 2 is not green.") || !strings.Contains(in, "--- FAIL: TestX") {
+		t.Fatalf("the builder did not get the ordinary feedback of pass 2:\n%s", in)
+	}
+}
+
+func TestEnvRedAcc3OrdinaryRedKeepsTheNoticeAndTheNoProgressStop(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, func(c *project.Config) {
+		c.Checks = []project.Check{{Name: "test", Run: "if grep -q '^ordinary' app.txt; then echo '--- FAIL: TestX'; exit 1; fi"}}
+	})
+	f := e.prov
+	f.then(envRedWrite(f, "ordinary-1"))
+	f.then(sayings(12)...)
+	a := e.build()
+	if a.exit != 1 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	id := e.onlyRun()
+	out := a.out.String()
+	contains(t, "stdout", out, "candidate/no_progress: no edits: round 3 made no edits after the builder was told round 2 made none; verification pass 1 is still red and was not run again; edits are left in place\n")
+	contains(t, "stdout", out, "  failing: test\n")
+	contains(t, "stdout", out, "  rounds without edits: 2 of 3\n")
+	reqs := f.requests()
+	eq(t, "requests", len(reqs), 3)
+	if !strings.HasPrefix(lastInput(reqs[2]), "Round 2 made no edits: the candidate is byte-identical to the tree verification pass 1 checked, so it was not verified again; pass 1 is still red.") {
+		t.Fatalf("the builder did not get the no-edit notice:\n%s", lastInput(reqs[2]))
+	}
+	eq(t, "pass events", passEvents(t, e, id), 1)
+	eq(t, "outcome", e.result(id)["outcome"], any("no_progress"))
+	eq(t, "host events", len(eventsNamed(e.events(id), "host_or_base_failure")), 0)
+}
+
+func TestEnvRedAcc4DiskFailureRepeatedAfterANoEditRound(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, func(c *project.Config) {
+		c.Checks = []project.Check{
+			{Name: "vet", Run: "true"},
+			{Name: "test", Run: "if grep -q '^disk' app.txt; then echo 'write /tmp/a: no space left on device'; exit 1; fi"},
+		}
+	})
+	f := e.prov
+	f.then(envRedWrite(f, "disk-1"), says("No edit; the disk is full."))
+	envRedExpectStop(t, e, "test", "write /tmp/a: no space left on device")
+	eq(t, "requests", len(f.requests()), 2)
+}
+
+func TestEnvRedAcc5StageGateTimeoutRepeatedAfterANoEditRound(t *testing.T) {
+	t.Parallel()
+	e, _ := stagedEnv(t, []string{"if grep -q '^slow' app.txt; then echo '" + envRedTimeoutLine + "'; exit 1; fi"})
+	f := e.prov
+	f.then(f.calls(stageWrite(f, "slow-1")...), f.calls(stageFinish()...), says("The failure is the host's; no edit."))
+	envRedExpectStop(t, e, "stage-foundation-1", envRedTimeoutLine)
+	eq(t, "requests", len(f.requests()), 3)
+}
+
+func TestEnvRedAcc6OrdinaryAndDiskFailingChecksVerifyAgain(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	environ := os.Environ()
+	run := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		cmd.Env = append(environ, "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-q")
+	if err := os.WriteFile(root+"/app.txt", []byte("red\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-q", "-m", "c")
+	start := run("rev-parse", "HEAD")
+	b := &Attempt{State: State{Root: root, Start: start, Config: &project.Config{}}, s: sys.NewWith(environ, root)}
+	tree, err := snapshotTree(b.checkRepo(), b.Start, b.Excluded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.noEdit.roundStart = tree
+	b.noEdit.rounds = 1
+	b.noEdit.red = &redPass{pass: verify.Pass{N: 1, Tree: tree, Clean: true, Failing: []string{"vet", "test"}, Checks: []verify.CommandResult{
+		{Name: "vet", Status: 1, Output: "--- FAIL: TestV\nFAIL\n"},
+		{Name: "test", Status: 1, Output: "write /tmp/a: no space left on device\n"},
+	}}}
+	feedback, check, err := b.noEditRound("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !check || feedback != "" {
+		t.Fatalf("round 2 was not verified again: check %v, feedback %q", check, feedback)
+	}
+}

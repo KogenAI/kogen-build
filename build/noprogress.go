@@ -161,6 +161,17 @@ func noEditNotice(round int, pass verify.Pass) string {
 		"Another round without edits stops the Build as no_progress (no edits)."
 }
 
+// hostFailedPass reports whether a failing check of the pass has an environment failure of a kind
+// the host-or-base rule stops on (timeout, disk, memory or files). One such check suffices.
+func hostFailedPass(pass verify.Pass) bool {
+	for _, r := range pass.Checks {
+		if text, ok := verify.EnvFailure(r); ok && envFailureKind(text) != "other" {
+			return true
+		}
+	}
+	return false
+}
+
 // noEditRound decides, after the fixers, what a round that left the candidate tree unchanged
 // without a file-write call means. stage is the active stage ID ("" for the whole Intent). A round with edits, or whose tree
 // no remembered red pass checked, is verified as usual (check true). A round that left the tree
@@ -187,6 +198,11 @@ func (b *Attempt) noEditRound(stage string) (feedback string, check bool, err er
 		return "", true, nil
 	}
 	pass := red.pass
+	if hostFailedPass(pass) {
+		// The host-or-base rule compares this pass with the next one, so the round is verified again.
+		b.s.Progress("kogen: round " + itoa(b.Round) + " made no edits")
+		return "", true, nil
+	}
 	if red.noticeRound == 0 {
 		red.noticeRound = b.Round
 		first := firstFailure(pass)

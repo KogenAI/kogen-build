@@ -154,3 +154,35 @@ func TestHostStopIdenticalLinesStillStop(t *testing.T) {
 	eq(t, "event failure", evs[0]["failure"], any("too many open files"))
 	eq(t, "event passes", evs[0]["passes"], any([]any{float64(1), float64(2)}))
 }
+
+func TestNoEditRoundAfterATimeoutRedStopsAsHostOrBaseOnTheRepeat(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, func(c *project.Config) { c.Checks = []project.Check{{Name: "go-test", Run: timeoutScript}} })
+	f := e.prov
+	f.then(f.calls("write_file", map[string]any{"path": "app.txt", "content": "slow-1\n"}, "finish", map[string]any{"summary": "round"}), says("No edit."))
+	a := e.build()
+	if a.exit != 3 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	contains(t, "stop", a.out.String(), "environment/host_or_base_failure: check go-test failed the same way in verification passes 1 and 2")
+	eq(t, "requests", len(f.requests()), 2)
+	for _, req := range f.requests() {
+		if strings.Contains(lastInput(req), "made no edits") {
+			t.Fatalf("a no-edit notice was given:\n%s", lastInput(req))
+		}
+	}
+	eq(t, "passes", e.result(e.onlyRun())["passes"], any(float64(2)))
+}
+
+func TestNoEditRoundAfterAStageGateTimeoutStopsAsHostOrBaseOnTheRepeat(t *testing.T) {
+	t.Parallel()
+	e, _ := stagedEnv(t, []string{"if grep -q '^slow' app.txt; then echo 'panic: test timed out after 10m0s'; exit 1; fi"})
+	f := e.prov
+	f.then(f.calls(stageWrite(f, "slow-1")...), f.calls(stageFinish()...), says("No edit."))
+	a := e.build()
+	if a.exit != 3 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	contains(t, "stop", a.out.String(), "environment/host_or_base_failure: check stage-foundation-1 failed the same way in verification passes 1 and 2")
+	eq(t, "passes", e.result(e.onlyRun())["passes"], any(float64(2)))
+}

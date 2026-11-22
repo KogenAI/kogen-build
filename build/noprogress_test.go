@@ -352,3 +352,26 @@ func TestRepeatedStageFailureDespiteEditsStops(t *testing.T) {
 	}
 	eq(t, "count", events[0]["count"], any(float64(4)))
 }
+
+func TestNoEditRoundVerifiesAgainOnlyAfterAHostFailedRedPass(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		checks []verify.CommandResult
+		again  bool
+	}{
+		{"timeout", []verify.CommandResult{{Name: "test", Status: 1, Output: "panic: test timed out after 1m0s\n"}}, true},
+		{"memory", []verify.CommandResult{{Name: "test", Status: 1, Output: "fatal: cannot allocate memory\n"}}, true},
+		{"files", []verify.CommandResult{{Name: "test", Status: 1, Output: "open x: too many open files\n"}}, true},
+		{"ordinary and disk", []verify.CommandResult{
+			{Name: "vet", Status: 1, Output: "--- FAIL: TestV\nFAIL\n"},
+			{Name: "test", Status: 1, Output: "write /tmp/a: no space left on device\n"},
+		}, true},
+		{"ordinary only", []verify.CommandResult{{Name: "test", Status: 1, Output: "--- FAIL: TestX\nFAIL\n"}}, false},
+		{"passing check with the line", []verify.CommandResult{{Name: "test", Status: 0, Output: "no space left on device\n"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			eq(t, "host failed", hostFailedPass(verify.Pass{Checks: tc.checks}), tc.again)
+		})
+	}
+}
