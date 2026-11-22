@@ -41,6 +41,7 @@ func approve(b *Attempt, pass verify.Pass) Approved {
 }
 
 func TestDecodedReviewNoteLineDisplaysAsInteger(t *testing.T) {
+	t.Parallel()
 	note, err := decodeJSONNumbers([]byte(`{"severity":"note","path":"app.txt","line":1,"message":"looks fine"}`))
 	if err != nil {
 		t.Fatal(err)

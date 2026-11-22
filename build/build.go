@@ -129,7 +129,7 @@ func recordOutcome(out *Outcome, b *Attempt, err error) {
 	if b.LastPass != nil {
 		out.Checks = append(out.Checks, b.LastPass.Checks...)
 	}
-	out.Tree, _ = b.repo.Tree(b.Start, b.Excluded)
+	out.Tree, _ = snapshotTree(b.repo, b.Start, b.Excluded)
 }
 
 // conclude turns the end of a command into its exit code, reporting a stopped or
@@ -347,7 +347,7 @@ func checked(ctx context.Context, s *sys.Session, in Input, repo *git.Repo, cfg 
 	for _, p := range baseline {
 		digests[p] = fileDigest(root, p)
 	}
-	startTree, err := repo.Tree(start, excluded)
+	startTree, err := snapshotTree(repo, start, excluded)
 	if err != nil {
 		return err
 	}
@@ -434,29 +434,38 @@ func (b *Attempt) Track() error { return b.facts.update(b, "", "") }
 // with the identity of the checkout, the candidate tree, the user's index and the
 // approval, by atomic rename (0600).
 func (b *Attempt) Save(c Continuation) error {
+	_, err := b.save(c, "")
+	return err
+}
+
+// save is Save, given the candidate tree when the caller knows the work tree is as it was when
+// that tree was taken (nothing ran between the two saves); it returns the candidate it recorded.
+func (b *Attempt) save(c Continuation, candidate string) (string, error) {
 	b.Continuation = c
 	b.PromptCache = b.cache.States()
 	if err := b.Track(); err != nil {
-		return err
+		return "", err
 	}
-	candidate, err := b.repo.Tree(b.Start, nil)
-	if err != nil {
-		return err
+	if candidate == "" {
+		var err error
+		if candidate, err = snapshotTree(b.repo, b.Start, nil); err != nil {
+			return "", err
+		}
 	}
 	index, err := readBounded(b.GitIndex)
 	if err != nil {
-		return err
+		return "", err
 	}
 	identity, err := fileIdentity(b.Root)
 	if err != nil {
-		return err
+		return "", err
 	}
 	state, err := core.EncodeJSON(b.State)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := b.Run.TakeLogErr(); err != nil {
-		return err
+		return "", err
 	}
 	doc := Checkpoint{
 		Version: 4, Identity: identity, Candidate: candidate, Index: encodeBase64(index),
@@ -464,10 +473,10 @@ func (b *Attempt) Save(c Continuation) error {
 	}
 	if b.Blocker != nil {
 		if doc.RecoveryRaw, err = rawIdentity(b.repo, b.Root, b.StartTree); err != nil {
-			return err
+			return "", err
 		}
 	}
-	return b.Run.PublishCheckpoint(doc)
+	return candidate, b.Run.PublishCheckpoint(doc)
 }
 
 // BaselineIntact is the baseline guard (VER-8): after every shell call, fixer and pass the
@@ -671,13 +680,16 @@ func (b *Attempt) Request(ctx context.Context, sp RequestSpec) (*provider.Respon
 	case sp.Owner == "build":
 		cont.Input = input
 	}
-	if err := b.Save(cont); err != nil {
+	// The work tree is not touched until the response arrives: the saves around the request
+	// record the candidate taken by the first.
+	candidate, err := b.save(cont, "")
+	if err != nil {
 		return nil, nil, err
 	}
 	t0 := time.Now()
 	b.s.Progress(fmt.Sprintf("kogen: %s request %s/%s", sp.Owner, sp.Role.Model, sp.Role.Effort))
 	b.UnknownRequests++
-	if err := b.Save(b.Continuation); err != nil {
+	if _, err := b.save(b.Continuation, candidate); err != nil {
 		return nil, nil, err
 	}
 	var parent any
@@ -705,7 +717,7 @@ func (b *Attempt) Request(ctx context.Context, sp RequestSpec) (*provider.Respon
 	got := responseTokens(sp.Role, resp)
 	b.AttemptUsage = b.AttemptUsage.Plus(got)
 	b.Usage = b.Usage.Plus(got)
-	if err := b.Save(Continuation{Stage: StageTool, Owner: sp.Owner, Response: resp.Items, Request: true}); err != nil {
+	if _, err := b.save(Continuation{Stage: StageTool, Owner: sp.Owner, Response: resp.Items, Request: true}, candidate); err != nil {
 		return nil, nil, err
 	}
 	b.s.Progress(fmt.Sprintf("kogen: %s response %s wall_ms=%d", sp.Owner, got.Line(), wall))

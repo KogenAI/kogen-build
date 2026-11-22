@@ -1,6 +1,7 @@
 package build
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -42,8 +43,8 @@ type fakeProvider struct {
 	t      *testing.T
 	srv    *httptest.Server
 	mu     sync.Mutex
-	reqs   []map[string]any
-	bodies [][]byte // the raw bytes of each request, as received
+	reqs   []map[string]any // each request decoded; nil until decoded from its body
+	bodies [][]byte         // the raw bytes of each request, as received
 	script []handler
 	next   int
 	ids    atomic.Int64
@@ -52,7 +53,14 @@ type fakeProvider struct {
 func newFakeProvider(t *testing.T) *fakeProvider {
 	f := &fakeProvider{t: t}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
-	t.Cleanup(f.srv.Close)
+	t.Cleanup(func() {
+		f.srv.Close()
+		// The requests are no longer read once the test is over; a parent test and the
+		// parallel ones still waiting keep the provider reachable long after.
+		f.mu.Lock()
+		f.reqs, f.bodies = nil, nil
+		f.mu.Unlock()
+	})
 	return f
 }
 
@@ -62,11 +70,9 @@ func (f *fakeProvider) serve(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	var req map[string]any
-	json.Unmarshal(body, &req)
 	f.mu.Lock()
-	f.reqs = append(f.reqs, req)
-	f.bodies = append(f.bodies, body)
+	f.reqs = append(f.reqs, nil)
+	f.bodies = append(f.bodies, bytes.Clone(body))
 	var h handler
 	if f.next < len(f.script) {
 		h = f.script[f.next]
@@ -95,10 +101,20 @@ func (f *fakeProvider) replace(h ...handler) *fakeProvider {
 	return f
 }
 
+// requests are the requests decoded from their bodies. They are decoded on each call and not
+// kept: a suite of parallel Builds holds every request body of every live test, and decoded
+// copies of them would double what the process keeps in memory.
 func (f *fakeProvider) requests() []map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]map[string]any(nil), f.reqs...)
+	out := make([]map[string]any, len(f.reqs))
+	for i, req := range f.reqs {
+		if req == nil && i < len(f.bodies) {
+			json.Unmarshal(f.bodies[i], &req)
+		}
+		out[i] = req
+	}
+	return out
 }
 
 // rawRequests are the request bodies exactly as the provider received them.
@@ -108,7 +124,11 @@ func (f *fakeProvider) rawRequests() [][]byte {
 	return append([][]byte(nil), f.bodies...)
 }
 
-func (f *fakeProvider) count() int { return len(f.requests()) }
+func (f *fakeProvider) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.reqs)
+}
 
 func (f *fakeProvider) call(name string, args any) map[string]any {
 	b, _ := json.Marshal(args)
@@ -227,9 +247,18 @@ func newEnvIn(t *testing.T, root, home, aux string, gitEnv []string, mutate ...f
 	e.hooks = t.TempDir()
 	e.git = isolatedEnv(gitEnv...)
 	e.run("git", "init", "-q", "--initial-branch=main")
-	for k, v := range map[string]string{"user.name": "Kogen Integration", "user.email": "kogen-integration@example.invalid",
-		"commit.gpgsign": "false", "core.hooksPath": e.hooks} {
-		e.run("git", "config", k, v)
+	// The repository's configuration is written to its file: four `git config` processes for each
+	// of the many fixture repositories cost more than the tests of some of them.
+	quoted := strings.NewReplacer("\\", "\\\\", `"`, `\"`).Replace(e.hooks)
+	config, err := os.OpenFile(filepath.Join(e.root, ".git", "config"), os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(config, "[user]\n\tname = Kogen Integration\n\temail = kogen-integration@example.invalid\n[commit]\n\tgpgsign = false\n[core]\n\thooksPath = \"%s\"\n", quoted); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Close(); err != nil {
+		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(e.root, "README.md"), "# Fixture project\n", 0o644)
 	writeFile(t, filepath.Join(e.root, "app.txt"), "baseline\n", 0o644)

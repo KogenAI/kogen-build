@@ -232,7 +232,7 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		}
 		state = b.WorkingContext[owner]
 	}
-	tree, err := b.repo.Tree(b.Start, b.Excluded)
+	tree, err := snapshotTree(b.repo, b.Start, b.Excluded)
 	if err != nil {
 		return nil, err
 	}

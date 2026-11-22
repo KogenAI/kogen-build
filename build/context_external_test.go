@@ -317,6 +317,7 @@ func roundCalls(t *testing.T, fx *clauderuntime.Fixture) string {
 // TestContextExternalMalformedRuntimeResult: a malformed round result is refused by the adapter,
 // the Build stops after one round and commits nothing.
 func TestContextExternalMalformedRuntimeResult(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ name, line, refusal string }{
 		{"truncated json", `{"type":"result","subtype":"success","is_error":false`,
 			"executor/protocol: line 2 of the event stream is not a JSON object"},
@@ -340,6 +341,7 @@ func TestContextExternalMalformedRuntimeResult(t *testing.T) {
 }
 
 func TestContextExternalFirstPrompt(t *testing.T) {
+	t.Parallel()
 	text := "Previous candidate failed at line 3 — \xf0\x9f\x99\x82\nnot approval, a plan or current proof\n"
 	text = strings.ToValidUTF8(text, "")
 	for _, withContext := range []bool{true, false} {

@@ -95,6 +95,7 @@ func snapReceipt(t *testing.T, doc map[string]any) map[string]any {
 // receipt of result.json and the checkpoint names them without text or token. A regression: a Build
 // that ignores the supplied snapshot has neither.
 func TestStudioSnapshotReachesRequestAndReceipt(t *testing.T) {
+	t.Parallel()
 	s := newSnapStudio(t, 3, "Run the focused test before finishing.")
 	e := snapEnv(t, s)
 	e.prov.then(landScript(e.prov)...)
@@ -130,6 +131,7 @@ func TestStudioSnapshotReachesRequestAndReceipt(t *testing.T) {
 
 // An outage uses the verified cache and the Build runs with origin cached and the reason.
 func TestStudioSnapshotOutageUsesTheCache(t *testing.T) {
+	t.Parallel()
 	s := newSnapStudio(t, 3, "Run the focused test before finishing.")
 	e := snapEnv(t, s)
 	// A live load of the producer fills the verified cache a later outage falls back to.
@@ -151,6 +153,7 @@ func TestStudioSnapshotOutageUsesTheCache(t *testing.T) {
 
 // A denied token never reuses the cache, and a missing token variable is named; neither reaches a provider.
 func TestStudioSnapshotRefusalsNeverUseTheCache(t *testing.T) {
+	t.Parallel()
 	s := newSnapStudio(t, 3, "Run the focused test before finishing.")
 	e := snapEnv(t, s)
 	if _, err := rules.Load(context.Background(), e.root, rules.Options{Getenv: func(string) string { return snapToken }}); err != nil {
@@ -172,6 +175,7 @@ func TestStudioSnapshotRefusalsNeverUseTheCache(t *testing.T) {
 // A resumed Build keeps the recorded snapshot: no Studio request, the same receipt in result.json
 // and the checkpoint.
 func TestStudioSnapshotResumeKeepsRecordedSnapshot(t *testing.T) {
+	t.Parallel()
 	s := newSnapStudio(t, 3, "Run the focused test before finishing.")
 	e := snapEnv(t, s)
 	e.prov.then(landScript(e.prov)...)
@@ -230,6 +234,7 @@ func stopInReview(t *testing.T, e *env) string {
 // A resume whose token is missing, or whose cache is absent or no longer matches the recorded
 // receipt, stops with a rules error before any provider, reviewer or Studio request.
 func TestStudioSnapshotResumeStopsWhenRecordedRulesCannotBeRecovered(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		break_ func(e *env, s *snapStudio)
@@ -289,6 +294,7 @@ func TestStudioSnapshotResumeStopsWhenRecordedRulesCannotBeRecovered(t *testing.
 // A finding whose message cites an applied rule id carries that rule and revision; one that cites
 // none, or only a longer id, does not, and the written record is a copy.
 func TestStudioSnapshotAnnotatesReviewFindings(t *testing.T) {
+	t.Parallel()
 	b := &Attempt{State: State{StudioRules: &StudioRules{Rules: []StudioRuleRef{
 		{ID: "rule-1", Revision: json.RawMessage("3")}, {ID: "rule-2", Revision: json.RawMessage(`"b"`)},
 	}}}}

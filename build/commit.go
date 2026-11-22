@@ -32,7 +32,7 @@ func (b *Attempt) commitApproved(ctx context.Context, ap Approved, restart bool)
 		return false, err
 	}
 	pass, review := ap.Pass, ap.Review
-	tree, err := b.repo.Tree(b.Start, b.Excluded)
+	tree, err := snapshotTree(b.repo, b.Start, b.Excluded)
 	if err != nil {
 		return false, err
 	}

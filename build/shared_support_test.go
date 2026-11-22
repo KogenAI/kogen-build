@@ -47,6 +47,7 @@ func supportLines(out string) []string {
 }
 
 func TestBriefStatesSharedTestSupportRule(t *testing.T) {
+	t.Parallel()
 	_, request := supportRun(t, "# P\n", nil, map[string]string{"app.txt": "x\n"})
 	for _, want := range []string{"Shared test support is not edited unless the Intent names it", "beside your own new test files", "byte-identical"} {
 		if !strings.Contains(request, want) {
@@ -56,6 +57,7 @@ func TestBriefStatesSharedTestSupportRule(t *testing.T) {
 }
 
 func TestSummaryNamesChangedSharedTestSupport(t *testing.T) {
+	t.Parallel()
 	readme := "# P\n\nShared test support: (test/support/a.rb), test/support/b.rb;\n"
 	out, _ := supportRun(t, readme,
 		map[string]string{"test/support/a.rb": "1\n", "test/support/b.rb": "1\n", "test/support/c.rb": "1\n", "Gemfile": "1\n"},
@@ -67,6 +69,7 @@ func TestSummaryNamesChangedSharedTestSupport(t *testing.T) {
 }
 
 func TestSummaryFallsBackToRequiredFirstFilesAndManifests(t *testing.T) {
+	t.Parallel()
 	out, _ := supportRun(t, "# P\n",
 		map[string]string{
 			"test/a_test.rb":      "# c\nrequire \"test_helper\"\nrequire_relative \"other\"\n",
@@ -92,6 +95,7 @@ func TestSummaryFallsBackToRequiredFirstFilesAndManifests(t *testing.T) {
 }
 
 func TestSummaryHasNoSharedSupportLineForNewFiles(t *testing.T) {
+	t.Parallel()
 	readme := "# P\n\n`test/support/a.rb` is test support.\n"
 	out, _ := supportRun(t, readme, map[string]string{"test/support/a.rb": "1\n"},
 		map[string]string{"test/new_test.rb": "1\n", "test/support/new.rb": "1\n", "app.txt": "x\n"})

@@ -156,7 +156,7 @@ func (b *Attempt) checkRepo() *git.Repo {
 
 // checkPoint computes the tree and the environment of every configured check.
 func (b *Attempt) checkPoint() (checkPoint, error) {
-	tree, err := b.checkRepo().Tree(b.Start, b.Excluded)
+	tree, err := snapshotTree(b.checkRepo(), b.Start, b.Excluded)
 	if err != nil {
 		return checkPoint{}, err
 	}

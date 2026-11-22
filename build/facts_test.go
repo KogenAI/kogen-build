@@ -148,6 +148,7 @@ func TestADamagedCatalogCannotAbortCustodyPublicationAndInheritedEvidenceKeepsOr
 }
 
 func TestInheritedReviewNotePreservesIntegerLine(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, ".kogen/local/facts/previous.json"), `{"reviews":[{"findings":[{"severity":"note","path":"app.txt","line":1,"message":"looks fine"}]}]}`, 0o644)
 	facts := &localFacts{record: map[string]any{}}

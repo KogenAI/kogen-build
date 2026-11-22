@@ -159,6 +159,7 @@ func TestARoundThatEditsIsVerifiedEvenWhenTheFailingSetIsUnchanged(t *testing.T)
 
 // Rewrites still run verification, but four identical red passes stop the Build.
 func TestRepeatedFailureDespiteRewritesStops(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	f := e.prov
 	for i := 0; i < 5; i++ {
@@ -293,6 +294,7 @@ func TestAStoppedNoProgressBuildResumesFromItsCheckpoint(t *testing.T) {
 }
 
 func TestRepeatedFailureStreakResets(t *testing.T) {
+	t.Parallel()
 	base := verify.Pass{Clean: true, Failing: []string{"check"}, Checks: []verify.CommandResult{{Name: "check", Status: 1, Output: "first"}}}
 	for _, tc := range []struct {
 		name   string
@@ -334,6 +336,7 @@ func TestRepeatedFailureStreakResets(t *testing.T) {
 }
 
 func TestRepeatedStageFailureDespiteEditsStops(t *testing.T) {
+	t.Parallel()
 	e, _ := stagedEnv(t, []string{"echo scoped-red; exit 23"})
 	f := e.prov
 	for i := 0; i < 5; i++ {

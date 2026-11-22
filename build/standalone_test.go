@@ -82,6 +82,7 @@ func TestStandaloneBuildEvidence(t *testing.T) {
 }
 
 func TestStandaloneOutcomeUsesReportedStop(t *testing.T) {
+	t.Parallel()
 	// The integration above exercises ordinary stops; context exhaustion is translated
 	// by the phase before reporting and must retain that same structured error.
 	dir := t.TempDir()

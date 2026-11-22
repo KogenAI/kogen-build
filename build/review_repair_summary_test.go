@@ -45,6 +45,7 @@ func landedExternalReview(t *testing.T, extra ...string) []string {
 }
 
 func TestLandedSummaryNamesExternalReviewRepair(t *testing.T) {
+	t.Parallel()
 	lines := landedLines(strings.Join(landedExternalReview(t), "\n"))
 	i := indexOfLinePrefix(lines, "  review: approved")
 	if i < 0 || lines[i+1] != "  review repaired: app.txt" || !strings.HasPrefix(lines[i+2], "  repairs: ") {
@@ -53,6 +54,7 @@ func TestLandedSummaryNamesExternalReviewRepair(t *testing.T) {
 }
 
 func TestLandedSummaryOmitsLineForBuilderRepair(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, func(c *project.Config) {
 		c.Checks = []project.Check{{Name: "count", Run: "true"}}
 	})
@@ -71,6 +73,7 @@ func TestLandedSummaryOmitsLineForBuilderRepair(t *testing.T) {
 }
 
 func TestLandedSummaryCapsRepairedPaths(t *testing.T) {
+	t.Parallel()
 	lines := landedExternalReview(t, "r1.txt", "r2.txt", "r3.txt", "r4.txt", "r5.txt", "r6.txt")
 	if indexOfLinePrefix(lines, "  review repaired: app.txt, r1.txt, r2.txt, r3.txt, r4.txt, and 2 more") < 0 {
 		t.Fatalf("summary:\n%s", strings.Join(lines, "\n"))
@@ -78,6 +81,7 @@ func TestLandedSummaryCapsRepairedPaths(t *testing.T) {
 }
 
 func TestLandedSummaryNamesNativeReviewRepair(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, func(c *project.Config) {
 		c.Checks = []project.Check{{Name: "count", Run: "true"}}
 	})

@@ -215,7 +215,7 @@ func (b *Attempt) reuseShadowBegin(tree string) *baselineShadow {
 		return nil
 	}
 	if tree == "" {
-		if tree, err = b.checkRepo().Tree(b.Start, b.Excluded); err != nil {
+		if tree, err = snapshotTree(b.checkRepo(), b.Start, b.Excluded); err != nil {
 			b.reuseShadowUnavailable("start tree: " + err.Error())
 			return nil
 		}

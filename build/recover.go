@@ -600,7 +600,7 @@ func (r *recovery) validate() error {
 	if err := require(sameConfig(cfg, b.Config) && slices.Equal(baseline, b.Baseline), "protected baseline/configuration changed"); err != nil {
 		return err
 	}
-	tree, err := r.repo.Tree(b.Start, nil)
+	tree, err := snapshotTree(r.repo, b.Start, nil)
 	if err != nil {
 		return err
 	}
@@ -696,7 +696,7 @@ func rawOf(root, p string) (*rawSide, error) {
 // from the Build's start tree, as the checkout holds it: recorded in each checkpoint of a
 // Build that reported a blocker, so a recovery can prove nothing changed since.
 func rawIdentity(repo *git.Repo, root, startTree string) (map[string]*RawMeta, error) {
-	candidate, err := repo.Tree(startTree, nil)
+	candidate, err := snapshotTree(repo, startTree, nil)
 	if err != nil {
 		return nil, err
 	}

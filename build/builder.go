@@ -118,7 +118,7 @@ func (b *Attempt) drive(ctx context.Context, sess executor.Session, in executor.
 				return err
 			}
 		}
-		start, err := b.checkRepo().Tree(b.Start, b.Excluded)
+		start, err := snapshotTree(b.checkRepo(), b.Start, b.Excluded)
 		if err != nil {
 			return err
 		}

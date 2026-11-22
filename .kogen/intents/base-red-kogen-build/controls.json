@@ -1,0 +1,1 @@
+{"deferred":"the correct implementation rewrites many slow tests across the build package onto injected clocks and fake commands; the Build must locate and change them, so a control overlay cannot be written honestly in the shaping budget"}

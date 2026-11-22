@@ -27,6 +27,7 @@ func spendHasNot(t *testing.T, out, sub string) {
 }
 
 func TestSpendLinesLandedExternal(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.useLineup("")
 	var out string
@@ -52,6 +53,7 @@ func TestSpendLinesLandedExternal(t *testing.T) {
 }
 
 func TestSpendLinesLandedNative(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.prov.then(landScript(e.prov)...)
 	a := e.build()
@@ -64,6 +66,7 @@ func TestSpendLinesLandedNative(t *testing.T) {
 }
 
 func TestSpendLinesRoundLimit(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.useExecutor("")
 	f := newFakeExecutor(t, externalWritesApp("red\n", harnessUsage(100, 0, 40, 0.25)))
@@ -79,6 +82,7 @@ func TestSpendLinesRoundLimit(t *testing.T) {
 }
 
 func TestSpendLinesReviewBlocked(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.useLineup("")
 	f := newLineupExec(t)
@@ -99,6 +103,7 @@ func TestSpendLinesReviewBlocked(t *testing.T) {
 }
 
 func TestSpendLinesNativeStop(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, func(c *project.Config) { c.Checks = []project.Check{{Name: "test", Run: "true"}} })
 	e.prov.then(refused())
 	a := e.build()
@@ -111,6 +116,7 @@ func TestSpendLinesNativeStop(t *testing.T) {
 }
 
 func TestSpendLinesStartupStop(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.hook("commit-msg", "printf changed >> "+stepsFile+"\n")
 	a := e.build()

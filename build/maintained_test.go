@@ -113,6 +113,7 @@ func TestSuccessiveModelIntentsKeepIndependentSpecifications(t *testing.T) {
 }
 
 func TestModelFreeBuildDoesNotCreateModelStorage(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.prov.then(landScript(e.prov)...)
 	a := e.build()
@@ -125,6 +126,7 @@ func TestModelFreeBuildDoesNotCreateModelStorage(t *testing.T) {
 }
 
 func TestResumeVerifiesMaintainedModel(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	spec := project.ModelSpec{Path: ".kogen/models/earlier/model.qnt", Invariants: []string{"Safe"}, Seed: "7", Samples: "3", Steps: "4"}
 	record, err := json.Marshal(spec)

@@ -29,6 +29,7 @@ func policyJSON(t *testing.T, v any) []byte {
 // TestPromptsAreByteEqualToTheElixirFunctions compares the length and SHA-256 of the builder's
 // instructions with what the Elixir function returned.
 func TestPromptsAreByteEqualToTheElixirFunctions(t *testing.T) {
+	t.Parallel()
 	type entry struct {
 		Bytes  int    `json:"bytes"`
 		Sha256 string `json:"sha256"`
@@ -72,6 +73,7 @@ func TestPromptsAreByteEqualToTheElixirFunctions(t *testing.T) {
 // TestDefinitionsMatchTheElixirDefinitions compares finish and report_blocker with
 // testdata/defs_golden.json, as parsed values.
 func TestDefinitionsMatchTheElixirDefinitions(t *testing.T) {
+	t.Parallel()
 	owned := []string{ReportBlockerTool, FinishTool}
 	if *update {
 		defs := map[string]any{}
@@ -113,6 +115,7 @@ func TestDefinitionsMatchTheElixirDefinitions(t *testing.T) {
 }
 
 func TestEveryDefinitionIsPlainJSON(t *testing.T) {
+	t.Parallel()
 	// Provider requests encode []any and map[string]any only through their own encoder; a typed
 	// slice or a struct in a definition would be encoded differently.
 	var walk func(path string, v any)
@@ -137,6 +140,7 @@ func TestEveryDefinitionIsPlainJSON(t *testing.T) {
 }
 
 func TestUnknownBuilderToolNamesPanic(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		if recover() == nil {
 			t.Error("unknown tool did not panic")
@@ -150,6 +154,7 @@ func TestUnknownBuilderToolNamesPanic(t *testing.T) {
 // exact bytes it always sent as --json-schema (309 bytes, SHA-256 below), and that its blocker
 // is exactly the executor contract's builder-reported blocker claim, which the adapter decodes.
 func TestSubmissionSchemaIsTheExternalBuildersResult(t *testing.T) {
+	t.Parallel()
 	sum := sha256.Sum256([]byte(SubmissionSchema))
 	if len(SubmissionSchema) != 309 || hex.EncodeToString(sum[:]) != "e3679f8c9225fd0a9580b414767daeb8cf4de3df1d36ad2f9aee90e12ff77ce4" {
 		t.Errorf("the submission schema changed: %d bytes, %x", len(SubmissionSchema), sum)

@@ -28,7 +28,7 @@ func (b *Attempt) latestPass() *verify.Pass {
 // is backed by such a failure: named by it, or reached through a file that it and the claimed
 // protected file both name. Kogen does not run a fresh pass to check a claim.
 func (b *Attempt) unbackedBlocker(args map[string]any) (string, error) {
-	tree, err := b.checkRepo().Tree(b.Start, b.Excluded)
+	tree, err := snapshotTree(b.checkRepo(), b.Start, b.Excluded)
 	if err != nil {
 		return "", err
 	}

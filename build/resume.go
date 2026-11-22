@@ -257,7 +257,7 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	if backup, err := readBounded(original); err != nil || !bytes.Equal(backup, savedIndex) {
 		return refuse(id, "original index backup missing or damaged: "+original, "")
 	}
-	candidate, err := repo.Tree(b.Start, nil)
+	candidate, err := snapshotTree(repo, b.Start, nil)
 	if err != nil {
 		return err
 	}
@@ -268,7 +268,7 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 		}
 		detail := "candidate contents/modes or unrelated paths changed: " + strings.Join(paths, ", ")
 		if c := b.Continuation; c.Stage == StageReviewOnly {
-			tree, err := repo.Tree(b.Start, b.Excluded)
+			tree, err := snapshotTree(repo, b.Start, b.Excluded)
 			if err != nil {
 				detail += "; the candidate review tree cannot be inspected: " + err.Error()
 			} else if tree != c.Pass.Tree {

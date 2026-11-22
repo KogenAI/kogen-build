@@ -63,6 +63,8 @@ For inquiries, contact contact@kogen.dev.
 
 The [history audit](docs/public-history-audit.md) lists historical findings for an owner to review; it does not change Git history.
 
+The `build` package's tests start many git processes, so `TestMain` (`build/main_test.go`) runs them in up to four processes of the test binary (`runtime.NumCPU()/3`); a run with a `-run` pattern, a profile, `-update` or another non-plain flag runs in one process, as does a host with fewer than six CPUs. On a 12-CPU host `go test -count=1 ./build` took 77 s split and 122 s in one process.
+
 ### Golden files
 
 Some tests compare their output with recorded golden files under `build/testdata`. To rewrite every golden from the current code's output, run:

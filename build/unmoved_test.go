@@ -13,6 +13,7 @@ import (
 )
 
 func TestUnmovedMajority(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		texts []string
 		want  string
@@ -28,6 +29,7 @@ func TestUnmovedMajority(t *testing.T) {
 }
 
 func TestUnmovedSequence(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := &Attempt{repo: e.gitRepo()}
 	tree := func(path, content string) string {
@@ -115,6 +117,7 @@ func TestUnmovedExternalFeedback(t *testing.T) {
 }
 
 func TestUnmovedPathsAndIdentity(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := &Attempt{repo: e.gitRepo()}
 	e.write("z.txt", "old")

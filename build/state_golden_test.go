@@ -277,21 +277,25 @@ type stateGoldenError struct{ text string }
 func (e *stateGoldenError) Error() string { return e.text }
 
 func TestStateGoldenFreshCheckpoint(t *testing.T) {
+	t.Parallel()
 	const path = "testdata/state/fresh/checkpoint.json"
 	stateGoldenCheck(t, path, stateGoldenFresh(t, path))
 }
 
 func TestStateGoldenAttemptsCheckpoint(t *testing.T) {
+	t.Parallel()
 	const path = "testdata/state/attempts/checkpoint.json"
 	stateGoldenCheck(t, path, stateGoldenAttempts(t, path))
 }
 
 func TestStateGoldenReviewApproveCheckpoint(t *testing.T) {
+	t.Parallel()
 	const path = "testdata/state/review-approve/checkpoint.json"
 	stateGoldenCheck(t, path, stateGoldenReviewCheckpoint(t, path, "approve", []map[string]any{}))
 }
 
 func TestStateGoldenReviewChangesCheckpoint(t *testing.T) {
+	t.Parallel()
 	const path = "testdata/state/review-changes/checkpoint.json"
 	findings := []map[string]any{{"path": "app.txt", "line": 1, "severity": "blocking", "message": "app.txt does not hold the requested content"}}
 	stateGoldenCheck(t, path, stateGoldenReviewCheckpoint(t, path, "changes", findings))
@@ -300,6 +304,7 @@ func TestStateGoldenReviewChangesCheckpoint(t *testing.T) {
 // TestStateGoldenResumedCheckpoint resumes the attempts checkpoint bytes produced in this very
 // test, not the attempts golden, so a drifted attempts golden does not change this one.
 func TestStateGoldenResumedCheckpoint(t *testing.T) {
+	t.Parallel()
 	const path = "testdata/state/resumed/checkpoint.json"
 	attempts := stateGoldenAttempts(t, path)
 	stateGoldenCheck(t, path, stateGoldenResumedBytes(t, path, attempts))

@@ -140,6 +140,7 @@ func TestExternalNoProgressResetsWhenTheTreeChanges(t *testing.T) {
 }
 
 func TestExternalRepeatedFailureWithFreshTreesStops(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.useExecutor("")
 	f := newFakeExecutor(t, func(n int, ctx context.Context, root string, in executor.Input) (executor.RoundResult, error) {

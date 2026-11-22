@@ -34,6 +34,7 @@ func (s progressElapsedSession) Round(ctx context.Context, in executor.Input) (e
 }
 
 func TestBuildPhaseElapsedProgress(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, func(c *project.Config) { c.Checks = []project.Check{{Name: "test", Run: "true"}} })
 	e.useLineup("")
 	e.credentials()
@@ -95,6 +96,7 @@ func TestBuildPhaseElapsedProgress(t *testing.T) {
 // The red pass and a resumed review exercise boundary paths not reached by the
 // successful commit-resume fixture above.
 func TestPhaseElapsedFailureAndReviewResume(t *testing.T) {
+	t.Parallel()
 	t.Run("red pass", func(t *testing.T) {
 		e := newEnv(t, func(c *project.Config) { c.Checks = []project.Check{{Name: "test", Run: "false"}} })
 		e.useLineup("")

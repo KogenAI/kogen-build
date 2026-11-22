@@ -30,6 +30,7 @@ func lastBuilding(s string) string {
 }
 
 func TestCompletedToolsProgressDuringNativeRound(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"two", "none"} {
 		t.Run(mode, func(t *testing.T) {
 			e := newEnv(t)
@@ -74,6 +75,7 @@ func TestCompletedToolsProgressDuringNativeRound(t *testing.T) {
 }
 
 func TestExternalCompletedToolsProgress(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.useExecutor("")
 	f := newFakeExecutor(t, externalWritesApp("candidate\n", harnessUsage(1, 0, 1, 0)))

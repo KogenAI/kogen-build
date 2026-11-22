@@ -156,7 +156,7 @@ func (b *Attempt) reviewOnlyBlocked(inv *invalidReview, discard bool) string {
 	if !discard {
 		return ""
 	}
-	tree, err := b.repo.Tree(b.Start, b.Excluded)
+	tree, err := snapshotTree(b.repo, b.Start, b.Excluded)
 	if err != nil {
 		return "the candidate tree cannot be read: " + err.Error()
 	}
@@ -201,7 +201,7 @@ func (b *Attempt) discardReviewEdits(inv *invalidReview, current string) ([]stri
 	b.Run.Event(map[string]any{
 		"event": "review_edits_discarded", "review": inv.Review, "tree": green, "candidate": current, "paths": discarded,
 	})
-	now, err := b.repo.Tree(b.Start, b.Excluded)
+	now, err := snapshotTree(b.repo, b.Start, b.Excluded)
 	if err != nil {
 		return names, err
 	}
@@ -254,7 +254,7 @@ func (b *Attempt) reviewOnlyRefusal() (string, error) {
 	if pass != nil && pass.Green && stateComplete(&b.State, pass, b.model) && b.ReviewRetry != nil && b.ReviewRetry.Tree == pass.Tree {
 		return "", nil
 	}
-	tree, err := b.repo.Tree(b.Start, b.Excluded)
+	tree, err := snapshotTree(b.repo, b.Start, b.Excluded)
 	if err != nil {
 		return "", err
 	}
@@ -273,7 +273,7 @@ func (b *Attempt) reviewOnlyRefusal() (string, error) {
 func (b *Attempt) reviewOnlyFresh() (verify.Pass, error) {
 	c := b.Continuation
 	pass := *c.Pass
-	tree, err := b.repo.Tree(b.Start, b.Excluded)
+	tree, err := snapshotTree(b.repo, b.Start, b.Excluded)
 	if err != nil {
 		return verify.Pass{}, err
 	}
@@ -368,7 +368,7 @@ func (b *Attempt) externalReviewFresh() (verify.Pass, error) {
 	n, x := b.Review, b.Config.Models["review"].Executor
 	b.s.Puts(fmt.Sprintf("review %d by executor %s cannot be continued (resume capability: none); starting fresh review %d of the green candidate verified in pass %d, with no builder round and no rerun of its checks",
 		n, x, n+1, base.N))
-	tree, err := b.repo.Tree(b.Start, b.Excluded)
+	tree, err := snapshotTree(b.repo, b.Start, b.Excluded)
 	if err != nil {
 		return verify.Pass{}, err
 	}

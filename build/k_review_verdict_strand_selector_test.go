@@ -8,6 +8,7 @@ import (
 )
 
 func TestForcedBodiesUnreadReminders(t *testing.T) {
+	t.Parallel()
 	bodies := [][]byte{
 		[]byte(`{"tool_choice":"auto"}`),
 		[]byte(`{"tool_choice":{"type":"function","name":"submit_review"},"marker":1}`),

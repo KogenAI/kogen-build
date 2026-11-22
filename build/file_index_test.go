@@ -9,6 +9,7 @@ import (
 // A repository with thousands of top-level directories cannot name each of them within the
 // bound: the index still stays bounded and its counts stay true.
 func TestFileIndexVeryWideRepositoryStaysBounded(t *testing.T) {
+	t.Parallel()
 	var sb strings.Builder
 	total := 0
 	for d := 0; d < 3000; d++ {

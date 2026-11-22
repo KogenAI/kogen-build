@@ -116,7 +116,7 @@ func (b *Attempt) details(reason string, report bool, providerFailure map[string
 	if r := b.LastReview; r != nil && r.Verdict != "approve" {
 		still = append(still, "review")
 	}
-	tree, err := b.repo.Tree(b.Start, b.Excluded)
+	tree, err := snapshotTree(b.repo, b.Start, b.Excluded)
 	if err != nil {
 		return err
 	}

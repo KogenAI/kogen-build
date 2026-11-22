@@ -90,6 +90,7 @@ func TestAnAnthropicBuildRequestRecordsCacheCreationAsCacheWrite(t *testing.T) {
 }
 
 func TestRunBlobCustodyAndFailure(t *testing.T) {
+	t.Parallel()
 	run, err := StartRun(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
