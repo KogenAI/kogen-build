@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/KogenAI/kogen-executor/core"
+	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
 )
@@ -53,7 +54,7 @@ const externalNoProgressPasses = 3
 
 // externalStalled is the external executor's no-progress rule: the third consecutive clean red
 // pass with the same failing-set fingerprint over the same candidate tree records
-// executor_no_progress and stops as candidate/no_progress, naming the stage when a stage gate
+// executor_no_progress and stops as candidate/executor_round_limit, naming the stage when a stage gate
 // failed, the failing checks and the acceptance scenarios that did not pass.
 func (b *Attempt) externalStalled(stage string, pass verify.Pass) error {
 	w := &b.noEdit
@@ -75,8 +76,7 @@ func (b *Attempt) externalStalled(stage string, pass verify.Pass) error {
 		"event": "executor_no_progress", "rounds": b.Executor.Rounds,
 		"fingerprint": fingerprint, "failing": core.NonNil(pass.Failing),
 	})
-	e := sys.Fail("candidate", "no_progress", "the external executor stalled: "+itoa(externalNoProgressPasses)+
-		" consecutive verification passes over the same candidate tree have identical failures; edits are left in place", 1)
+	e := executor.RoundLimit(b.Executor.Rounds)
 	if stage != "" {
 		e.Lines = append(e.Lines, "stage: "+stage)
 	}
