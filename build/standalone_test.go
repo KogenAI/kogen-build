@@ -1,7 +1,10 @@
 package build
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,5 +105,63 @@ func TestStandaloneOutcomeUsesReportedStop(t *testing.T) {
 	recordOutcome(&outcome, b, sys.Fail("provider", "context_too_long", "too long", 1))
 	if outcome.Error == nil || outcome.Error.Class != "candidate" || outcome.Error.Reason != "context_exhausted" {
 		t.Fatalf("reported stop: %#v", outcome.Error)
+	}
+}
+
+func TestStandaloneResumeRefusesUnrecordedBuild(t *testing.T) {
+	t.Parallel()
+	bin := filepath.Join(t.TempDir(), "kogen-build")
+	if b, err := exec.Command("go", "build", "-o", bin, "../cmd/kogen-build").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, b)
+	}
+	dir := t.TempDir()
+	gitEnv := isolatedEnv()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "init"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = gitEnv
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git: %v %s", err, out)
+		}
+	}
+	cmd := exec.Command(bin, "resume", "--project", dir, "--id", "0a1b2c3d")
+	cmd.Env = isolatedEnv("HOME=" + t.TempDir())
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		t.Fatalf("exit status: %v, want 1; stdout %s stderr %s", err, stdout.String(), stderr.String())
+	}
+	dec := json.NewDecoder(bytes.NewReader(stdout.Bytes()))
+	var result struct {
+		Exit  int `json:"exit_code"`
+		Error *struct {
+			Category string `json:"category"`
+			Kind     string `json:"kind"`
+			Message  string `json:"message"`
+		} `json:"error"`
+	}
+	if err := dec.Decode(&result); err != nil {
+		t.Fatalf("json: %v %s", err, stdout.String())
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		t.Fatalf("stdout holds more than one JSON value: %v %q %s", err, extra, stdout.String())
+	}
+	const message = "Build 0a1b2c3d: no Build with this id in this checkout; kogen intent list lists Build attempts"
+	if result.Exit != 1 || result.Error == nil || result.Error.Category != "candidate" || result.Error.Kind != "resume_unsupported" || result.Error.Message != message {
+		t.Fatalf("result %s", stdout.String())
+	}
+	if runs, err := os.ReadDir(filepath.Join(dir, ".kogen/local/runs")); err == nil && len(runs) > 0 {
+		t.Fatalf("refusal created runs: %v", runs)
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	status := exec.Command("git", "status", "--porcelain")
+	status.Dir = dir
+	status.Env = gitEnv
+	if out, err := status.CombinedOutput(); err != nil || len(out) != 0 {
+		t.Fatalf("checkout changed: %v %q", err, out)
 	}
 }

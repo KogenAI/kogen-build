@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation is a test-file edit to build/standalone_test.go, which the Build writes; wrong variants would be alternative test files and the time budget ran out before they could be qualified. The acceptance step files were run against a scratch correct test and against the unchanged tree."}
