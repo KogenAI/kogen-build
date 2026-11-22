@@ -103,14 +103,14 @@ func (b *Attempt) requestBytes(req provider.Request) int {
 var omittedMarker = regexp.MustCompile(`\n\[\.\.\. (\d+) bytes omitted \.\.\.\]\n`)
 
 // cutFields are bytes_before_cut and bytes_delivered of a tool result that tools.Cut cut
-// (nil for an uncut one). The cut keeps a head of at most 4096 bytes before the marker that
-// counts the omitted bytes, so the uncut size is the delivered size less the marker plus them.
+// (nil for an uncut one). A cut result carries a marker line that counts the omitted bytes,
+// wherever it starts, so the uncut size is the delivered size less the marker plus them.
 func cutFields(delivered string) map[string]any {
 	if len(delivered) > 16384 {
 		return nil
 	}
 	loc := omittedMarker.FindStringSubmatchIndex(delivered)
-	if loc == nil || loc[0] > 4096 || loc[0] < 4000 {
+	if loc == nil {
 		return nil
 	}
 	var omitted int

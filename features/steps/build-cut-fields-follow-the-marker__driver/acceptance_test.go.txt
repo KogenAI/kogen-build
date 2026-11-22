@@ -1,0 +1,60 @@
+package build
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-loop/tools"
+)
+
+// accMarker is the omitted-bytes marker line for n omitted bytes.
+func accMarker(n string) string { return "\n[... " + n + " bytes omitted ...]\n" }
+
+// accDelivered is a result of total bytes whose marker for n omitted bytes starts at byte at.
+func accDelivered(at int, n string, total int) string {
+	m := accMarker(n)
+	return strings.Repeat("a", at) + m + strings.Repeat("b", total-at-len(m))
+}
+
+func accWant(t *testing.T, name, delivered string, before int) {
+	t.Helper()
+	f := cutFields(delivered)
+	if f["bytes_before_cut"] != before || f["bytes_delivered"] != len(delivered) || len(f) != 2 {
+		t.Fatalf("%s: %d delivered bytes recorded as %v, want bytes_before_cut %d and bytes_delivered %d", name, len(delivered), f, before, len(delivered))
+	}
+}
+
+func accNone(t *testing.T, name, delivered string) {
+	t.Helper()
+	if f := cutFields(delivered); f != nil {
+		t.Fatalf("%s: %d delivered bytes recorded with cut fields %v, want none", name, len(delivered), f)
+	}
+}
+
+func TestCutFieldsAcc1MarkerAtByte15(t *testing.T) {
+	d := accDelivered(15, "31000", 9000)
+	if strings.Index(d, "\n[... ") != 15 || len(d) != 9000 {
+		t.Fatalf("fixture: marker at %d, length %d", strings.Index(d, "\n[... "), len(d))
+	}
+	accWant(t, "marker at byte 15", d, 9000-len(accMarker("31000"))+31000)
+	accWant(t, "marker at byte 15 of 16384", accDelivered(15, "31000", 16384), 16384-len(accMarker("31000"))+31000)
+	accWant(t, "marker at byte 5000", accDelivered(5000, "700", 9000), 9000-len(accMarker("700"))+700)
+}
+
+func TestCutFieldsAcc2MarkerInWindow(t *testing.T) {
+	d := accDelivered(4050, "20000", 12000)
+	accWant(t, "marker at byte 4050", d, 12000-len(accMarker("20000"))+20000)
+	f := cutFields(tools.Cut(strings.Repeat("x", 40960)))
+	if f["bytes_before_cut"] != 40960 || f["bytes_delivered"].(int) > 16384 {
+		t.Fatalf("a cut of 40960 bytes recorded as %v, want bytes_before_cut 40960", f)
+	}
+}
+
+func TestCutFieldsAcc3NoCutFields(t *testing.T) {
+	accNone(t, "no marker", strings.Repeat("an output with bytes omitted by the tool, ", 200))
+	accNone(t, "no marker, 16384 bytes", strings.Repeat("x", 16384))
+	accNone(t, "marker, 16385 bytes", accDelivered(15, "31000", 16385))
+	accNone(t, "marker number not whole", accDelivered(15, "12x", 9000))
+	accNone(t, "marker number with a fraction", accDelivered(15, "1.5", 9000))
+	accNone(t, "marker number too large", accDelivered(15, "99999999999999999999", 9000))
+}

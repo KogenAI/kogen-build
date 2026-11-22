@@ -39,6 +39,39 @@ func TestCutFieldsOnlyForCutResults(t *testing.T) {
 	}
 }
 
+func TestCutFieldsFollowTheMarkerWherever(t *testing.T) {
+	t.Parallel()
+	const marker = "\n[... 31000 bytes omitted ...]\n"
+	for _, c := range []struct {
+		name string
+		text string
+	}{
+		{"byte 15", strings.Repeat("a", 14) + marker + strings.Repeat("b", 9000-14-len(marker))},
+		{"in the former window", strings.Repeat("a", 4050) + marker + strings.Repeat("b", 9000-4050-len(marker))},
+		{"at the end of a full result", strings.Repeat("a", 16384-len(marker)) + marker},
+	} {
+		f := cutFields(c.text)
+		if f["bytes_before_cut"] != len(c.text)-len(marker)+31000 || f["bytes_delivered"] != len(c.text) {
+			t.Errorf("%s: %v", c.name, f)
+		}
+	}
+}
+
+func TestCutFieldsNoneWithoutAUsableMarker(t *testing.T) {
+	t.Parallel()
+	for name, text := range map[string]string{
+		"no marker":           strings.Repeat("a", 9000),
+		"only the word":       "a\nbytes omitted\n" + strings.Repeat("a", 100),
+		"over 16384 bytes":    strings.Repeat("a", 15) + "\n[... 5 bytes omitted ...]\n" + strings.Repeat("b", 16385),
+		"number not whole":    strings.Repeat("a", 15) + "\n[... 99999999999999999999 bytes omitted ...]\n" + "b",
+		"number not a number": strings.Repeat("a", 15) + "\n[... x bytes omitted ...]\n" + "b",
+	} {
+		if f := cutFields(text); f != nil {
+			t.Errorf("%s: %v", name, f)
+		}
+	}
+}
+
 func TestAnAnthropicBuildRequestRecordsCacheCreationAsCacheWrite(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
