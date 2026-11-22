@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -33,6 +34,41 @@ func main() {
 	sys.EnableSupervisor()
 	os.Exit(run())
 }
+
+const expectedForms = "expected build --project <checkout> --slug <slug> or resume --project <checkout> --id <build-id>"
+
+type arguments struct {
+	mode, project, slug, id string
+}
+
+// parseArgs validates the command line after the program name. It returns a
+// non-empty refusal message that names the rejected input, or the parsed arguments.
+func parseArgs(argv []string, flagOutput io.Writer) (arguments, string) {
+	mode := argv[0]
+	if mode != "build" && mode != "resume" {
+		return arguments{}, fmt.Sprintf("unknown mode %q; %s", mode, expectedForms)
+	}
+	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
+	flags.SetOutput(flagOutput)
+	a := arguments{mode: mode}
+	flags.StringVar(&a.project, "project", ".", "checkout")
+	flags.StringVar(&a.slug, "slug", "", "intent slug")
+	flags.StringVar(&a.id, "id", "", "build ID")
+	if err := flags.Parse(argv[1:]); err != nil {
+		return arguments{}, fmt.Sprintf("%v; %s", err, expectedForms)
+	}
+	if flags.NArg() != 0 {
+		return arguments{}, fmt.Sprintf("unexpected argument %q; %s", flags.Arg(0), expectedForms)
+	}
+	if mode == "build" && a.slug == "" {
+		return arguments{}, "missing required --slug for build; " + expectedForms
+	}
+	if mode == "resume" && a.id == "" {
+		return arguments{}, "missing required --id for resume; " + expectedForms
+	}
+	return a, ""
+}
+
 func run() int {
 	s := sys.New()
 	s.Stdout = os.Stderr
@@ -45,17 +81,13 @@ func run() int {
 		r.Error = &problem{"usage", "invalid_arguments", "expected build or resume"}
 		return r.ExitCode
 	}
-	mode := os.Args[1]
-	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
-	project := flags.String("project", ".", "checkout")
-	slug := flags.String("slug", "", "intent slug")
-	id := flags.String("id", "", "build ID")
-	if flags.Parse(os.Args[2:]) != nil || flags.NArg() != 0 || (mode != "build" && mode != "resume") || (mode == "build" && *slug == "") || (mode == "resume" && *id == "") {
+	args, refusal := parseArgs(os.Args[1:], os.Stderr)
+	if refusal != "" {
 		r.ExitCode = 2
-		r.Error = &problem{"usage", "invalid_arguments", "expected build --project <checkout> --slug <slug> or resume --project <checkout> --id <build-id>"}
+		r.Error = &problem{"usage", "invalid_arguments", refusal}
 		return r.ExitCode
 	}
+	mode, project, slug, id := args.mode, &args.project, &args.slug, &args.id
 	cmd := exec.Command("git", "-C", *project, "symbolic-ref", "--quiet", "--short", "HEAD")
 	b, _ := cmd.Output()
 	r.Branch = strings.TrimSpace(string(b))
