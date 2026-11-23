@@ -105,8 +105,12 @@ func (r *Run) TakeLogErr() error {
 	return err
 }
 
-// Write writes `name` in the run folder as JSON and a newline.
+// Write writes `name` in the run folder as JSON and a newline. A name that is absolute or
+// escapes the run folder through parent-directory components is refused and nothing is written.
 func (r *Run) Write(name string, data any) error {
+	if !filepath.IsLocal(name) {
+		return fmt.Errorf("run record name %q is not inside the run folder", name)
+	}
 	b, err := core.EncodeJSON(data)
 	if err != nil {
 		return err

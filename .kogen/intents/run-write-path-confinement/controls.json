@@ -1,0 +1,41 @@
+{
+ "correct": {
+  "files": {
+   "build/core_run.go": {
+    "patch": "diff --git a/build/core_run.go b/build/core_run.go\nindex 7ffee7e..8833c87 100644\n--- a/build/core_run.go\n+++ b/build/core_run.go\n@@ -107,6 +107,9 @@ func (r *Run) TakeLogErr() error {\n \n // Write writes `name` in the run folder as JSON and a newline.\n func (r *Run) Write(name string, data any) error {\n+\tif !filepath.IsLocal(name) {\n+\t\treturn fmt.Errorf(\"run record name %q is outside the run folder\", name)\n+\t}\n \tb, err := core.EncodeJSON(data)\n \tif err != nil {\n \t\treturn err\n"
+   }
+  }
+ },
+ "wrong": [
+  {
+   "name": "parent escape accepted",
+   "scenario": "A name that escapes through parent-directory components is rejected",
+   "step": "Then run-write-path-confinement: the fixture test passed",
+   "files": {
+    "build/core_run.go": {
+     "patch": "diff --git a/build/core_run.go b/build/core_run.go\nindex 8833c87..4a5c673 100644\n--- a/build/core_run.go\n+++ b/build/core_run.go\n@@ -107,7 +107,7 @@ func (r *Run) TakeLogErr() error {\n \n // Write writes `name` in the run folder as JSON and a newline.\n func (r *Run) Write(name string, data any) error {\n-\tif !filepath.IsLocal(name) {\n+\tif filepath.IsAbs(name) {\n \t\treturn fmt.Errorf(\"run record name %q is outside the run folder\", name)\n \t}\n \tb, err := core.EncodeJSON(data)\n"
+    }
+   }
+  },
+  {
+   "name": "absolute name accepted",
+   "scenario": "An absolute name is rejected and its target is unchanged",
+   "step": "Then run-write-path-confinement: the fixture test passed",
+   "files": {
+    "build/core_run.go": {
+     "patch": "diff --git a/build/core_run.go b/build/core_run.go\nindex 8833c87..f1f8493 100644\n--- a/build/core_run.go\n+++ b/build/core_run.go\n@@ -107,7 +107,7 @@ func (r *Run) TakeLogErr() error {\n \n // Write writes `name` in the run folder as JSON and a newline.\n func (r *Run) Write(name string, data any) error {\n-\tif !filepath.IsLocal(name) {\n+\tif len(name) >= 2 && name[:2] == \"..\" {\n \t\treturn fmt.Errorf(\"run record name %q is outside the run folder\", name)\n \t}\n \tb, err := core.EncodeJSON(data)\n"
+    }
+   }
+  },
+  {
+   "name": "all names rejected",
+   "scenario": "A valid single-component name is still written as JSON and a newline",
+   "step": "Then run-write-path-confinement: the fixture test passed",
+   "files": {
+    "build/core_run.go": {
+     "patch": "diff --git a/build/core_run.go b/build/core_run.go\nindex 8833c87..287c4e2 100644\n--- a/build/core_run.go\n+++ b/build/core_run.go\n@@ -107,7 +107,7 @@ func (r *Run) TakeLogErr() error {\n \n // Write writes `name` in the run folder as JSON and a newline.\n func (r *Run) Write(name string, data any) error {\n-\tif !filepath.IsLocal(name) {\n+\tif true {\n \t\treturn fmt.Errorf(\"run record name %q is outside the run folder\", name)\n \t}\n \tb, err := core.EncodeJSON(data)\n"
+    }
+   }
+  }
+ ]
+}

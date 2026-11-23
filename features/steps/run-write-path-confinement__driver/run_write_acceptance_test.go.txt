@@ -1,0 +1,84 @@
+package build
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func acceptRun(t *testing.T) (*Run, string) {
+	t.Helper()
+	root := t.TempDir()
+	run, err := StartRun(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return run, root
+}
+
+func acceptSeed(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func acceptUnchanged(t *testing.T, path string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original\n" {
+		t.Fatalf("%s was changed to %q", path, got)
+	}
+}
+
+func TestAcceptRunWriteRejectsParentEscape(t *testing.T) {
+	run, root := acceptRun(t)
+	outside := filepath.Join(filepath.Dir(run.Dir), "outside.json")
+	deeper := filepath.Join(root, "deeper.json")
+	acceptSeed(t, outside)
+	acceptSeed(t, deeper)
+	for _, c := range []struct{ name, target string }{
+		{"../outside.json", outside},
+		{"../../../../deeper.json", deeper},
+	} {
+		if err := run.Write(c.name, map[string]string{"k": "v"}); err == nil {
+			t.Errorf("Write(%q) returned no error", c.name)
+		}
+		acceptUnchanged(t, c.target)
+	}
+}
+
+func TestAcceptRunWriteRejectsAbsolutePath(t *testing.T) {
+	run, root := acceptRun(t)
+	target := filepath.Join(root, "absolute.json")
+	acceptSeed(t, target)
+	// Mirror the absolute path inside the run folder so that joining it to the run folder would succeed.
+	mirror := filepath.Join(run.Dir, filepath.Dir(target))
+	if err := os.MkdirAll(mirror, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Write(target, map[string]string{"k": "v"}); err == nil {
+		t.Errorf("Write(%q) returned no error", target)
+	}
+	acceptUnchanged(t, target)
+	if _, err := os.Stat(filepath.Join(run.Dir, target)); err == nil {
+		t.Errorf("Write(%q) created a file inside the run folder", target)
+	}
+}
+
+func TestAcceptRunWriteKeepsSingleComponentNames(t *testing.T) {
+	run, _ := acceptRun(t)
+	if err := run.Write("result.json", map[string]string{"k": "v"}); err != nil {
+		t.Fatalf("Write(result.json): %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(run.Dir, "result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "{\"k\":\"v\"}\n" {
+		t.Fatalf("result.json is %q, want JSON and a newline", got)
+	}
+}

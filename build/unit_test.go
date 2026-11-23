@@ -434,3 +434,48 @@ func TestTheNewestExchangeIsTheLastCompletedBatchOfOutputs(t *testing.T) {
 		t.Fatalf("one exchange only: %v", got)
 	}
 }
+
+func TestRunWriteRejectsNamesOutsideTheRunFolder(t *testing.T) {
+	root := t.TempDir()
+	run, err := StartRun(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(filepath.Dir(run.Dir), "outside.json")
+	absolute := filepath.Join(root, "absolute.json")
+	for _, p := range []string{outside, absolute} {
+		if err := os.WriteFile(p, []byte("original\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct{ name, target string }{
+		{"../outside.json", outside},
+		{"../../../../absolute.json", absolute},
+		{absolute, absolute},
+	} {
+		if err := run.Write(c.name, map[string]string{"k": "v"}); err == nil {
+			t.Errorf("Write(%q) returned no error", c.name)
+		}
+		got, err := os.ReadFile(c.target)
+		if err != nil || string(got) != "original\n" {
+			t.Errorf("Write(%q) changed %s: %q, %v", c.name, c.target, got, err)
+		}
+	}
+}
+
+func TestRunWriteKeepsSingleComponentNames(t *testing.T) {
+	run, err := StartRun(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Write("result.json", map[string]string{"k": "v"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(run.Dir, "result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "{\"k\":\"v\"}\n" {
+		t.Fatalf("result.json is %q, want JSON and a newline", got)
+	}
+}
