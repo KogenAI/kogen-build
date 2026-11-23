@@ -60,6 +60,14 @@ func parseArgs(argv []string, flagOutput io.Writer) (arguments, string) {
 	if flags.NArg() != 0 {
 		return arguments{}, fmt.Sprintf("unexpected argument %q; %s", flags.Arg(0), expectedForms)
 	}
+	supplied := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) { supplied[f.Name] = true })
+	if mode == "build" && supplied["id"] {
+		return arguments{}, "--id is not valid for build; " + expectedForms
+	}
+	if mode == "resume" && supplied["slug"] {
+		return arguments{}, "--slug is not valid for resume; " + expectedForms
+	}
 	if mode == "build" && a.slug == "" {
 		return arguments{}, "missing required --slug for build; " + expectedForms
 	}
