@@ -76,6 +76,10 @@ func recoveryRefused(why, kind string) *sys.Error {
 
 // Recover runs the recovery and returns the command's exit code.
 func Recover(_ context.Context, s *sys.Session, in RecoverInput) (int, error) {
+	// A relative output would put the archive under the process working directory.
+	if !filepath.IsAbs(in.Output) {
+		return 0, recoveryRefused("output destination is not an absolute path: "+in.Output, "")
+	}
 	repo, err := git.Open(in.Project, s.Env)
 	if err != nil {
 		return 0, err

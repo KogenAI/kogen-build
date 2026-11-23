@@ -323,6 +323,28 @@ func TestRecoveryRefusals(t *testing.T) {
 	}
 }
 
+func TestRecoveryRefusesARelativeOutputBeforeWritingAnything(t *testing.T) {
+	// Not parallel: the process working directory is changed.
+	e, id := blocked(t, "printf candidate > app.txt")
+	cwd := physical(t, t.TempDir())
+	t.Chdir(cwd)
+	for _, rel := range []string{"archive", "nested/archive", "./archive", "../archive", ""} {
+		state, files := e.state(), e.runFiles(id)
+		r := e.recover(id, rel)
+		eq(t, "exit", r.exit, 1)
+		contains(t, "output", r.shown(), "candidate/recovery_refused: output destination is not an absolute path: "+rel+"; inspect the run/receipt")
+		if entries, err := os.ReadDir(cwd); err != nil || len(entries) != 0 {
+			t.Fatalf("output %q: the working directory was written to: %v %v", rel, entries, err)
+		}
+		if !reflect.DeepEqual(e.state(), state) || !reflect.DeepEqual(e.runFiles(id), files) {
+			t.Fatalf("output %q: custody changed", rel)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(e.root, ".kogen/local/recoveries")); err == nil {
+		t.Fatal("a recovery receipt directory was created")
+	}
+}
+
 func TestRecoveryRefusesABuildThatReportedNoBlocker(t *testing.T) {
 	t.Parallel()
 	// ExUnit: lib/kogen/recover.ex (only a completed BUILDER-REPORTED blocker is recoverable)

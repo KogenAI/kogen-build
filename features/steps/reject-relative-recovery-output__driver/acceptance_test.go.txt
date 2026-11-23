@@ -1,0 +1,57 @@
+package build
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
+
+// Acceptance driver for reject-relative-recovery-output. It is copied into this package as a
+// test file by the acceptance step and removed afterwards.
+
+func TestAcceptanceRelativeRecoveryOutputRefused(t *testing.T) {
+	e, id := blocked(t, "printf candidate > app.txt")
+	cwd := physical(t, t.TempDir())
+	t.Chdir(cwd)
+	for _, rel := range []string{"relative-archive", "nested/relative-archive"} {
+		state, files := e.state(), e.runFiles(id)
+		r := e.recover(id, rel)
+		if r.err == nil || r.exit != 1 {
+			t.Fatalf("relative output %q: want a refusal with exit 1, got exit %d err %v\n%s", rel, r.exit, r.err, r.shown())
+		}
+		contains(t, "refusal", r.err.Error(), rel)
+		entries, err := os.ReadDir(cwd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("relative output %q: the process working directory %s was written to (%d entries, first %q)", rel, cwd, len(entries), entries[0].Name())
+		}
+		if _, err := os.Lstat(filepath.Join(e.root, ".kogen/local/recoveries")); err == nil {
+			t.Fatalf("relative output %q: a recovery receipt directory was created in the checkout", rel)
+		}
+		if got, err := os.ReadFile(filepath.Join(e.root, "app.txt")); err != nil || string(got) != "candidate" {
+			t.Fatalf("relative output %q: the checkout's candidate file changed: %q %v", rel, got, err)
+		}
+		if !reflect.DeepEqual(e.state(), state) || !reflect.DeepEqual(e.runFiles(id), files) {
+			t.Fatalf("relative output %q: the checkout or the Build's custody changed", rel)
+		}
+	}
+}
+
+func TestAcceptanceAbsoluteRecoveryOutputStillRecovers(t *testing.T) {
+	e, id := blocked(t, "printf candidate > app.txt")
+	output := filepath.Join(physical(t, t.TempDir()), "archive")
+	r := e.recover(id, output)
+	if r.exit != 0 || r.err != nil {
+		t.Fatalf("absolute output %q: recovery did not complete: exit %d\n%s", output, r.exit, r.shown())
+	}
+	if _, err := os.Stat(filepath.Join(output, "manifest.json")); err != nil {
+		t.Fatalf("no manifest in the archive: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(output, "candidate", "app.txt"))
+	if err != nil || string(got) != "candidate" {
+		t.Fatalf("the archive does not hold the candidate bytes: %q %v", got, err)
+	}
+}
