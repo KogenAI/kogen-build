@@ -82,7 +82,7 @@ func (b *Attempt) brief() (executor.Brief, error) {
 				"ordinary Refine and new exact approval are required if scope must change.",
 			len(stable), provider.InputBudgetBytes), 1)
 	}
-	files, err := b.repo.OK("ls-files", "--cached", "--others", "--exclude-standard")
+	files, err := b.repo.OK("ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	if err != nil {
 		return executor.Brief{}, err
 	}

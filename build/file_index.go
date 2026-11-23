@@ -17,17 +17,53 @@ const fileIndexBytes = 65536
 const fileIndexNotice = "The omitted paths still exist in the repository: they remain readable and searchable " +
 	"with the existing file, read and search tools."
 
+// displayPath is how the index shows a path: one that contains a control character (below 0x20
+// or 0x7f) is written on a single line with \n, \t, \r or \xNN for each control character and
+// \\ for a backslash; any other path is unchanged. Counts, ordering and required-path matching
+// use the raw names.
+func displayPath(p string) string {
+	if !strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return p
+	}
+	var b strings.Builder
+	for i := 0; i < len(p); i++ {
+		switch c := p[i]; {
+		case c == '\n':
+			b.WriteString(`\n`)
+		case c == '\t':
+			b.WriteString(`\t`)
+		case c == '\r':
+			b.WriteString(`\r`)
+		case c == '\\':
+			b.WriteString(`\\`)
+		case c < 0x20 || c == 0x7f:
+			fmt.Fprintf(&b, `\x%02x`, c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
 // fileIndex is the index section of the builder brief's Dynamic part for the output of
-// `git ls-files --cached --others --exclude-standard`. A listing that fits fileIndexBytes is
-// shown verbatim; a larger one becomes a deterministic bounded index: the true path counts,
+// `git ls-files -z --cached --others --exclude-standard`: each path followed by NUL. A listing
+// whose display fits fileIndexBytes is shown verbatim, one path per line; a larger one becomes a deterministic bounded index: the true path counts,
 // every required path (the protected baseline and the Intent's acceptance paths) listed
 // individually, a breadth-first selection of other paths across directories, and the omitted
 // paths counted per disjoint directory. The result depends only on the path set.
 func fileIndex(listing string, required []string) string {
-	if full := "# Files\n\n" + listing; len(full) <= fileIndexBytes {
-		return full
+	paths := strings.Split(listing, "\x00")
+	if paths[len(paths)-1] == "" {
+		paths = paths[:len(paths)-1]
 	}
-	paths := strings.Split(strings.TrimRight(listing, "\n"), "\n")
+	var full strings.Builder
+	full.WriteString("# Files\n\n")
+	for _, p := range paths {
+		full.WriteString(displayPath(p) + "\n")
+	}
+	if full.Len() <= fileIndexBytes {
+		return full.String()
+	}
 	sort.Strings(paths)
 	paths = slices.Compact(paths)
 
@@ -76,7 +112,7 @@ func fileIndex(listing string, required []string) string {
 		root := &omitNode{}
 		for _, p := range paths {
 			if listed[p] {
-				shown = append(shown, p)
+				shown = append(shown, displayPath(p))
 			} else {
 				root.add(path.Dir(p))
 			}
@@ -177,7 +213,7 @@ func (n *omitNode) emit(b *strings.Builder, dir string, level, depth int) {
 			b.WriteString("./: " + strconv.Itoa(n.direct) + " omitted paths\n")
 		}
 	} else if n.direct > 0 || level >= depth {
-		b.WriteString(dir + "/: " + strconv.Itoa(n.total) + " omitted paths\n")
+		b.WriteString(displayPath(dir) + "/: " + strconv.Itoa(n.total) + " omitted paths\n")
 		return
 	}
 	names := make([]string, 0, len(n.children))

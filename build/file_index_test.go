@@ -14,7 +14,7 @@ func TestFileIndexVeryWideRepositoryStaysBounded(t *testing.T) {
 	total := 0
 	for d := 0; d < 3000; d++ {
 		for f := 0; f < 20; f++ {
-			fmt.Fprintf(&sb, "dir-%05d-with-a-long-name/file-%02d.txt\n", d, f)
+			fmt.Fprintf(&sb, "dir-%05d-with-a-long-name/file-%02d.txt\x00", d, f)
 			total++
 		}
 	}

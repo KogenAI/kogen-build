@@ -1,0 +1,216 @@
+package build
+
+import (
+	"fmt"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/git"
+	"github.com/KogenAI/kogen-coordinator/project"
+)
+
+const nlIndexLimit = 65536
+
+// nlList is a `git ls-files -z` listing of the paths: each path followed by NUL.
+func nlList(paths ...string) string {
+	return strings.Join(paths, "\x00") + "\x00"
+}
+
+// nlBulk is n distinct ordinary paths, enough to push a listing past the index limit.
+func nlBulk(n int) []string {
+	var out []string
+	for i := 0; i < n; i++ {
+		out = append(out, fmt.Sprintf("src/pkg-%04d/file-with-a-fairly-long-descriptive-name-%05d.txt", i/10, i))
+	}
+	return out
+}
+
+func nlSection(index, heading string) []string {
+	i := strings.Index(index, heading+"\n")
+	if i < 0 {
+		return nil
+	}
+	rest := index[i+len(heading)+1:]
+	if j := strings.Index(rest, "\n## "); j >= 0 {
+		rest = rest[:j]
+	}
+	var out []string
+	for _, l := range strings.Split(rest, "\n") {
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func nlMeta(t *testing.T, index, key string) int {
+	t.Helper()
+	for _, l := range strings.Split(index, "\n") {
+		if v, ok := strings.CutPrefix(l, key+": "); ok {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil {
+				t.Fatalf("metadata line %q is not a number", l)
+			}
+			return n
+		}
+	}
+	t.Fatalf("no %q metadata line in:\n%.600s", key, index)
+	return 0
+}
+
+func nlCount(lines []string, want string) int {
+	n := 0
+	for _, l := range lines {
+		if l == want {
+			n++
+		}
+	}
+	return n
+}
+
+// nlHasControl reports a control character (below 0x20 or 0x7f) in s, other than the newlines
+// that separate lines when newlines is true.
+func nlHasControl(s string, newlines bool) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; (c < 0x20 && !(newlines && c == '\n')) || c == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// nlEntries counts the lines that are one displayed entry of a path starting with prefix and
+// ending with suffix, with no control character in them.
+func nlEntries(lines []string, prefix, suffix string) int {
+	n := 0
+	for _, l := range lines {
+		if strings.HasPrefix(l, prefix) && strings.HasSuffix(l, suffix) && len(l) > len(prefix)+len(suffix) && !nlHasControl(l, false) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestNewlineFilenameIsOneEscapedEntryWithTrueCounts(t *testing.T) {
+	// A small listing is shown verbatim, one line per path, the newline escaped.
+	small := fileIndex(nlList("README.md", "docs/line\nbreak.txt", "src/a.go"), nil)
+	sl := strings.Split(strings.TrimSuffix(small, "\n"), "\n")
+	if !strings.HasSuffix(small, "\n") || len(sl) != 5 || sl[0] != "# Files" || sl[1] != "" || sl[2] != "README.md" || sl[4] != "src/a.go" || nlEntries(sl[3:4], "docs/line", "break.txt") != 1 {
+		t.Fatalf("small index is not three one-line entries with the newline path escaped: %q", small)
+	}
+	// An oversized listing keeps true counts: a newline filename is one path, not several.
+	paths := append(nlBulk(3000), "docs/line\nbreak.txt", "docs/tab\there.txt")
+	out := fileIndex(nlList(paths...), nil)
+	if len(out) > nlIndexLimit {
+		t.Fatalf("index is %d bytes, want at most %d", len(out), nlIndexLimit)
+	}
+	total := nlMeta(t, out, "total paths")
+	if total != len(paths) {
+		t.Fatalf("total paths: %d, want %d", total, len(paths))
+	}
+	if listed, omitted := nlMeta(t, out, "listed paths"), nlMeta(t, out, "omitted paths"); listed+omitted != total {
+		t.Fatalf("listed %d + omitted %d != total %d", listed, omitted, total)
+	}
+	if nlHasControl(out, true) {
+		t.Fatalf("index contains a control character inside a line:\n%.600s", out)
+	}
+	ol := strings.Split(out, "\n")
+	if nlCount(ol, "break.txt") != 0 || nlCount(ol, "docs/line") != 0 {
+		t.Fatalf("a path fragment appears as its own line:\n%.600s", out)
+	}
+	// Through the real Git listing: the builder brief shows the file as one escaped line.
+	dir := physical(t, t.TempDir())
+	env := isolatedEnv()
+	initGit(t, dir, env)
+	writeFile(t, filepath.Join(dir, "README.md"), "# Fixture project\n", 0o644)
+	writeFile(t, filepath.Join(dir, "src/main.go"), "package main\n", 0o644)
+	writeFile(t, filepath.Join(dir, "docs/line\nbreak.txt"), "x\n", 0o644)
+	writeFile(t, filepath.Join(dir, ".kogen/intents/fixture/intent.md"), "# Fixture\nSlug: fixture\nModel: not applicable — fixture\n\nAcceptance:\n- .kogen/intents/fixture/acceptance.feature\n- features/steps/s.js\n\n## Tests\n- one: unit\n", 0o644)
+	writeFile(t, filepath.Join(dir, ".kogen/intents/fixture/acceptance.feature"), "Feature: F\n  Scenario: S\n    Given a thing\n", 0o644)
+	writeFile(t, filepath.Join(dir, "features/steps/s.js"), "// steps\n", 0o644)
+	intent, err := project.LoadIntent(dir, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Attempt{State: State{Root: dir, Slug: "fixture", Config: &project.Config{}, Baseline: []string{"src/main.go"}}, intent: intent, repo: git.New(dir, env)}
+	brief, err := b.brief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := strings.Index(brief.Dynamic, "# Files\n")
+	if i < 0 {
+		t.Fatal("no \"# Files\" section in the dynamic evidence")
+	}
+	lines := strings.Split(brief.Dynamic[i:], "\n")
+	if nlEntries(lines, "docs/line", "break.txt") != 1 || nlCount(lines, "break.txt") != 0 || nlCount(lines, "docs/line") != 0 {
+		t.Fatalf("the newline filename is not exactly one escaped line:\n%.800s", brief.Dynamic[i:])
+	}
+}
+
+func TestRequiredNewlinePathStaysOneEntryWhenOversized(t *testing.T) {
+	req := []string{"zz/line\nbreak.txt", "zz/other\r\nname.txt", "dir\nname/file.txt", "src/plain.txt"}
+	paths := nlBulk(3000)
+	for i := 0; i < 20; i++ {
+		paths = append(paths, fmt.Sprintf("zz/a-%02d.txt", i))
+	}
+	paths = append(paths, req...)
+	out := fileIndex(nlList(paths...), req)
+	if len(out) > nlIndexLimit {
+		t.Fatalf("index is %d bytes, want at most %d", len(out), nlIndexLimit)
+	}
+	if total := nlMeta(t, out, "total paths"); total != len(paths) {
+		t.Fatalf("total paths: %d, want %d", total, len(paths))
+	}
+	listed := nlSection(out, "## Listed paths")
+	for _, e := range [][2]string{{"zz/line", "break.txt"}, {"zz/other", "name.txt"}, {"dir", "name/file.txt"}} {
+		if n := nlEntries(listed, e[0], e[1]); n != 1 {
+			t.Fatalf("required path starting %q and ending %q is listed %d times as one entry, want exactly once:\n%.800s", e[0], e[1], n, out)
+		}
+	}
+	if nlCount(listed, "src/plain.txt") != 1 {
+		t.Fatalf("required ordinary path is not listed exactly once:\n%.800s", out)
+	}
+	for _, fragment := range []string{"break.txt", "zz/line", "name.txt", "zz/other", "dir", "name/file.txt", "file.txt"} {
+		if nlCount(strings.Split(out, "\n"), fragment) != 0 {
+			t.Fatalf("a path fragment %q appears as its own line:\n%.800s", fragment, out)
+		}
+	}
+	if nlHasControl(out, true) {
+		t.Fatalf("index contains a control character inside a line")
+	}
+}
+
+func TestOrdinaryPathsKeepDisplayAndOversizedStaysBounded(t *testing.T) {
+	ordinary := []string{"README.md", "docs/with space/notes.md", "src/ünï-café.go"}
+	small := fileIndex(nlList(ordinary...), nil)
+	if want := "# Files\n\n" + strings.Join(ordinary, "\n") + "\n"; small != want {
+		t.Fatalf("small index = %q, want %q", small, want)
+	}
+	paths := append(nlBulk(3000), ordinary...)
+	for i := 0; i < 500; i++ {
+		paths = append(paths, fmt.Sprintf("wide\x01%03d/line\nfile-%03d.txt", i, i))
+	}
+	out := fileIndex(nlList(paths...), ordinary)
+	if len(out) > nlIndexLimit {
+		t.Fatalf("index is %d bytes, want at most %d", len(out), nlIndexLimit)
+	}
+	if total := nlMeta(t, out, "total paths"); total != len(paths) {
+		t.Fatalf("total paths: %d, want %d", total, len(paths))
+	}
+	listed := nlSection(out, "## Listed paths")
+	for _, want := range ordinary {
+		if nlCount(listed, want) != 1 {
+			t.Fatalf("ordinary path %q is not listed unchanged exactly once:\n%.800s", want, out)
+		}
+	}
+	for _, l := range listed {
+		if strings.HasPrefix(l, `"`) {
+			t.Fatalf("listed path %q was quoted", l)
+		}
+	}
+	if nlHasControl(out, true) {
+		t.Fatalf("index contains a control character inside a line")
+	}
+}
