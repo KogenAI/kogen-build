@@ -1,0 +1,26 @@
+{
+  "correct": {
+    "files": {
+      "go.mod": "module github.com/KogenAI/kogen-build\n\ngo 1.27.2\n\nrequire (\n\tgithub.com/KogenAI/kogen-coordinator v0.0.0-20261124131633-b427b145576a\n\tgithub.com/KogenAI/kogen-executor v0.0.0-20261111115604-e41db3d2d2e4\n\tgithub.com/KogenAI/kogen-loop v0.0.0-20261111104243-16bc90355dfb\n\tgithub.com/KogenAI/kogen-review v0.0.0-20261113154643-47c694035e56\n\tgithub.com/KogenAI/kogen-verification v0.0.0-20261119103050-38d68a15fa0a\n)\n\nrequire golang.org/x/text v0.43.0 // indirect\n",
+      "go.sum": "github.com/KogenAI/kogen-coordinator v0.0.0-20261116203159-d0dab3d6a948 h1:sWt/DXsAW3VnQ/RnJCWK4pKZFQvosXEFivTrPxkkk6c=\ngithub.com/KogenAI/kogen-coordinator v0.0.0-20261116203159-d0dab3d6a948/go.mod h1:SR9BBvnCfFrNHnL7J3D9lCicIubivffh21/q/4TXIFk=\ngithub.com/KogenAI/kogen-coordinator v0.0.0-20261124131633-b427b145576a h1:Xaarn87/ubzeVvhJCvl53MBKtUNrFo9KX5HkLM5WkSs=\ngithub.com/KogenAI/kogen-coordinator v0.0.0-20261124131633-b427b145576a/go.mod h1:SR9BBvnCfFrNHnL7J3D9lCicIubivffh21/q/4TXIFk=\ngithub.com/KogenAI/kogen-executor v0.0.0-20261111115604-e41db3d2d2e4 h1:JeT1neuyN0y0ldMTq0kiv8dEAsKX9wMHseopoPn6kck=\ngithub.com/KogenAI/kogen-executor v0.0.0-20261111115604-e41db3d2d2e4/go.mod h1:1aw+rhdSBMEagexTyXdL7aRCYZO9Vj1zTx4c88AI+hE=\ngithub.com/KogenAI/kogen-loop v0.0.0-20261111104243-16bc90355dfb h1:oICLvgo6hCyVYKztkJ0wTgY8Q9eSvSgIHxlEfe065dM=\ngithub.com/KogenAI/kogen-loop v0.0.0-20261111104243-16bc90355dfb/go.mod h1:yPduvTAVdxH5egqW82Uis/ZhemRb5gNSdzTll/f6bG0=\ngithub.com/KogenAI/kogen-review v0.0.0-20261113154643-47c694035e56 h1:5KPEgXWH0D0DlQ3cHrWv9EWUu0/Zf0s1uqrK53ke8p8=\ngithub.com/KogenAI/kogen-review v0.0.0-20261113154643-47c694035e56/go.mod h1:GerfruyyxJ+W0DGad6OzxbMVvTZKmakjYcXwXwccjmo=\ngithub.com/KogenAI/kogen-verification v0.0.0-20261111114253-4a379220bdb1 h1:u8SZRQIsNFg+3zkMCjmcABwXntAM1SUXqFTyDqyaJoo=\ngithub.com/KogenAI/kogen-verification v0.0.0-20261111114253-4a379220bdb1/go.mod h1:b3TIpodtSQnpvmfgd8lXd5PtiNNn4Y/fQM+IsTj8tQA=\ngithub.com/KogenAI/kogen-verification v0.0.0-20261119103050-38d68a15fa0a h1:Zl+ABbS+U6lS8NVlMgwCpnbO/NrfSyD/mB9Vm7f1IWI=\ngithub.com/KogenAI/kogen-verification v0.0.0-20261119103050-38d68a15fa0a/go.mod h1:b3TIpodtSQnpvmfgd8lXd5PtiNNn4Y/fQM+IsTj8tQA=\ngolang.org/x/mod v0.41.0/go.mod h1:Ek9pY8RKWXwsWvd3rQiHYtMqkjSUV+s1Rj7j4H5Ur6o=\ngolang.org/x/sync v0.24.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=\ngolang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=\ngolang.org/x/text v0.43.0/go.mod h1:hbSIYA/amXcRXTFSZqh8tWHEoqRvvbKPJ2uz/KU+a+s=\ngolang.org/x/tools v0.51.0/go.mod h1:9eEncMayCV6zRMGhR5eZEC2iBx98qWcF1HZ9Z7wJOoA=\n"
+    }
+  },
+  "wrong": [
+    {
+      "name": "Older Coordinator requirement despite new checksums",
+      "scenario": "Resolve the exact Coordinator pin from the consumer module",
+      "step": "Then pin-coordinator-strict-build-lock: the resolved module line is \"github.com/KogenAI/kogen-coordinator v0.0.0-20261124131633-b427b145576a\"",
+      "files": {
+        "go.mod": "module github.com/KogenAI/kogen-build\n\ngo 1.27.2\n\nrequire (\n\tgithub.com/KogenAI/kogen-coordinator v0.0.0-20261116203159-d0dab3d6a948\n\tgithub.com/KogenAI/kogen-executor v0.0.0-20261111115604-e41db3d2d2e4\n\tgithub.com/KogenAI/kogen-loop v0.0.0-20261111104243-16bc90355dfb\n\tgithub.com/KogenAI/kogen-review v0.0.0-20261113154643-47c694035e56\n\tgithub.com/KogenAI/kogen-verification v0.0.0-20261119103050-38d68a15fa0a\n)\n\nrequire golang.org/x/text v0.43.0 // indirect\n"
+      }
+    },
+    {
+      "name": "Correct requirement replaced by the older Coordinator",
+      "scenario": "Resolve the exact Coordinator pin from the consumer module",
+      "step": "Then pin-coordinator-strict-build-lock: the resolved module line is \"github.com/KogenAI/kogen-coordinator v0.0.0-20261124131633-b427b145576a\"",
+      "files": {
+        "go.mod": "module github.com/KogenAI/kogen-build\n\ngo 1.27.2\n\nrequire (\n\tgithub.com/KogenAI/kogen-coordinator v0.0.0-20261124131633-b427b145576a\n\tgithub.com/KogenAI/kogen-executor v0.0.0-20261111115604-e41db3d2d2e4\n\tgithub.com/KogenAI/kogen-loop v0.0.0-20261111104243-16bc90355dfb\n\tgithub.com/KogenAI/kogen-review v0.0.0-20261113154643-47c694035e56\n\tgithub.com/KogenAI/kogen-verification v0.0.0-20261119103050-38d68a15fa0a\n)\n\nrequire golang.org/x/text v0.43.0 // indirect\n\nreplace github.com/KogenAI/kogen-coordinator v0.0.0-20261124131633-b427b145576a => github.com/KogenAI/kogen-coordinator v0.0.0-20261116203159-d0dab3d6a948\n"
+      }
+    }
+  ]
+}
