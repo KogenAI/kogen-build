@@ -125,7 +125,8 @@ func (b *Attempt) reviewBlocked() bool {
 	return false
 }
 
-func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git.Repo, out **Attempt) error {
+// resumePreflight is the single native refusal path, before any run or checkout write.
+func resumePreflight(ctx context.Context, s *sys.Session, in ResumeInput, repo *git.Repo, evidence *resumeEvidence) error {
 	root, id := repo.Dir, in.ID
 	if !buildID.MatchString(id) {
 		return sys.Fail("candidate", "resume_unsupported", notBuildIDDetail(id), 1)
@@ -138,12 +139,16 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	if err != nil {
 		return refuse(id, "unknown checkpoint: absent checkpoint", "resume_unsupported")
 	}
+	evidence.raw = raw
 	loaded, why := decodeCheckpoint(raw)
 	if why != "" {
 		return refuse(id, "unknown checkpoint: "+why, "")
 	}
 	doc := loaded.Doc
+	evidence.doc = doc
 	b := &Attempt{State: *loaded.State, s: s, deps: in.Deps, repo: repo, cache: provider.NewCache(loaded.State.PromptCache)}
+	b.observationEnv = evidence.gitEnv
+	evidence.b = b
 	if err := b.validateWorkingContext(); err != nil {
 		return err
 	}
@@ -176,6 +181,7 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 			b.LastReview.Tree != b.LastPass.Tree || !b.LastPass.Green {
 			return refuse(id, "already-landed commit provenance changed", "")
 		}
+		evidence.landed = true
 		if c.AlreadyPresent {
 			s.Puts("Build " + id + " already present at HEAD " + c.Commit)
 		} else {
@@ -257,18 +263,18 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 	if backup, err := readBounded(original); err != nil || !bytes.Equal(backup, savedIndex) {
 		return refuse(id, "original index backup missing or damaged: "+original, "")
 	}
-	candidate, err := snapshotTree(repo, b.Start, nil)
+	candidate, err := snapshotTreeEnv(repo, b.Start, nil, evidence.gitEnv)
 	if err != nil {
 		return err
 	}
 	if candidate != doc.Candidate && !b.reviewBlocked() {
-		paths, err := repo.Changed(doc.Candidate, candidate)
+		paths, err := b.observedChanges(doc.Candidate, candidate)
 		if err != nil {
 			return err
 		}
 		detail := "candidate contents/modes or unrelated paths changed: " + strings.Join(paths, ", ")
 		if c := b.Continuation; c.Stage == StageReviewOnly {
-			tree, err := snapshotTree(repo, b.Start, b.Excluded)
+			tree, err := snapshotTreeEnv(repo, b.Start, b.Excluded, evidence.gitEnv)
 			if err != nil {
 				detail += "; the candidate review tree cannot be inspected: " + err.Error()
 			} else if tree != c.Pass.Tree {
@@ -317,6 +323,42 @@ func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git
 			return err
 		}
 	}
+	evidence.currentIndex, evidence.refreshed = currentIndex, refreshed
+	return nil
+}
+
+type resumeEvidence struct {
+	gitEnv            []string
+	b                 *Attempt
+	doc               Checkpoint
+	raw, currentIndex []byte
+	refreshed, landed bool
+}
+
+func resumeLocked(ctx context.Context, s *sys.Session, in ResumeInput, repo *git.Repo, out **Attempt) error {
+	var evidence resumeEvidence
+	view, cleanup, err := privateResumeRepo(repo)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	evidence.gitEnv = view
+	if err := resumePreflight(ctx, s, in, repo.Observing(), &evidence); err != nil {
+		return err
+	}
+	return continueResume(ctx, s, in, repo, evidence, out)
+}
+
+func continueResume(ctx context.Context, s *sys.Session, in ResumeInput, repo *git.Repo, evidence resumeEvidence, out **Attempt) error {
+	if evidence.landed {
+		return nil
+	}
+	b := evidence.b
+	b.repo = repo
+	b.observationEnv = nil
+	root, id := repo.Dir, in.ID
+	currentIndex, refreshed := evidence.currentIndex, evidence.refreshed
+	savedIndex, _ := decodeBase64(evidence.doc.Index)
 	root0 := id
 	if b.RootRun != nil {
 		root0 = *b.RootRun

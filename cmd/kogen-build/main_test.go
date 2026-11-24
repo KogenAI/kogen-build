@@ -1,7 +1,11 @@
 package main
 
 import (
+	"github.com/KogenAI/kogen-coordinator/git"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -49,5 +53,73 @@ func TestParseArgsAccepts(t *testing.T) {
 	a, msg = parseArgs([]string{"resume", "--id", "i"}, io.Discard)
 	if msg != "" || a.mode != "resume" || a.project != "." || a.id != "i" {
 		t.Fatalf("resume: %+v %q", a, msg)
+	}
+}
+
+func TestParsePrepareContinuation(t *testing.T) {
+	a, msg := parseArgs([]string{"prepare-continuation", "--project", "checkout", "--id", "abcdef12", "--binding", "binding.json"}, io.Discard)
+	if msg != "" || a.mode != "prepare-continuation" || a.binding != "binding.json" || a.id != "abcdef12" {
+		t.Fatalf("prepare: %+v %q", a, msg)
+	}
+	for _, tc := range []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"prepare-continuation", "--id", "abcdef12"}, "--binding"},
+		{[]string{"prepare-continuation", "--binding", "binding.json"}, "--id"},
+		{[]string{"prepare-continuation", "--id", "abcdef12", "--binding", "binding.json", "--slug", "s"}, "--slug is not valid"},
+		{[]string{"resume", "--id", "abcdef12", "--binding", "binding.json"}, "binding"},
+	} {
+		_, msg := parseArgs(tc.argv, io.Discard)
+		if !strings.Contains(msg, tc.want) {
+			t.Fatalf("%v: %q lacks %q", tc.argv, msg, tc.want)
+		}
+	}
+}
+
+func TestPrepareReadbackDoesNotWriteGitObjects(t *testing.T) {
+	dir := t.TempDir()
+	gitCmd := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	gitCmd("init", "-q")
+	gitCmd("config", "user.email", "x@example.com")
+	gitCmd("config", "user.name", "x")
+	if err := os.WriteFile(filepath.Join(dir, "a"), []byte("base"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd("add", "a")
+	gitCmd("commit", "-qm", "base")
+	if err := os.WriteFile(filepath.Join(dir, "a"), []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	objects := filepath.Join(dir, ".git", "objects")
+	count := func() int {
+		n := 0
+		err := filepath.WalkDir(objects, func(_ string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				n++
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	before := count()
+	repo, err := git.OpenReadOnly(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observedTree(repo) == "" {
+		t.Fatal("missing checkout tree")
+	}
+	if after := count(); after != before {
+		t.Fatalf("readback wrote Git objects: %d -> %d", before, after)
 	}
 }

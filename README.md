@@ -78,3 +78,66 @@ go test ./... -update
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+## Native continuation evidence for fleet workers
+
+`kogen-build` maintains the native adapter; it does not schedule fleet work. Prepare
+without provider credentials, reservation, queue changes, or checkout edits:
+
+```sh
+./kogen-build prepare-continuation --project /path/to/checkout --id BUILD_ID --binding binding.json
+```
+
+`binding.json` is an object with string fields `host`, `claim`, `attempt`,
+`request_revision`, and `request_hash`. These are non-secret caller identities,
+not credentials or native approval identities. Preparation merely echoes them.
+The ordinary JSON envelope includes `continuation` (also on refusal); successful
+preparation exits with zero, a native hold with one and the native structured
+category/kind/message. Diagnostics remain on stderr. Existing build/resume output
+is unchanged. There is no standalone fleet execution authority switch: standalone
+execution remains `resume`.
+
+The typed library entry points on `build.ResumeInput` are:
+
+```go
+PrepareContinuation(ctx context.Context, s *sys.Session, binding build.ContinuationBinding) (build.ContinuationPlan, error)
+ExecuteContinuation(ctx context.Context, s *sys.Session, plan build.ContinuationPlan, fresh build.ContinuationBinding, admit func(context.Context, build.ContinuationPlan, build.ContinuationBinding) error) (int, error)
+```
+
+Preparation returns evidence even on native refusal. `held_reason` is the native
+refusal detail, not the optimistic inspect `resume_status`; inspect facts remain
+available but are not continuation authority. The plan identifies the requested
+Build, slug, checkout root, current and saved device/inode identity, saved candidate
+and currently observed candidate tree, source start, saved approval and approved
+contract, exact checkpoint bytes, stage, binding, and remaining roles/checks.
+`approval_sha256` hashes saved approval bytes; `current_approval_sha256` hashes
+current bytes when readable. `contract_sha256` is the approved baseline's
+`project.Hash`, retained from that approval, not a fleet request hash. A malformed
+or missing checkpoint yields only observed evidence. Empty work lists are arrays.
+
+The remaining roles are in native order: builder continuations can need build then
+review; resumed review routing can need review; commit-failed and already-landed
+checkpoints need neither. Remaining configured check commands retain configuration
+order, omitting only native ledger reuse or the native commit-failed/already-landed
+no-rerun route. Reuse is tree/environment-bound, not a waiver for later edits.
+These commands do not replace native acceptance/model gates, scoped-stage custody
+and ordered stage gates, whole-Intent verification, independent review and repair,
+or finishing/commit checks. Checkpoint identity binds the saved stage progress,
+source provenance and custody; the adapter revalidates these through native resume.
+
+Execution acquires the ordinary Build lock, revalidates native custody, and compares
+the entire prepared evidence and fresh binding before admission or a new run. A
+missing callback, stale plan, changed binding, native hold or callback refusal causes
+no execution or evidence repair. The callback runs under that same lock, before any
+new run or paid request. The trusted worker **must freshly validate and consume its
+fenced claim**, ownership, host, attempt, revision/hash, and ordinary provider and
+finishing admission there, including rejecting duplicate attempts that previously
+stopped before landing. An echoed binding or plan is not authorization. Callback
+errors are held pre-execution refusals. Native execution retains the lock without
+a release/reacquire gap, uses supported resume, and reports ordinary exit/error and
+`Outcome`; it never bypasses provider login, verification, review or commit gates.
+
+The private fleet retains scheduling, policy, accounts, credentials, provider choice
+and landing policy. This adapter transfers no checkout, rebinds no inode, reconstructs
+no work and changes no customer records. The sponsors row remains held and its
+separate unusable-checkout reconstruction item is not resolved or delivered here.

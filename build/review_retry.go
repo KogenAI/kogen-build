@@ -173,7 +173,7 @@ func (b *Attempt) reviewOnlyBlocked(inv *invalidReview, discard bool) string {
 // listed.
 func (b *Attempt) treeDrift(observed, green string) string {
 	fact := fmt.Sprintf("observed tree %s, green tree %s", short(observed), short(green))
-	paths, err := b.repo.Changed(green, observed)
+	paths, err := b.observedChanges(green, observed)
 	if err != nil {
 		return fact + "; the changed paths cannot be inspected: " + err.Error()
 	}
@@ -254,7 +254,7 @@ func (b *Attempt) reviewOnlyRefusal() (string, error) {
 	if pass != nil && pass.Green && stateComplete(&b.State, pass, b.model) && b.ReviewRetry != nil && b.ReviewRetry.Tree == pass.Tree {
 		return "", nil
 	}
-	tree, err := snapshotTree(b.repo, b.Start, b.Excluded)
+	tree, err := snapshotTreeEnv(b.repo, b.Start, b.Excluded, b.observationEnv)
 	if err != nil {
 		return "", err
 	}

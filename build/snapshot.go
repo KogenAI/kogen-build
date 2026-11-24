@@ -26,13 +26,25 @@ const seedIndexLimit = 32
 // index is a file that depends only on start, so the Build reads it once and writes a copy of
 // it for each later snapshot, which saves one Git process in each of the many a Build takes.
 func snapshotTree(repo *git.Repo, start string, excluded []string) (string, error) {
+	return snapshotTreeEnv(repo, start, excluded, nil)
+}
+
+func snapshotTreeEnv(repo *git.Repo, start string, excluded, extra []string) (string, error) {
 	if !objectID(start) {
-		// A name can mean another tree later, and a bad one is refused by Tree with its error.
-		return repo.Tree(start, excluded)
+		// Do not cache mutable names. Resolve an observational snapshot so even its
+		// temporary objects stay private; ordinary callers keep Tree's validation.
+		if len(extra) == 0 {
+			return repo.Tree(start, excluded)
+		}
+		resolved, err := repo.Resolve(start)
+		if err != nil {
+			return "", err
+		}
+		start = resolved
 	}
 	index := sys.TmpPath("kogen-index")
 	defer os.Remove(index)
-	env := []string{"GIT_INDEX_FILE=" + index}
+	env := append(append([]string{}, extra...), "GIT_INDEX_FILE="+index)
 	key := repo.Dir + "\x00" + start
 	seeds.mu.Lock()
 	seed, ok := seeds.files[key]

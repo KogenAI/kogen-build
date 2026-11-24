@@ -1,0 +1,434 @@
+package build
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/git"
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/sys"
+)
+
+// Reflection lets the unchanged tree compile and report missing adapter behavior at runtime.
+// The public method signatures and JSON fields are specified in intent.md.
+func ncMethod(t *testing.T, in ResumeInput, name string) reflect.Value {
+	t.Helper()
+	m := reflect.ValueOf(in).MethodByName(name)
+	if !m.IsValid() {
+		m = reflect.ValueOf(&in).MethodByName(name)
+	}
+	if !m.IsValid() {
+		t.Fatalf("missing native continuation library method ResumeInput.%s", name)
+	}
+	return m
+}
+func ncValue(t *testing.T, typ reflect.Type, v any) reflect.Value {
+	t.Helper()
+	if v == nil {
+		return reflect.Zero(typ)
+	}
+	if r, ok := v.(reflect.Value); ok {
+		return r
+	}
+	r := reflect.ValueOf(v)
+	if r.Type().AssignableTo(typ) {
+		return r
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := reflect.New(typ)
+	if err := json.Unmarshal(raw, p.Interface()); err != nil {
+		t.Fatalf("adapter argument: %v", err)
+	}
+	return p.Elem()
+}
+func ncCall(t *testing.T, m reflect.Value, args ...any) []reflect.Value {
+	t.Helper()
+	if m.Type().NumIn() != len(args) {
+		t.Fatalf("adapter signature %v has wrong argument count", m.Type())
+	}
+	vals := make([]reflect.Value, len(args))
+	for i, v := range args {
+		vals[i] = ncValue(t, m.Type().In(i), v)
+	}
+	return m.Call(vals)
+}
+func ncMap(t *testing.T, v reflect.Value) map[string]any {
+	t.Helper()
+	b, err := json.Marshal(v.Interface())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err = json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+func ncErr(v reflect.Value) error {
+	if v.IsNil() {
+		return nil
+	}
+	return v.Interface().(error)
+}
+func ncDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	if e, ok := sys.AsError(err); ok {
+		return e.Detail
+	}
+	return err.Error()
+}
+func ncCompare(got, want any) error {
+	a, _ := json.Marshal(got)
+	b, _ := json.Marshal(want)
+	if string(a) != string(b) {
+		return fmt.Errorf("got %s; want %s", a, b)
+	}
+	return nil
+}
+func ncEqual(t *testing.T, name string, got, want any) {
+	t.Helper()
+	if err := ncCompare(got, want); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+}
+func ncTrue(t *testing.T, name string, b bool) { t.Helper(); ncEqual(t, name, b, true) }
+func ncSnapshot(t *testing.T, e *env) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(e.root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(e.root, p)
+		info, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		var b []byte
+		if info.Mode()&os.ModeSymlink != 0 {
+			s, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			b = []byte(s)
+		} else {
+			b, err = os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+		}
+		out[rel] = fmt.Sprintf("%s:%s", info.Mode(), sha256Hex(b))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out["external-claim"] = e.readClaim(t)
+	return out
+}
+func (e *env) readClaim(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(e.aux, "claim"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+func ncBinding(e *env) map[string]any {
+	return map[string]any{"host": e.root, "claim": filepath.Base(e.aux), "attempt": filepath.Base(e.home), "request_revision": "rev3", "request_hash": sha256Hex([]byte(e.root))}
+}
+func ncPrepare(t *testing.T, e *env, id string, binding map[string]any) (reflect.Value, map[string]any, error) {
+	t.Helper()
+	s, _, _ := e.session()
+	in := ResumeInput{Deps: e.deps(), Project: e.root, ID: id}
+	r := ncCall(t, ncMethod(t, in, "PrepareContinuation"), context.Background(), s, binding)
+	if len(r) != 2 {
+		t.Fatal("prepare must return plan and error")
+	}
+	return r[0], ncMap(t, r[0]), ncErr(r[1])
+}
+func ncExecute(t *testing.T, e *env, id string, plan reflect.Value, binding map[string]any, permit bool) (int, error, int) {
+	t.Helper()
+	s, _, _ := e.session()
+	in := ResumeInput{Deps: e.deps(), Project: e.root, ID: id}
+	m := ncMethod(t, in, "ExecuteContinuation")
+	if m.Type().NumIn() != 5 {
+		t.Fatal("execute requires context, session, plan, fresh binding, admission callback")
+	}
+	n := 0
+	callback := reflect.MakeFunc(m.Type().In(4), func(args []reflect.Value) []reflect.Value {
+		n++
+		// The admission callback runs inside the ordinary native Build lock.
+		other, _, _ := e.session()
+		lock, err := git.AcquireBuild(e.root, other)
+		if lock != nil {
+			lock.Release()
+		}
+		ncTrue(t, "native lock held during fresh admission", err != nil)
+		ncEqual(t, "fresh admission plan", ncMap(t, args[1]), ncMap(t, plan))
+		b := ncMap(t, args[2])
+		ncEqual(t, "fresh dispatch binding", b, binding)
+		if !permit {
+			return []reflect.Value{reflect.ValueOf(fmt.Errorf("fleet fenced admission held"))}
+		}
+		return []reflect.Value{reflect.Zero(m.Type().In(4).Out(0))}
+	})
+	r := ncCall(t, m, context.Background(), s, plan, binding, callback)
+	if len(r) != 2 {
+		t.Fatal("execute must return exit and error")
+	}
+	return int(r[0].Int()), ncErr(r[1]), n
+}
+func ncFixture(t *testing.T) (*env, string) {
+	t.Helper()
+	e := newEnv(t, func(c *project.Config) { c.Checks = []project.Check{{Name: "fixture-check", Run: "test -f app.txt"}} })
+	os.WriteFile(filepath.Join(e.aux, "claim"), []byte("fresh fenced claim\n"), 0600)
+	id, _ := e.interruptedAtRequest(e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": "candidate\n"}))
+	return e, id
+}
+func ncPlanEvidence(t *testing.T, e *env, id string, p map[string]any, binding map[string]any) {
+	t.Helper()
+	doc, st := e.checkpoint(id)
+	identity, err := fileIdentity(e.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ncEqual(t, "requested Build", p["build_id"], id)
+	ncEqual(t, "slug", p["slug"], testSlug)
+	ncEqual(t, "host checkout", p["root"], e.root)
+	ncEqual(t, "actual checkout identity", p["checkout_identity"], identity)
+	ncEqual(t, "saved checkout identity", p["saved_checkout_identity"], doc["identity"])
+	ncEqual(t, "candidate tree", p["candidate_tree"], doc["candidate"])
+	ncEqual(t, "source HEAD", p["start"], st["start"])
+	ncEqual(t, "checkpoint digest", p["checkpoint_sha256"], sha256Hex([]byte(e.read(filepath.Join(".kogen/local/runs", id, "checkpoint.json")))))
+	ncEqual(t, "approval identity", p["approval_sha256"], sha256Hex([]byte(e.read(".kogen/local/approvals/fixture.json"))))
+	ncEqual(t, "exact contract identity", p["contract_sha256"], project.Hash(e.root, stringsOf(t, st["baseline"])))
+	ncEqual(t, "request and fencing evidence", p["binding"], binding)
+	ncEqual(t, "stage", p["stage"], st["continuation"].(map[string]any)["stage"])
+}
+func stringsOf(t *testing.T, v any) []string {
+	t.Helper()
+	var out []string
+	for _, x := range v.([]any) {
+		out = append(out, x.(string))
+	}
+	return out
+}
+func ncCLI(t *testing.T, e *env, id string, binding map[string]any) map[string]any {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "kogen-build")
+	if b, err := exec.Command("go", "build", "-o", bin, "../cmd/kogen-build").CombinedOutput(); err != nil {
+		t.Fatalf("standalone compile: %v %s", err, b)
+	}
+	raw, _ := json.Marshal(binding)
+	input := filepath.Join(e.aux, "binding.json")
+	os.WriteFile(input, raw, 0600)
+	cmd := exec.Command(bin, "prepare-continuation", "--project", e.root, "--id", id, "--binding", input)
+	cmd.Env = isolatedEnv("HOME="+t.TempDir(), "KOGEN_PROVIDER_URL="+e.prov.srv.URL, "KOGEN_AUTH_URL="+e.prov.srv.URL)
+	b, err := cmd.Output()
+	if err != nil {
+		if x, ok := err.(*exec.ExitError); !ok || x.ExitCode() != 1 {
+			t.Fatalf("readback: %v %s", err, b)
+		}
+	}
+	var v map[string]any
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatalf("single JSON readback: %v %s", err, b)
+	}
+	p, ok := v["continuation"].(map[string]any)
+	if !ok {
+		t.Fatalf("no continuation readback: %s", b)
+	}
+	return p
+}
+func TestNCWA(t *testing.T) {
+	mode := os.Getenv("NCWA_CASE")
+	var spec map[string]any
+	if err := json.Unmarshal([]byte(os.Getenv("NCWA_SPEC")), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(mode, "control-") {
+		e, id := ncFixture(t)
+		doc, _ := e.checkpoint(id)
+		doc["identity"] = "same-path:2049:2804384"
+		e.writeCheckpoint(id, doc)
+		before := ncSnapshot(t, e)
+		r := e.resume(id)
+		ncTrue(t, "native fixture reaches identity refusal", strings.Contains(r.shown(), "another checkout identity"))
+		after := ncSnapshot(t, e)
+		if mode == "control-bad" {
+			e.write("app.txt", "forbidden edit\n")
+			after = ncSnapshot(t, e)
+		}
+		ncEqual(t, "held preserves every checkout and evidence byte", after, before)
+		fmt.Println("NCWA_PASS")
+		return
+	}
+	switch mode {
+	case "identity":
+		ncTrue(t, "historical identity pair differs", spec["saved_inode"] != spec["restored_inode"])
+		t.Logf("supplied forensic context (not a live customer checkout): %s", os.Getenv("NCWA_SPEC"))
+		e, id := ncFixture(t)
+		old := id
+		id = spec["build"].(string)
+		doc, st := e.checkpoint(old)
+		oldDir := e.runPath(old, "")
+		newDir := e.runPath(id, "")
+		if err := os.Rename(oldDir, newDir); err != nil {
+			t.Fatal(err)
+		}
+		run := st["run"].(map[string]any)
+		run["id"], run["dir"], run["log"] = id, newDir, filepath.Join(newDir, "log.jsonl")
+		doc["identity"] = fmt.Sprintf("%s:%.0f:%.0f", e.root, spec["device"], spec["saved_inode"])
+		e.writeCheckpoint(id, doc)
+		before, calls := ncSnapshot(t, e), e.prov.count()
+		binding := ncBinding(e)
+		binding["request_revision"] = spec["request_revision"]
+		plan, p, err := ncPrepare(t, e, id, binding)
+		ncTrue(t, "identity preparation held", err != nil)
+		ncPlanEvidence(t, e, id, p, binding)
+		native := e.resume(id)
+		ncEqual(t, "specific native held reason", p["held_reason"], ncDetail(native.err))
+		ncEqual(t, "standalone and library evidence", ncCLI(t, e, id, binding), p)
+		code, ex, _ := ncExecute(t, e, id, plan, binding, true)
+		ncTrue(t, "identity execution refused", code != 0 || ex != nil)
+		ncEqual(t, "no paid attempt", e.prov.count(), calls)
+		ncEqual(t, "checkout evidence and claim untouched", ncSnapshot(t, e), before)
+	case "valid":
+		e, id := ncFixture(t)
+		before, calls := ncSnapshot(t, e), e.prov.count()
+		binding := ncBinding(e)
+		plan, p, err := ncPrepare(t, e, id, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ncPlanEvidence(t, e, id, p, binding)
+		ncEqual(t, "valid in-place checkpoint has no held reason", p["held_reason"], "")
+		ncEqual(t, "remaining roles", p["required_roles"], spec["required_roles"])
+		ncEqual(t, "remaining configured checks", p["required_checks"], spec["required_checks"])
+		ncEqual(t, "standalone and library", ncCLI(t, e, id, binding), p)
+		ncEqual(t, "model-free preparation", e.prov.count()-calls, int(spec["prepare_provider_calls"].(float64)))
+		ncEqual(t, "read-only preparation", ncSnapshot(t, e), before)
+		code, err, n := ncExecute(t, e, id, plan, binding, false)
+		ncTrue(t, "plan alone cannot authorize execution", code != 0 || err != nil)
+		ncEqual(t, "fresh admission consulted", n, 1)
+		ncEqual(t, "held admission preserves custody", ncSnapshot(t, e), before)
+		e.prov.replace(e.prov.calls("finish", map[string]any{"summary": "done"}))
+		code, err, n = ncExecute(t, e, id, plan, binding, true)
+		ncEqual(t, "native continuation exit", code, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ncEqual(t, "fresh admission consulted", n, 1)
+		ncEqual(t, "exactly one landed commit", e.gitOut("rev-list", "--count", p["start"].(string)+"..HEAD"), "1")
+		after, paid := ncSnapshot(t, e), e.prov.count()
+		_, _, _ = ncExecute(t, e, id, plan, binding, false)
+		ncEqual(t, "duplicate adds no execution", e.prov.count()-paid, int(spec["additional_duplicate_calls"].(float64)))
+		ncEqual(t, "duplicate preserves evidence", ncSnapshot(t, e), after)
+	case "stale":
+		for _, v := range spec["mutations"].([]any) {
+			name := v.(string)
+			t.Run(name, func(t *testing.T) {
+				e, id := ncFixture(t)
+				binding := ncBinding(e)
+				plan, _, err := ncPrepare(t, e, id, binding)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fresh := map[string]any{}
+				for k, v := range binding {
+					fresh[k] = v
+				}
+				switch name {
+				case "approval":
+					e.write(".kogen/local/approvals/fixture.json", e.read(".kogen/local/approvals/fixture.json")+" ")
+				case "checkout":
+					e.write("app.txt", "changed after preparation\n")
+				case "checkpoint":
+					doc, _ := e.checkpoint(id)
+					doc["identity"] = "other:2049:2804384"
+					e.writeCheckpoint(id, doc)
+				default:
+					fresh[name] = fmt.Sprint(fresh[name]) + "-changed"
+				}
+				before, calls, runs := ncSnapshot(t, e), e.prov.count(), len(e.runIDs())
+				code, err, _ := ncExecute(t, e, id, plan, fresh, true)
+				ncTrue(t, "stale or mismatched dispatch refused", code != 0 || err != nil)
+				ncEqual(t, "no additional execution", e.prov.count()-calls, int(spec["additional_provider_calls"].(float64)))
+				ncEqual(t, "no additional run", len(e.runIDs())-runs, int(spec["additional_runs"].(float64)))
+				ncEqual(t, "stale evidence preserved", ncSnapshot(t, e), before)
+			})
+		}
+	case "parity":
+		for _, v := range spec["cases"].([]any) {
+			name := v.(string)
+			t.Run(name, func(t *testing.T) {
+				e, id := ncFixture(t)
+				switch name {
+				case "identity":
+					doc, _ := e.checkpoint(id)
+					doc["identity"] = "elsewhere:1:2"
+					e.writeCheckpoint(id, doc)
+				case "approval":
+					e.write(".kogen/local/approvals/fixture.json", "changed")
+				case "baseline":
+					e.write(stepsFile, "// changed\n")
+				case "staged":
+					e.write("staged.txt", "x\n")
+					e.run("git", "add", "staged.txt")
+				case "working":
+					e.write("app.txt", "changed\n")
+				case "head":
+					e.run("git", "commit", "-q", "--allow-empty", "-m", "moved")
+				case "stage":
+					doc, st := e.checkpoint(id)
+					st["continuation"] = map[string]any{"stage": StageTool, "owner": "build"}
+					e.writeCheckpoint(id, doc)
+				case "executor":
+					doc, st := e.checkpoint(id)
+					st["executor"] = map[string]any{"name": "unsupported-fixture", "rounds": 1}
+					e.writeCheckpoint(id, doc)
+				case "stat_refresh":
+					e.statRefresh("README.md")
+				}
+				before, calls := ncSnapshot(t, e), e.prov.count()
+				_, p, err := ncPrepare(t, e, id, ncBinding(e))
+				ncEqual(t, "prepare has no provider effect", e.prov.count()-calls, int(spec["additional_prepare_calls"].(float64)))
+				ncEqual(t, "prepare preserves custody", ncSnapshot(t, e), before)
+				if name == "stat_refresh" {
+					if err != nil {
+						t.Fatal(err)
+					}
+					ncEqual(t, "stat refresh is not staging drift", p["held_reason"], "")
+					return
+				}
+				native := e.resume(id)
+				ncTrue(t, "native refusal fixture", native.err != nil)
+				ncEqual(t, "same native refusal", ncDetail(err), ncDetail(native.err))
+				ncEqual(t, "specific held reason", p["held_reason"], ncDetail(native.err))
+				ncEqual(t, "parity refusal preserves custody", ncSnapshot(t, e), before)
+			})
+		}
+	default:
+		t.Fatalf("unknown fixture mode %q", mode)
+	}
+	if t.Failed() {
+		return
+	}
+	fmt.Println("NCWA_PASS")
+}

@@ -1,0 +1,10 @@
+{
+  "None": false,
+  "Path": ".kogen/models/native-continuation-worker-adapter/model.qnt",
+  "Invariants": [
+    "Safe"
+  ],
+  "Seed": "17",
+  "Samples": "100",
+  "Steps": "20"
+}

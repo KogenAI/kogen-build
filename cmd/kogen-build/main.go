@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/KogenAI/kogen-build/build"
@@ -22,11 +24,12 @@ type problem struct {
 	Message  string `json:"message"`
 }
 type result struct {
-	ExitCode int                    `json:"exit_code"`
-	Branch   string                 `json:"branch"`
-	Tree     string                 `json:"tree"`
-	Checks   []verify.CommandResult `json:"checks"`
-	Error    *problem               `json:"error"`
+	ExitCode     int                     `json:"exit_code"`
+	Branch       string                  `json:"branch"`
+	Tree         string                  `json:"tree"`
+	Checks       []verify.CommandResult  `json:"checks"`
+	Continuation *build.ContinuationPlan `json:"continuation,omitempty"`
+	Error        *problem                `json:"error"`
 }
 
 func main() {
@@ -38,14 +41,14 @@ func main() {
 const expectedForms = "expected build --project <checkout> --slug <slug> or resume --project <checkout> --id <build-id>"
 
 type arguments struct {
-	mode, project, slug, id string
+	mode, project, slug, id, binding string
 }
 
 // parseArgs validates the command line after the program name. It returns a
 // non-empty refusal message that names the rejected input, or the parsed arguments.
 func parseArgs(argv []string, flagOutput io.Writer) (arguments, string) {
 	mode := argv[0]
-	if mode != "build" && mode != "resume" {
+	if mode != "build" && mode != "resume" && mode != "prepare-continuation" {
 		return arguments{}, fmt.Sprintf("unknown mode %q; %s", mode, expectedForms)
 	}
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
@@ -54,6 +57,9 @@ func parseArgs(argv []string, flagOutput io.Writer) (arguments, string) {
 	flags.StringVar(&a.project, "project", ".", "checkout")
 	flags.StringVar(&a.slug, "slug", "", "intent slug")
 	flags.StringVar(&a.id, "id", "", "build ID")
+	if mode == "prepare-continuation" {
+		flags.StringVar(&a.binding, "binding", "", "dispatch binding JSON file")
+	}
 	if err := flags.Parse(argv[1:]); err != nil {
 		return arguments{}, fmt.Sprintf("%v; %s", err, expectedForms)
 	}
@@ -65,14 +71,17 @@ func parseArgs(argv []string, flagOutput io.Writer) (arguments, string) {
 	if mode == "build" && supplied["id"] {
 		return arguments{}, "--id is not valid for build; " + expectedForms
 	}
-	if mode == "resume" && supplied["slug"] {
-		return arguments{}, "--slug is not valid for resume; " + expectedForms
+	if mode != "build" && supplied["slug"] {
+		return arguments{}, "--slug is not valid for " + mode + "; " + expectedForms
 	}
 	if mode == "build" && a.slug == "" {
 		return arguments{}, "missing required --slug for build; " + expectedForms
 	}
-	if mode == "resume" && a.id == "" {
-		return arguments{}, "missing required --id for resume; " + expectedForms
+	if mode != "build" && a.id == "" {
+		return arguments{}, "missing required --id for " + mode + "; " + expectedForms
+	}
+	if mode == "prepare-continuation" && a.binding == "" {
+		return arguments{}, "missing required --binding for prepare-continuation"
 	}
 	return a, ""
 }
@@ -99,21 +108,45 @@ func run() int {
 	cmd := exec.Command("git", "-C", *project, "symbolic-ref", "--quiet", "--short", "HEAD")
 	b, _ := cmd.Output()
 	r.Branch = strings.TrimSpace(string(b))
-	if repo, e := git.Open(*project, s.Env); e == nil {
-		r.Tree, _ = repo.Tree(repo.Head(), nil)
+	if repo, e := git.OpenReadOnly(*project, s.Env); e == nil {
+		if mode == "prepare-continuation" {
+			r.Tree = observedTree(repo)
+		} else {
+			r.Tree, _ = repo.Tree(repo.Head(), nil)
+		}
 	}
 	out := build.Outcome{}
 	deps := build.Deps{Client: provider.NewClient("kogen-build"), Tools: verify.Tools{Node: os.Getenv("KOGEN_NODE"), Quint: os.Getenv("KOGEN_QUINT"), Cucumber: os.Getenv("KOGEN_CUCUMBER")}, Outcome: &out}
 	var err error
 	if mode == "build" {
 		r.ExitCode, err = build.Build(s.Context(), s, build.Input{Deps: deps, Project: *project, Slug: *slug})
+	} else if mode == "prepare-continuation" {
+		var binding build.ContinuationBinding
+		raw, e := os.ReadFile(args.binding)
+		if e == nil {
+			e = json.Unmarshal(raw, &binding)
+		}
+		if e != nil {
+			r.ExitCode = 2
+			r.Error = &problem{"usage", "invalid_arguments", "--binding: " + e.Error()}
+			return r.ExitCode
+		}
+		plan, e := (build.ResumeInput{Deps: deps, Project: *project, ID: *id}).PrepareContinuation(s.Context(), s, binding)
+		r.Continuation = &plan
+		err = e
+		if err != nil {
+			r.ExitCode = 1
+			errors.As(err, &out.Error)
+		}
 	} else {
 		r.ExitCode, err = build.Resume(s.Context(), s, build.ResumeInput{Deps: deps, Project: *project, ID: *id})
 	}
 	if out.Tree != "" {
 		r.Tree = out.Tree
 	}
-	r.Checks = out.Checks
+	if out.Checks != nil {
+		r.Checks = out.Checks
+	}
 	if out.Error != nil {
 		r.Error = &problem{out.Error.Class, out.Error.Reason, out.Error.Detail}
 	} else if err != nil {
@@ -123,4 +156,31 @@ func run() int {
 		fmt.Fprintln(os.Stderr, err)
 	}
 	return r.ExitCode
+}
+
+// observedTree keeps the standalone readback's Git objects outside the checkout.
+func observedTree(repo *git.Repo) string {
+	objects, err := repo.OK("rev-parse", "--git-path", "objects")
+	if err != nil {
+		return ""
+	}
+	objects = strings.TrimSpace(objects)
+	if !filepath.IsAbs(objects) {
+		objects = filepath.Join(repo.Dir, objects)
+	}
+	dir, err := os.MkdirTemp("", "kogen-readback-objects-")
+	if err != nil {
+		return ""
+	}
+	defer os.RemoveAll(dir)
+	index := filepath.Join(dir, "index")
+	env := []string{"GIT_OBJECT_DIRECTORY=" + dir, "GIT_ALTERNATE_OBJECT_DIRECTORIES=" + objects, "GIT_INDEX_FILE=" + index}
+	if _, err := repo.OKEnv(env, "read-tree", repo.Head()); err != nil {
+		return ""
+	}
+	if _, err := repo.OKEnv(env, "add", "-A", "--", "."); err != nil {
+		return ""
+	}
+	tree, _ := repo.OKEnv(env, "write-tree")
+	return strings.TrimSpace(tree)
 }

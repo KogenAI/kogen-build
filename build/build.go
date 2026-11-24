@@ -44,15 +44,16 @@ type ResumeInput struct {
 type Attempt struct {
 	State
 
-	s           *sys.Session
-	blockerNote string // invalid external blocker claim to prefix the next feedback
-	deps        Deps
-	repo        *git.Repo
-	cache       *provider.Cache
-	facts       *localFacts
-	intent      *project.Intent
-	model       *project.ModelSpec
-	diag        *Diagnostic
+	s              *sys.Session
+	blockerNote    string // invalid external blocker claim to prefix the next feedback
+	deps           Deps
+	observationEnv []string // private Git object store during model-free preflight only
+	repo           *git.Repo
+	cache          *provider.Cache
+	facts          *localFacts
+	intent         *project.Intent
+	model          *project.ModelSpec
+	diag           *Diagnostic
 	// ext is the external build executor of a fresh Build (nil: the native builder).
 	ext *externalBuild
 	// noEdit is the evidence for rounds that leave the candidate unchanged (noprogress.go).
