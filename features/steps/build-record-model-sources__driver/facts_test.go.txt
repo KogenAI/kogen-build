@@ -1,0 +1,86 @@
+package build
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+)
+
+// This fixture only gathers outputs through the existing facts entry points.
+// Assertions about the requested behavior live in the protected JS observer.
+func TestRecordModelSourcesFixture(t *testing.T) {
+	var input struct {
+		LocalRole string
+		Legacy    json.RawMessage
+	}
+	if err := json.Unmarshal([]byte(os.Getenv("MODEL_SOURCES_INPUT")), &input); err != nil {
+		t.Fatal(err)
+	}
+	root, _, _ := factsRepo(t)
+	if input.LocalRole != "" {
+		writeFile(t, filepath.Join(root, project.ModelsPath), project.ModelsTemplate(), 0600)
+		role := project.DefaultModels()[input.LocalRole]
+		text := "models:\n  " + input.LocalRole + ": {model: " + role.Model + ", effort: " + role.Effort + "}\n"
+		writeFile(t, filepath.Join(root, project.LocalModelsPath), text, 0600)
+	}
+	cfg, err := project.LoadConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := StartRun(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := startFacts(root, "fixture", run, cfg, "", "")
+	result := map[string]any{}
+	if err != nil {
+		result["error"] = err.Error()
+	} else {
+		read := func() any {
+			raw, err := os.ReadFile(filepath.Join(root, ".kogen/local/facts", run.ID+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, err := decodeJSONNumbers(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return value
+		}
+		result["initial"] = read()
+		if len(input.Legacy) > 0 {
+			value, err := decodeJSONNumbers(input.Legacy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result["legacy"] = value
+			writeFile(t, filepath.Join(root, ".kogen/local/facts/previous.json"), string(input.Legacy), 0600)
+			facts.inherit(&Attempt{State: State{Root: root}}, &Run{ID: "previous"})
+		}
+		b := &Attempt{State: State{Root: root, Run: run}, facts: facts}
+		if err := facts.update(b, "building", ""); err != nil {
+			t.Fatal(err)
+		}
+		result["updated"] = read()
+	}
+	after, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result["config_before"] = json.RawMessage(before)
+	result["config_after"] = json.RawMessage(after)
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("MODEL_SOURCES_OUTPUT"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+}

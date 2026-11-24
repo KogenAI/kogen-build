@@ -159,3 +159,90 @@ func TestInheritedReviewNotePreservesIntegerLine(t *testing.T) {
 		t.Fatalf("line = %#v, display = %q", line, core.Display(line))
 	}
 }
+
+func TestFactsModelSourcesPublishedAndRetained(t *testing.T) {
+	t.Parallel()
+	for _, localRole := range []string{"review", "build", ""} {
+		t.Run("local_"+localRole, func(t *testing.T) {
+			root, _, cfg := factsRepo(t)
+			var want any
+			if localRole != "" {
+				writeFile(t, filepath.Join(root, project.ModelsPath), project.ModelsTemplate(), 0o644)
+				role := project.DefaultModels()[localRole]
+				writeFile(t, filepath.Join(root, project.LocalModelsPath), "models:\n  "+localRole+": {model: "+role.Model+", effort: "+role.Effort+"}\n", 0o644)
+				want = map[string]any{"shape": project.ModelsPath, "build": project.ModelsPath, "review": project.ModelsPath}
+				want.(map[string]any)[localRole] = project.LocalModelsPath
+			}
+			before := canonical(cfg)
+			run, err := StartRun(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			facts, err := startFacts(root, "fixture", run, cfg, "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			check := func() {
+				t.Helper()
+				doc := (&env{t: t, root: root}).jsonFile(filepath.Join(root, ".kogen/local/facts", run.ID+".json"))
+				got, present := doc["model_sources"]
+				if !present || !reflect.DeepEqual(got, want) {
+					t.Fatalf("model_sources = %#v (present %v), want %#v", got, present, want)
+				}
+			}
+			check()
+			if err := facts.update(&Attempt{State: State{Root: root, Run: run}}, "building", ""); err != nil {
+				t.Fatal(err)
+			}
+			check()
+			if canonical(cfg) != before {
+				t.Fatal("facts publication changed the Build Config")
+			}
+		})
+	}
+}
+
+func TestLegacyFactsRemainUnchangedAndEvidenceIsInherited(t *testing.T) {
+	t.Parallel()
+	root, _, cfg := factsRepo(t)
+	legacy := `{"checkout_id":"old-checkout","slug":"old-slug","run_id":"previous","phase":"reviewing","state":"review_blocked","verification_pass":null,"verification":[{"n":3,"green":true,"tree":"old-tree","failing":[],"not_run":[],"path":"old/acceptance-3.ndjson"}],"reviews":[{"n":2,"verdict":"changes","findings":[{"severity":"note","path":"app.txt","line":1,"message":"looks fine"}],"path":"old/review-2.json"}]}`
+	path := filepath.Join(root, ".kogen/local/facts/previous.json")
+	writeFile(t, path, legacy, 0o644)
+	old, err := decodeJSONNumbers([]byte(legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := StartRun(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := startFacts(root, "fixture", run, cfg, "previous", "previous")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Attempt{State: State{Root: root, Run: run}}
+	facts.inherit(b, &Run{ID: "previous"})
+	if err := facts.update(b, "building", ""); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".kogen/local/facts", run.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := decodeJSONNumbers(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"verification", "reviews"} {
+		if !reflect.DeepEqual(updated.(map[string]any)[key], old.(map[string]any)[key]) {
+			t.Fatalf("inherited %s changed: %s", key, raw)
+		}
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != legacy {
+		t.Fatal("legacy facts were rewritten")
+	}
+}

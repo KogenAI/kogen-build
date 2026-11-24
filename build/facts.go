@@ -64,9 +64,15 @@ func startFacts(root, slug string, run *Run, cfg *project.Config, parent, rootRu
 	if rootRun == "" {
 		rootRun = run.ID
 	}
+	// Provenance is descriptive evidence, not a prerequisite or a replacement Config.
+	var modelSources map[string]string
+	if lineup, err := project.LoadModels(root); err == nil {
+		modelSources = lineup.Sources
+	}
 	now := time.Now()
 	f := &localFacts{root: root, checkout: c, clock: &phaseClock{phase: "startup", started: now, at: isoTime(now)}}
 	f.record = map[string]any{
+		"model_sources":      modelSources,
 		"checkout_id":        c.ID,
 		"slug":               slug,
 		"run_id":             run.ID,

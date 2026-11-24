@@ -1,0 +1,39 @@
+# Record model role sources in run facts
+
+Slug: build-record-model-sources
+Model: not applicable — this adds descriptive provenance to published run facts without changing Build state or transitions
+Acceptance:
+- .kogen/intents/build-record-model-sources/acceptance.feature
+- features/steps/build-record-model-sources__steps.js
+- features/steps/build-record-model-sources__observer.js
+- features/steps/build-record-model-sources__driver/facts_test.go.txt
+
+Record the configured source for each model role in run evidence so a reader can tell where the build and review lineups came from. Add provenance to the facts published by `startFacts` and retained by `update`, rather than recording only selected model names. Keep the implementation and its regression tests in `build/facts.go` and `build/facts_test.go`. Do not change model selection, configuration parsing, dependency pins, or persisted Build state.
+
+The historical follow-up names `Config.ModelSources`. The current pinned coordinator instead exposes `project.LoadModels(root) (*project.ModelLineup, error)` and `ModelLineup.Sources map[string]string`. Consume this existing provenance API for evidence only; it must not replace the Config used by the Build. Add source provenance to a new run's facts when available, and represent unavailable metadata consistently without claiming a source. Do not make metadata availability a new Build prerequisite. The facts decoder and existing facts fields remain unchanged. Old facts are not migrated or rewritten just to add provenance. The acceptance exercises the real facts publication boundary using temporary Git repositories and reads its JSON files; it does not make paid provider requests.
+
+## Decisions
+- Record the configured source for each model role in the run evidence, including the build and review role sources rather than only selected model names. (decision: D1, round 1) (evidence: build/facts.go) (source: request)
+- Missing source metadata is represented consistently without failing the Build or inventing a source. (decision: D2, round 1) (evidence: build/facts_test.go) (source: request)
+- Existing run facts without source metadata remain readable and their existing fields retain their current values. (decision: D3, round 1) (evidence: build/facts_test.go) (source: request)
+- Limit implementation changes to build/facts.go and build/facts_test.go; changing model selection, configuration parsing, or persisted Build state is out of scope. (decision: D4, round 1) (evidence: build/facts.go) (source: request)
+- Consume the pinned coordinator's ModelLineup.Sources through project.LoadModels for descriptive evidence only, without changing the selected Config or dependency pins. (decision: D5, round 1) (evidence: go.mod) (source: request)
+- Store provenance in the additive model_sources facts field and use JSON null when the provenance API supplies no metadata. (decision: D6, round 1) (assumption: JSON null is the consistent unavailable representation, not a guessed default or model name) (source: request)
+
+## Source comparison
+- Addressed: request evidence `ev-ec1f3bf5` identifies the follow-up in `.kogen/intents/k-models-file-build/intent.md` and the missing sources in `build/facts.go`. That historical Intent's Out of scope section assigns recording each role's source from ModelSources to a follow-up; this contract now delivers that follow-up through additive run facts, not model-selection changes.
+- Addressed: the Expected sentence asks readers to identify where the build and review lineups came from. Acceptance's first two scenarios publish and reread distinct team/local sources with the local role reversed; recording only model names is rejected. The observer also checks the fixed shape role returned by the provenance API.
+- Addressed: Acceptance 2 requires consistent missing metadata without a Build failure or invented source. The third scenario uses a configuration that the current loader accepts without lineup files, requires successful publication with no invented provenance, and rejects an implementation that requires the metadata.
+- Addressed: Acceptance 3 requires old source-free facts to remain readable with unchanged values. The third scenario decodes a legacy record, compares all its supplied fields semantically and inherits its verification/review summaries with their original values and locations. The observer also checks the existing newly published facts fields. A wrong implementation that drops legacy reviews is rejected.
+- Superseded interface name only: the historical ModelSources spelling is absent from the current pinned Config. The inspected pinned API and retrieved project documentation expose the equivalent ModelLineup.Sources through LoadModels. No producer edit, synthetic producer replacement, reflection shim, dependency update or parser change is required. The current API can return no metadata for configurations the Build accepts; that is an availability limit beside, not a replacement for, the missing-metadata guarantee.
+- Addressed scope: production edits and implementation regression coverage stay in `build/facts.go` and `build/facts_test.go`. Model selection, configuration parsing and persisted Build state remain out of scope. Omitted deliberately: the historical Intent's other follow-ups (commit summary naming and lineup-file guards), which this request does not ask for. There are no conflicting requested behaviors or omitted requested outcomes.
+
+## Tests
+- Configured model role provenance is published and survives facts updates: add regression coverage in build/facts_test.go and execute the first two acceptance scenarios through startFacts and update with real team/local lineup files (regression)
+- Missing source metadata remains nonfatal and has a consistent non-invented representation: add a source-free configuration case in build/facts_test.go and execute the third acceptance scenario (integration)
+- Source-free old facts remain readable and preserve existing fields and inherited verification/review values: extend build/facts_test.go with a legacy record case and compare decoded and inherited output in the third acceptance scenario; retain the existing integer-line and custody tests (regression)
+
+## Feasibility
+- Inspected the pinned coordinator through go doc and local module source. Config has no ModelSources; LoadModels returns ModelLineup with Roles and Sources and reads the team/local files without writing them. Documentation discovery found the authoritative project package page; fetching https://pkg.go.dev/github.com/KogenAI/kogen-coordinator/project returned retrieved, untrusted documentation, whose LoadModels declaration agrees with the pinned local source. It is technical evidence, not scope authority.
+- A scratch correct overlay of build/facts.go compiled the final formatted Go fixture, then ran it with real configured and absent metadata inputs to produce observer-good.json. These are observed local outputs, not provider evidence. The existing TestInheritedReviewNotePreservesIntegerLine ran successfully on the unchanged implementation. Controls independently reject missing provenance, model names in place of sources, wrong role mapping, required metadata, changed existing values and dropped inherited evidence; they do not claim exhaustive coverage.
+- evidence: {"id":"facts-observer","kind":"observer","inputs":[".kogen/intents/build-record-model-sources/observer-good.json","features/steps/build-record-model-sources__driver/facts_test.go.txt",".kogen/intents/build-record-model-sources/acceptance.feature"],"observers":["features/steps/build-record-model-sources__observer.js"],"checks":[{"name":"good","command":"\"$KOGEN_NODE\" features/steps/build-record-model-sources__observer.js good","exit":0,"output":"accepted\n"},{"name":"bad","command":"\"$KOGEN_NODE\" features/steps/build-record-model-sources__observer.js bad","exit":1,"output":"rejected\n"}]}
