@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"io"
 	"os"
@@ -58,7 +59,7 @@ func TestParseArgsAccepts(t *testing.T) {
 
 func TestParsePrepareContinuation(t *testing.T) {
 	a, msg := parseArgs([]string{"prepare-continuation", "--project", "checkout", "--id", "abcdef12", "--binding", "binding.json"}, io.Discard)
-	if msg != "" || a.mode != "prepare-continuation" || a.binding != "binding.json" || a.id != "abcdef12" {
+	if msg != "" || a.mode != "prepare-continuation" || a.binding != "binding.json" || a.project != "checkout" || a.id != "abcdef12" {
 		t.Fatalf("prepare: %+v %q", a, msg)
 	}
 	for _, tc := range []struct {
@@ -121,5 +122,47 @@ func TestPrepareReadbackDoesNotWriteGitObjects(t *testing.T) {
 	}
 	if after := count(); after != before {
 		t.Fatalf("readback wrote Git objects: %d -> %d", before, after)
+	}
+}
+
+func TestStandaloneUsageRefusals(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "kogen-build")
+	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v: %s", err, out)
+	}
+	binding := filepath.Join(dir, "inputs", "binding.json")
+	if err := os.MkdirAll(filepath.Dir(binding), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binding, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"no mode", nil, []string{"build", "resume", "prepare-continuation"}},
+		{"malformed binding", []string{"prepare-continuation", "--project", dir, "--id", "abcdef12", "--binding", binding}, []string{"--binding", binding, "unexpected end of JSON input"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := exec.Command(binary, tc.args...).Output()
+			if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 {
+				t.Fatalf("exit: %v, output: %s", err, out)
+			}
+			var r result
+			if err := json.Unmarshal(out, &r); err != nil {
+				t.Fatalf("JSON: %v: %s", err, out)
+			}
+			if r.ExitCode != 2 || r.Error == nil || r.Error.Category != "usage" || r.Error.Kind != "invalid_arguments" || r.Continuation != nil {
+				t.Fatalf("refusal: %+v", r)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(r.Error.Message, want) {
+					t.Errorf("message %q lacks %q", r.Error.Message, want)
+				}
+			}
+		})
 	}
 }

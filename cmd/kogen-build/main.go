@@ -38,7 +38,7 @@ func main() {
 	os.Exit(run())
 }
 
-const expectedForms = "expected build --project <checkout> --slug <slug> or resume --project <checkout> --id <build-id>"
+const expectedForms = "expected build --project <checkout> --slug <slug> or resume --project <checkout> --id <build-id> or prepare-continuation --project <checkout> --id <build-id> --binding <file>"
 
 type arguments struct {
 	mode, project, slug, id, binding string
@@ -95,7 +95,7 @@ func run() int {
 	defer func() { _ = json.NewEncoder(os.Stdout).Encode(r) }()
 	if len(os.Args) < 2 {
 		r.ExitCode = 2
-		r.Error = &problem{"usage", "invalid_arguments", "expected build or resume"}
+		r.Error = &problem{"usage", "invalid_arguments", expectedForms}
 		return r.ExitCode
 	}
 	args, refusal := parseArgs(os.Args[1:], os.Stderr)
@@ -125,6 +125,9 @@ func run() int {
 		raw, e := os.ReadFile(args.binding)
 		if e == nil {
 			e = json.Unmarshal(raw, &binding)
+			if e != nil {
+				e = fmt.Errorf("%s: %w", args.binding, e)
+			}
 		}
 		if e != nil {
 			r.ExitCode = 2

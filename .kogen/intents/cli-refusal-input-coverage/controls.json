@@ -1,0 +1,51 @@
+{
+  "correct": {
+    "files": {
+      "cmd/kogen-build/main.go": {
+        "patch": "--- a/cmd/kogen-build/main.go\n+++ b/cmd/kogen-build/main.go\n@@ -38,7 +38,7 @@\n \tos.Exit(run())\n }\n \n-const expectedForms = \"expected build --project <checkout> --slug <slug> or resume --project <checkout> --id <build-id>\"\n+const expectedForms = \"expected build --project <checkout> --slug <slug> or resume --project <checkout> --id <build-id> or prepare-continuation --project <checkout> --id <build-id> --binding <file>\"\n \n type arguments struct {\n \tmode, project, slug, id, binding string\n@@ -95,7 +95,7 @@\n \tdefer func() { _ = json.NewEncoder(os.Stdout).Encode(r) }()\n \tif len(os.Args) < 2 {\n \t\tr.ExitCode = 2\n-\t\tr.Error = &problem{\"usage\", \"invalid_arguments\", \"expected build or resume\"}\n+\t\tr.Error = &problem{\"usage\", \"invalid_arguments\", expectedForms}\n \t\treturn r.ExitCode\n \t}\n \targs, refusal := parseArgs(os.Args[1:], os.Stderr)\n@@ -124,7 +124,9 @@\n \t\tvar binding build.ContinuationBinding\n \t\traw, e := os.ReadFile(args.binding)\n \t\tif e == nil {\n-\t\t\te = json.Unmarshal(raw, &binding)\n+\t\t\tif e = json.Unmarshal(raw, &binding); e != nil {\n+\t\t\t\te = fmt.Errorf(\"%q: %w\", args.binding, e)\n+\t\t\t}\n \t\t}\n \t\tif e != nil {\n \t\t\tr.ExitCode = 2\n"
+      }
+    }
+  },
+  "wrong": [
+    {
+      "name": "No-mode refusal retains the old two-mode message",
+      "scenario": "No mode names every supported mode",
+      "step": "Then cli-refusal-input-coverage: I receive a JSON usage refusal listing these supported modes",
+      "files": {
+        "cmd/kogen-build/main.go": {
+          "patch": "--- a/cmd/kogen-build/main.go\n+++ b/cmd/kogen-build/main.go\n@@ -95,7 +95,7 @@\n \tdefer func() { _ = json.NewEncoder(os.Stdout).Encode(r) }()\n \tif len(os.Args) < 2 {\n \t\tr.ExitCode = 2\n-\t\tr.Error = &problem{\"usage\", \"invalid_arguments\", expectedForms}\n+\t\tr.Error = &problem{\"usage\", \"invalid_arguments\", \"expected build or resume\"}\n \t\treturn r.ExitCode\n \t}\n \targs, refusal := parseArgs(os.Args[1:], os.Stderr)\n"
+        }
+      }
+    },
+    {
+      "name": "Binding decode refusal names only the flag and decoder error",
+      "scenario": "Malformed binding is refused before preparation",
+      "step": "Then cli-refusal-input-coverage: I receive a JSON usage refusal identifying the binding path without continuation evidence",
+      "files": {
+        "cmd/kogen-build/main.go": {
+          "patch": "--- a/cmd/kogen-build/main.go\n+++ b/cmd/kogen-build/main.go\n@@ -124,9 +124,7 @@\n \t\tvar binding build.ContinuationBinding\n \t\traw, e := os.ReadFile(args.binding)\n \t\tif e == nil {\n-\t\t\tif e = json.Unmarshal(raw, &binding); e != nil {\n-\t\t\t\te = fmt.Errorf(\"%q: %w\", args.binding, e)\n-\t\t\t}\n+\t\t\te = json.Unmarshal(raw, &binding)\n \t\t}\n \t\tif e != nil {\n \t\t\tr.ExitCode = 2\n"
+        }
+      }
+    },
+    {
+      "name": "Valid prepare-continuation arguments are no longer accepted",
+      "scenario": "Malformed binding is refused before preparation",
+      "step": "Then cli-refusal-input-coverage: I receive a native hold with continuation evidence for the requested ID",
+      "files": {
+        "cmd/kogen-build/main.go": {
+          "patch": "--- a/cmd/kogen-build/main.go\n+++ b/cmd/kogen-build/main.go\n@@ -48,7 +48,7 @@\n // non-empty refusal message that names the rejected input, or the parsed arguments.\n func parseArgs(argv []string, flagOutput io.Writer) (arguments, string) {\n \tmode := argv[0]\n-\tif mode != \"build\" && mode != \"resume\" && mode != \"prepare-continuation\" {\n+\tif mode != \"build\" && mode != \"resume\" {\n \t\treturn arguments{}, fmt.Sprintf(\"unknown mode %q; %s\", mode, expectedForms)\n \t}\n \tflags := flag.NewFlagSet(mode, flag.ContinueOnError)\n"
+        }
+      }
+    },
+    {
+      "name": "The decode-refusal path still prepares and reports a continuation",
+      "scenario": "Malformed binding is refused before preparation",
+      "step": "Then cli-refusal-input-coverage: I receive a JSON usage refusal identifying the binding path without continuation evidence",
+      "files": {
+        "cmd/kogen-build/main.go": {
+          "patch": "--- a/cmd/kogen-build/main.go\n+++ b/cmd/kogen-build/main.go\n@@ -131,6 +131,8 @@\n \t\tif e != nil {\n \t\t\tr.ExitCode = 2\n \t\t\tr.Error = &problem{\"usage\", \"invalid_arguments\", \"--binding: \" + e.Error()}\n+\t\t\tplan, _ := (build.ResumeInput{Deps: deps, Project: *project, ID: *id}).PrepareContinuation(s.Context(), s, binding)\n+\t\t\tr.Continuation = &plan\n \t\t\treturn r.ExitCode\n \t\t}\n \t\tplan, e := (build.ResumeInput{Deps: deps, Project: *project, ID: *id}).PrepareContinuation(s.Context(), s, binding)\n"
+        }
+      }
+    }
+  ]
+}
