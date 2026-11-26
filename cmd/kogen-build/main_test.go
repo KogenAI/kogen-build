@@ -166,3 +166,35 @@ func TestStandaloneUsageRefusals(t *testing.T) {
 		})
 	}
 }
+
+func TestParseReconstructionModes(t *testing.T) {
+	a, msg := parseArgs([]string{"reconstruct", "--project", "c", "--evidence", "e.json", "--archive", "/abs/new", "--stop-after", "fenced"}, io.Discard)
+	if msg != "" || a.mode != "reconstruct" || a.evidence != "e.json" || a.archive != "/abs/new" || a.stopAfter != "fenced" {
+		t.Fatalf("reconstruct: %+v %q", a, msg)
+	}
+	a, msg = parseArgs([]string{"reconstruction", "--item", "q1"}, io.Discard)
+	if msg != "" || a.mode != "reconstruction" || a.item != "q1" || a.project != "." {
+		t.Fatalf("reconstruction: %+v %q", a, msg)
+	}
+	for _, tc := range []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"reconstruct", "--archive", "/a"}, "--evidence"},
+		{[]string{"reconstruct", "--evidence", "e"}, "--archive"},
+		{[]string{"reconstruct", "--evidence", "e", "--archive", "relative"}, "--archive"},
+		{[]string{"reconstruct", "--evidence", "e", "--archive", "/a", "--stop-after", "created"}, "--stop-after"},
+		{[]string{"reconstruct", "--evidence", "e", "--archive", "/a", "--id", "x"}, "--id is not valid for reconstruct"},
+		{[]string{"reconstruct", "--evidence", "e", "--archive", "/a", "--item", "x"}, "-item"},
+		{[]string{"reconstruction", "--item", "q", "--evidence", "e"}, "-evidence"},
+		{[]string{"reconstruction", "--item", "q", "--slug", "s"}, "--slug is not valid for reconstruction"},
+		{[]string{"reconstruction"}, "--item"},
+		{[]string{"build", "--slug", "s", "--archive", "/a"}, "-archive"},
+		{[]string{"resume", "--id", "i", "--item", "q"}, "-item"},
+	} {
+		_, msg := parseArgs(tc.argv, io.Discard)
+		if !strings.Contains(msg, tc.want) || !strings.Contains(msg, "reconstruct") {
+			t.Errorf("%v: %q lacks %q", tc.argv, msg, tc.want)
+		}
+	}
+}

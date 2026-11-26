@@ -141,3 +141,71 @@ The private fleet retains scheduling, policy, accounts, credentials, provider ch
 and landing policy. This adapter transfers no checkout, rebinds no inode, reconstructs
 no work and changes no customer records. The sponsors row remains held and its
 separate unusable-checkout reconstruction item is not resolved or delivered here.
+
+## Safe reconstruction of the held Problem20 consumer
+
+`reconstruct` and `reconstruction` are two further standalone modes. They serve exactly one
+held consumer, Stack Menu Problem20 (queue item `bb13338f-045e-4853-8cc4-90ec80dc8b4f`, version 18,
+accepted request `queue-request-bb13338f-045e-4853-8cc4-90ec80dc8b4f` revision 3 with SHA-256
+`ee87cf09b602ba3eec64112ecf8e85bbf1d539864308a2ab542ac467a9202cb4`); another queue item or
+obligation is always held. There is no generic reset or automatic retry. No provider,
+credential or network access is used.
+
+```sh
+./kogen-build reconstruct --project /path/to/checkout --evidence evidence.json --archive /abs/new/archive [--stop-after preserved|fenced]
+./kogen-build reconstruction --project /path/to/checkout --item bb13338f-045e-4853-8cc4-90ec80dc8b4f
+```
+
+`reconstruction` is a read-only readback: it never creates, fences or archives anything.
+`--archive` must be an absolute path that does not exist (a replay ignores it). `--stop-after`
+ends a run right after the named phase is durable, as a crash would (state `interrupted`), so
+that interruption can be observed. Flags of one mode are refused with exit 2, naming the input.
+Stdout is the ordinary JSON envelope extended with a `reconstruction` object, also on a hold.
+Exit status and `exit_code`: 0 for a created reconstruction, a replay of it or a readback of a
+created one; 1 for held, interrupted or a readback of an item with no recorded reconstruction;
+2 for usage. A hold carries a non-null `error`. Progress goes to stderr.
+
+The evidence file is a JSON object supplied by the caller (this repository has no queue or
+fleet store). An absent or uncertain value is unproven:
+
+- `queue_item` {`id`, `version`}, `obligation`, `owner` (who holds the obligation), `request`
+  {`document`, `revision`, `sha256`} (the original accepted request), `current_request`
+  {`revision`, `sha256`} (what the queue holds now), `baseline` {`head`}.
+- `prior`: `attempts` (ids), `builds` (each `id`, `receipt_sha256`, `candidate_tree`, the retained
+  receipt file `path`, absolute or relative to the evidence file, and `copy_sha256`, the SHA-256
+  of that file's bytes) and `spend` (any JSON value).
+- `effects` {`publication`, `external`}: each must be `none`. `owners`: the live native owners,
+  processes or custody holders (each with a `name`); an empty list proves none. `custody`
+  {`generation`, `revoked`}: the old generation and whether its single-writer custody is revoked.
+- `claims` {`landed`, `deployed`, `accepted`, `reused_gates`}: any assertion of landing,
+  deployment, acceptance or of an old Build, check or Review result satisfying a gate is refused.
+
+Before anything is written the route is held, with `reason`, `owner` (the first live owner, else
+the evidence `owner`) and a `next_action`, when the identity is not Problem20, an effect is not
+proved `none`, an owner is live or unproved, the custody is not revoked, the queue's current
+request differs from the original, `baseline.head` is not the checkout's HEAD, a retained receipt
+is absent or does not hash to `copy_sha256`, prior attempts, builds or spend are absent, any claim
+is present, the ordinary Build lock of the checkout is held by another process, or a different
+reconstruction is already recorded for the queue item (a duplicate reconciliation). A hold writes
+no archive, record, attempt or wake.
+
+An eligible run has three durable phases, each safe to find already done on a rerun: **preserve**
+(a new archive with byte-identical copies of every retained receipt and of the evidence file and
+a manifest; it is never modified afterwards), **fence** (the old generation is recorded as fenced
+and a new, unique generation is allocated) and **create** (exactly one fresh attempt, bound to the
+original request revision, hash and baseline, and exactly one wake for it). The record is
+`.kogen/local/reconstructions/<queue-item>-<evidence-sha256>.json`, written atomically. A rerun
+with the same evidence continues from the last durable phase, and after creation reports the
+same attempt and wake without a new attempt, wake or archive. A rerun with different evidence
+bytes for an item that already has a recorded reconstruction is held and changes nothing.
+
+The `reconstruction` object has `state` (`created`, `held`, `interrupted` or `absent`; an absent
+readback has only `state`, `attempts` and `wakes`), `queue_item` (always `held`), `obligation`,
+`request`, `baseline`, `archive`, `prior` (`receipts` with their resolved paths, `attempts`,
+`spend`, all verbatim), `generation` {`old`, `new`}, `attempts` and `wakes` (empty until
+created), `gates` (`admission`, `shape`, `build`, `checks`, `review`, each `pending` for the fresh
+attempt), `landing`, `deployment` and `acceptance` (each `not_observed`: the route never sets
+them), `owner`, `next_action` and, for a hold, `reason`. The route does not run Shape, Build,
+checks, Review, landing or deployment; those remain the ordinary pipeline's job, and no old
+Build, check or Review result satisfies a gate of the fresh attempt. The original queue item and
+Problem20 stay held, and nothing is deleted, replaced or reset.
