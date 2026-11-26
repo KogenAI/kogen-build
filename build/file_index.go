@@ -60,6 +60,9 @@ func fileIndexBound(listing string, required []string, bound int) string {
 	if paths[len(paths)-1] == "" {
 		paths = paths[:len(paths)-1]
 	}
+	if listing == "\x00" {
+		paths = nil
+	}
 	var full strings.Builder
 	full.WriteString("# Files\n\n")
 	for _, p := range paths {
@@ -124,7 +127,10 @@ func fileIndexBound(listing string, required []string, bound int) string {
 		var b strings.Builder
 		b.WriteString("# Files\n\n")
 		fmt.Fprintf(&b, "total paths: %d\nlisted paths: %d\nomitted paths: %d\n\n%s\n\n", len(paths), len(shown), len(paths)-len(shown), fileIndexNotice)
-		b.WriteString("## Listed paths\n" + strings.Join(shown, "\n") + "\n")
+		b.WriteString("## Listed paths\n")
+		if len(paths) > 0 {
+			b.WriteString(strings.Join(shown, "\n") + "\n")
+		}
 		if root.total > 0 {
 			b.WriteString("\n## Omitted directories\n")
 			if depth == 0 {

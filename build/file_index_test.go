@@ -150,3 +150,33 @@ func TestFileIndexControlCharacters(t *testing.T) {
 		t.Errorf("ordinary path is not an unchanged complete line in %q", out)
 	}
 }
+
+func TestFileIndexEmptyAccounting(t *testing.T) {
+	cases := []struct {
+		name, listing, path string
+	}{
+		{"empty", "", ""},
+		{"NUL only", "\x00", ""},
+		{"one path", "a\x00", "a"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var required []string
+			count := 0
+			rows := ""
+			if tc.path != "" {
+				required = []string{tc.path}
+				count = 1
+				rows = tc.path + "\n"
+			}
+			wantFull := "# Files\n\n" + rows
+			if got := fileIndex(tc.listing, required); got != wantFull {
+				t.Errorf("full index = %q, want %q", got, wantFull)
+			}
+			wantCompact := fmt.Sprintf("# Files\n\ntotal paths: %d\nlisted paths: %d\nomitted paths: 0\n\n%s\n\n## Listed paths\n%s", count, count, fileIndexNotice, rows)
+			if got := fileIndexBound(tc.listing, required, 0); got != wantCompact {
+				t.Errorf("compact index = %q, want %q", got, wantCompact)
+			}
+		})
+	}
+}
