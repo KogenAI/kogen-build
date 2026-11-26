@@ -121,3 +121,32 @@ func TestFileIndexOmissionAccountingAndInputOrder(t *testing.T) {
 		t.Errorf("reported omitted total does not match %d independently derived paths", len(omitted))
 	}
 }
+
+func TestFileIndexControlCharacters(t *testing.T) {
+	path := "docs/new\nline/tab\tend/return\rend/slash\\end/unit\x1fend.txt"
+	ordinary := "docs/café.txt"
+	out := fileIndex(path+"\x00"+ordinary+"\x00", nil)
+
+	cases := []struct{ name, escaped, raw string }{
+		{"newline", `new\nline`, "new\nline"},
+		{"tab", `tab\tend`, "tab\tend"},
+		{"carriage return", `return\rend`, "return\rend"},
+		{"backslash", `slash\\end`, `slash\end`},
+		{"unit separator", `unit\x1fend`, "unit\x1fend"},
+	}
+	for _, tc := range cases {
+		if !strings.Contains(out, tc.escaped) {
+			t.Errorf("%s: missing escape %q in %q", tc.name, tc.escaped, out)
+		}
+		if strings.Contains(out, tc.raw) {
+			t.Errorf("%s: raw character present in %q", tc.name, out)
+		}
+	}
+	line := `docs/new\nline/tab\tend/return\rend/slash\\end/unit\x1fend.txt`
+	if !strings.Contains(out, "\n"+line+"\n") {
+		t.Errorf("escaped path is not a complete line in %q", out)
+	}
+	if !strings.Contains(out, "\n"+ordinary+"\n") {
+		t.Errorf("ordinary path is not an unchanged complete line in %q", out)
+	}
+}
