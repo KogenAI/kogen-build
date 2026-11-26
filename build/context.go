@@ -214,6 +214,21 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 		b.WorkingContext = map[string]*OwnerContext{}
 	}
 	state := b.WorkingContext[owner]
+	if owner == "build" && state == nil {
+		m, err := agent.Measure(b.bodyOf(role, instructions, input, tools, owner), providerRole(role))
+		if err != nil {
+			return nil, err
+		}
+		if !m.Fits {
+			input, err = b.fitInventory(input, func(candidate []any) (bool, error) {
+				m, err := agent.Measure(b.bodyOf(role, instructions, candidate, tools, owner), providerRole(role))
+				return m.Fits, err
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	if state == nil {
 		var mandatory []any
 		for _, it := range input {
@@ -361,6 +376,22 @@ func (b *Attempt) prepareContext(owner string, role project.Role, instructions s
 	var next agent.Measurement
 	if window, next, err = construct(input, input, nil); err != nil {
 		return nil, err
+	}
+	if owner == "build" && !next.Fits {
+		original := state.Mandatory
+		fitted, fitErr := b.fitInventory(original, func(candidate []any) (bool, error) {
+			state.Mandatory = candidate
+			_, m, err := construct(input, input, nil)
+			return m.Fits, err
+		})
+		state.Mandatory = original
+		if fitErr != nil {
+			return nil, fitErr
+		}
+		state.Mandatory = fitted
+		if window, next, err = construct(input, input, nil); err != nil {
+			return nil, err
+		}
 	}
 	mand, err := agent.Measure(b.bodyOf(role, instructions, window.mandatory, tools, owner), providerRole(role))
 	if err != nil {

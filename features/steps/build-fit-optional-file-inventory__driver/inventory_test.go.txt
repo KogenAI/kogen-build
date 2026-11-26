@@ -1,0 +1,306 @@
+package build
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/core"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/tools"
+)
+
+func TestFitOptionalInventoryAcceptance(t *testing.T) {
+	ceiling, err := strconv.Atoi(os.Getenv("INVENTORY_FIXTURE_CEILING"))
+	if err != nil || ceiling != tools.InputBudgetBytes {
+		t.Fatalf("fixture ceiling does not match the real limit: %d (%v)", ceiling, err)
+	}
+	shape, err := strconv.Atoi(os.Getenv("INVENTORY_FIXTURE_BYTES"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("Brand", func(t *testing.T) {
+		e, original, role := inventoryFixture(t, 420, shape, false)
+		if inventorySize(t, original, role) != shape || shape <= ceiling {
+			t.Fatal("Brand fixture must exceed the input ceiling with the old inventory")
+		}
+		lean := inventoryInput(original, "")
+		if inventorySize(t, lean, role) >= ceiling {
+			t.Fatal("Brand fixture authority must fit without the old inventory")
+		}
+		// The first response uses the existing native shell listing/search and read_file,
+		// independently of the index. z-target is an optional tracked path at entry.
+		e.prov.then(e.prov.calls(
+			"shell", map[string]any{"command": "git ls-files -- inventory/z-target.txt; git grep -l inventory-needle -- inventory/z-target.txt"},
+			"read_file", map[string]any{"path": "inventory/z-target.txt"}), inventoryFinish(e))
+		a := e.build()
+		reqs := inventoryRequests(t, e, a, 2, ceiling, role)
+		inventoryReduced(t, original, reqs[0])
+		for _, want := range []string{"inventory/z-target.txt\ninventory/z-target.txt", "inventory-needle"} {
+			if !slices.ContainsFunc(reqs[1]["input"].([]any), func(item any) bool {
+				out, _ := item.(map[string]any)["output"].(string)
+				return strings.Contains(out, want)
+			}) {
+				t.Fatalf("omitted path not discovered through native tools: missing %q", want)
+			}
+		}
+	})
+	t.Run("ProductRoom", func(t *testing.T) {
+		e, original, role := inventoryFixture(t, 420, shape-1000, false)
+		if m := inventorySize(t, original, role); m >= ceiling {
+			t.Fatalf("Product Room opening must fit with full inventory: %d", m)
+		}
+		approvedSHA := inventoryApproval(t, e).SHA256
+		args := map[string]any{"path": "payload.txt"}
+		e.prov.then(e.prov.calls("read_file", args, "read_file", args, "read_file", args), inventoryFinish(e))
+		a := e.build()
+		reqs := inventoryRequests(t, e, a, 2, ceiling, role)
+		inventoryExactOpening(t, original, reqs[0])
+		inventoryReduced(t, original, reqs[1])
+		second := reqs[1]["input"].([]any)
+		reset := second[1].(map[string]any)
+		text, _ := reset["content"].(string)
+		var summary struct {
+			Owner          string `json:"owner"`
+			ApprovalSHA256 string `json:"approval_sha256"`
+			History        []HistoryRef
+		}
+		if body, ok := strings.CutPrefix(text, "Local working-window reset\n"); !ok || json.Unmarshal([]byte(body), &summary) != nil || summary.Owner != "build" || len(summary.History) != 1 {
+			t.Fatal("second request did not carry a native build reset with its archive reference")
+		}
+		if summary.ApprovalSHA256 != approvedSHA {
+			t.Fatal("reset lost exact approval binding")
+		}
+		old := inventoryInput(original, inventoryBlocks(original)[1])
+		old["input"] = append(old["input"].([]any), reset)
+		mandatory := inventorySize(t, old, role)
+		// Like the reported 513246-byte block: the old block fits, but even three
+		// shortened results (4096 retained text bytes each, before wrappers) cannot.
+		if mandatory >= ceiling || mandatory+3*4096 <= ceiling || mandatory < shape-1000 || mandatory > shape+1000 {
+			t.Fatalf("Product Room synthetic mandatory block %d lacks the %d-byte failure shape", mandatory, shape)
+		}
+		ref := summary.History[0]
+		data, err := os.ReadFile(ref.Path)
+		if err != nil || core.HashHex(data) != ref.SHA256 {
+			t.Fatalf("reset archive is not recoverable with its original hash: %v", err)
+		}
+		var archive struct{ Input []any }
+		if err := json.Unmarshal(data, &archive); err != nil || len(archive.Input) != 7 || canonical(archive.Input[0]) != canonical(original["input"].([]any)[0]) {
+			t.Fatalf("archive lost the original opening or tool batch: %v", err)
+		}
+		last := archive.Input[1:]
+		old["input"] = append(old["input"].([]any), last...)
+		if inventorySize(t, old, role) <= ceiling {
+			t.Fatal("unshortened old reset request should exceed the ceiling")
+		}
+		if canonical(second[2:]) != canonical(last) {
+			t.Fatal("reset changed newest tool results even though shrinking inventory alone leaves room")
+		}
+		for i := 3; i < 6; i++ {
+			output, _ := last[i].(map[string]any)["output"].(string)
+			if len(output) < 15000 || !strings.HasSuffix(output, "reset-payload-end") {
+				t.Fatalf("archive did not retain full output %d", i)
+			}
+		}
+		_, state := e.checkpoint(e.onlyRun())
+		saved := state["working_context"].(map[string]any)["build"].(map[string]any)["history"].([]any)
+		if len(saved) != 1 || saved[0].(map[string]any)["sha256"] != ref.SHA256 || saved[0].(map[string]any)["path"] != ref.Path {
+			t.Fatal("checkpoint did not retain native archive custody")
+		}
+	})
+	t.Run("Small", func(t *testing.T) {
+		e, original, role := inventoryFixture(t, 0, 0, false)
+		listing := e.run("git", "ls-files", "--cached", "--others", "--exclude-standard")
+		if inventoryBlocks(original)[1] != "# Files\n\n"+listing {
+			t.Fatal("small fixture must exercise the existing ordered verbatim inventory")
+		}
+		e.prov.then(inventoryFinish(e))
+		a := e.build()
+		inventoryExactOpening(t, original, inventoryRequests(t, e, a, 1, ceiling, role)[0])
+	})
+	t.Run("Authority", func(t *testing.T) {
+		for _, delta := range []int{-1, 0, 1} {
+			t.Run(fmt.Sprintf("delta=%d", delta), func(t *testing.T) {
+				e, original, role := inventoryFixture(t, 1, ceiling+delta, true)
+				if inventorySize(t, inventoryInput(original, ""), role) != ceiling+delta {
+					t.Fatal("fixture did not hit the rendered authority boundary")
+				}
+				out := new(Outcome)
+				e.prov.then(inventoryFinish(e))
+				a := e.build(func(in *Input) { in.Outcome = out })
+				if delta <= 0 {
+					got := inventoryRequests(t, e, a, 1, ceiling, role)[0]
+					if inventoryBlocks(got)[0] != inventoryBlocks(original)[0] {
+						t.Fatal("in-budget authority was clipped")
+					}
+					return
+				}
+				if a.exit != 1 || a.err != nil || e.prov.count() != 0 || out.Error == nil || out.Error.Class != "candidate" || out.Error.Reason != "context_budget_exceeded" {
+					t.Fatalf("wanted typed refusal before sending irreducible authority; exit %d, requests %d, error %v, outcome %v", a.exit, e.prov.count(), a.err, out.Error)
+				}
+				id := e.onlyRun()
+				checkpoint, state := e.checkpoint(id)
+				if checkpoint["approval"] != state["approval_bytes"] || state["intent_text"] != e.read(project.IntentMDPath(testSlug)) || checkpoint["candidate"] != out.Tree || e.read("app.txt") != "baseline\n" {
+					t.Fatal("refusal lost approved/candidate recovery evidence")
+				}
+				if len(eventsNamed(e.events(id), "context_budget_exceeded")) != 1 || !strings.Contains(out.Error.Detail, "checkpoint.json") {
+					t.Fatal("refusal did not retain a byte diagnostic and checkpoint reference")
+				}
+			})
+		}
+	})
+}
+
+// Compose the legacy brief independently of the budget admission path. The seed README
+// is replaced once with exact synthetic text, calibrated using the pinned render/measure path.
+func inventoryFixture(t *testing.T, count, target int, withoutIndex bool) (*env, map[string]any, provider.Role) {
+	t.Helper()
+	e := newEnv(t, func(c *project.Config) { c.Protect = []string{"app.txt"} })
+	for i := range count {
+		e.write(fmt.Sprintf("inventory/%04d-%s.txt", i, strings.Repeat("p", 110)), "fixture\n")
+	}
+	if count > 0 {
+		e.write("inventory/z-target.txt", "inventory-needle\n")
+	}
+	e.write("payload.txt", strings.Repeat("u", 15500)+"reset-payload-end\n")
+	e.run("git", "add", "--", "payload.txt")
+	if count > 0 {
+		e.run("git", "add", "--", "inventory")
+	}
+	e.run("git", "commit", "-qm", "seed local inventory fixture")
+	e.approve()
+	cfg, err := project.LoadConfig(e.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := project.LoadIntent(e.root, testSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := project.Baseline(e.root, testSlug, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Attempt{State: State{Root: e.root, Slug: testSlug, Config: cfg, Baseline: baseline}, intent: intent, repo: e.gitRepo(), deps: e.deps()}
+	brief, err := b.brief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	role := providerRole(cfg.Models["build"])
+	defs := builderDefinitions(&tools.Tools{Protected: baseline})
+	input := func(stable, dynamic string) []any {
+		return []any{map[string]any{"role": "user", "content": provider.ContractBlocks(stable, dynamic)}}
+	}
+	body := func(items []any) map[string]any {
+		return b.bodyOf(cfg.Models["build"], BuilderInstructions(), items, defs, "build")
+	}
+	stable := brief.Stable
+	if target != 0 {
+		dynamic := brief.Dynamic
+		if withoutIndex {
+			dynamic = ""
+		}
+		pad := target - inventorySize(t, body(input(stable, dynamic)), role)
+		if pad < 0 {
+			t.Fatalf("negative README padding: %d", pad)
+		}
+		seed := e.read("README.md")
+		readme := seed + strings.Repeat("r", pad)
+		if strings.Count(stable, seed) != 1 {
+			t.Fatal("fixture needs one exact copy of README in the opening")
+		}
+		stable = strings.Replace(stable, seed, readme, 1)
+		e.write("README.md", readme)
+		e.run("git", "add", "README.md")
+		e.run("git", "commit", "-qm", "calibrate approved brief")
+		e.approve()
+	}
+	return e, body(input(stable, brief.Dynamic)), role
+}
+
+func inventoryApproval(t *testing.T, e *env) project.Approval {
+	t.Helper()
+	var a project.Approval
+	data, err := os.ReadFile(project.ApprovalPath(e.root, testSlug))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &a); err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func inventoryFinish(e *env) handler {
+	return e.prov.calls("write_file", map[string]any{"path": "candidate.txt", "content": "candidate\n"}, "finish", map[string]any{"summary": "fixture completed"})
+}
+
+func inventoryRequests(t *testing.T, e *env, a *attempt, want, ceiling int, role provider.Role) []map[string]any {
+	t.Helper()
+	if a.exit != 0 || a.err != nil || e.prov.count() != want {
+		t.Fatalf("wanted Build success and %d local scripted requests, got exit %d and %d requests (%v)\n%s\n%s", want, a.exit, e.prov.count(), a.err, a.shown(), a.errs)
+	}
+	reqs := e.prov.requests()
+	for i, req := range reqs {
+		if n := inventorySize(t, req, role); n > ceiling {
+			t.Fatalf("provider request %d exceeds the rendered ceiling: %d > %d", i+1, n, ceiling)
+		}
+	}
+	return reqs
+}
+
+func inventorySize(t *testing.T, body map[string]any, role provider.Role) int {
+	t.Helper()
+	m, err := tools.Measure(body, role)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m.RenderedBytes
+}
+
+func inventoryInput(body map[string]any, dynamic string) map[string]any {
+	out := make(map[string]any, len(body))
+	for k, v := range body {
+		out[k] = v
+	}
+	out["input"] = []any{map[string]any{"role": "user", "content": provider.ContractBlocks(inventoryBlocks(body)[0], dynamic)}}
+	return out
+}
+
+func inventoryBlocks(body map[string]any) [2]string {
+	blocks := body["input"].([]any)[0].(map[string]any)["content"].([]any)
+	var texts [2]string
+	for i, block := range blocks[:min(len(texts), len(blocks))] {
+		texts[i], _ = block.(map[string]any)["text"].(string)
+	}
+	return texts
+}
+
+func inventoryExactOpening(t *testing.T, original, got map[string]any) {
+	t.Helper()
+	if inventoryBlocks(original) != inventoryBlocks(got) {
+		t.Fatal("unchanged in-budget opening lost exact authority or existing inventory")
+	}
+}
+
+func inventoryReduced(t *testing.T, original, got map[string]any) {
+	t.Helper()
+	old, next := inventoryBlocks(original), inventoryBlocks(got)
+	if old[0] != next[0] || got["instructions"] != original["instructions"] || canonical(got["tools"]) != canonical(original["tools"]) {
+		t.Fatal("tight request changed exact authority, instructions or tool definitions")
+	}
+	if len(next[1]) >= len(old[1]) || strings.Contains(next[1], "inventory/z-target.txt") || !strings.Contains(strings.ToLower(next[1]), "omitted") || !strings.Contains(next[1], "read") || !strings.Contains(next[1], "search") {
+		t.Fatal("optional inventory was not reduced with discovery guidance for omitted paths")
+	}
+	for _, p := range []string{"app.txt", stepsFile, project.FeaturePath(testSlug), filepath.ToSlash(project.IntentMDPath(testSlug)), ".kogen/project.yaml"} {
+		if !slices.Contains(strings.Split(next[1], "\n"), p) {
+			t.Fatalf("reduced inventory no longer lists required path %q", p)
+		}
+	}
+}

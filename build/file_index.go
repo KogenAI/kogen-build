@@ -52,6 +52,10 @@ func displayPath(p string) string {
 // individually, a breadth-first selection of other paths across directories, and the omitted
 // paths counted per disjoint directory. The result depends only on the path set.
 func fileIndex(listing string, required []string) string {
+	return fileIndexBound(listing, required, fileIndexBytes)
+}
+
+func fileIndexBound(listing string, required []string, bound int) string {
 	paths := strings.Split(listing, "\x00")
 	if paths[len(paths)-1] == "" {
 		paths = paths[:len(paths)-1]
@@ -61,7 +65,7 @@ func fileIndex(listing string, required []string) string {
 	for _, p := range paths {
 		full.WriteString(displayPath(p) + "\n")
 	}
-	if full.Len() <= fileIndexBytes {
+	if full.Len() <= bound {
 		return full.String()
 	}
 	sort.Strings(paths)
@@ -142,7 +146,7 @@ func fileIndex(listing string, required []string) string {
 			if listedEnd < 0 {
 				listedEnd = len(out)
 			}
-			return len(out) <= fileIndexBytes && (extra == 0 || listedEnd <= fileIndexBytes/4*3)
+			return len(out) <= bound && (extra == 0 || listedEnd <= bound/4*3)
 		}
 		lo, hi := 0, len(cands)
 		for lo < hi {
@@ -157,7 +161,7 @@ func fileIndex(listing string, required []string) string {
 	}
 	lo := breadth(1)
 	best, _ := render(lo, 1)
-	if len(best) > fileIndexBytes {
+	if len(best) > bound {
 		// Even the top-level directories do not fit (a very wide repository): the root
 		// alone summarizes the omitted paths.
 		lo = breadth(0)
@@ -167,7 +171,7 @@ func fileIndex(listing string, required []string) string {
 	// The finest directory summary that still fits.
 	for depth := 2; ; depth++ {
 		out, _ := render(lo, depth)
-		if len(out) > fileIndexBytes || out == best {
+		if len(out) > bound || out == best {
 			break
 		}
 		best = out
@@ -228,4 +232,97 @@ func (n *omitNode) emit(b *strings.Builder, dir string, level, depth int) {
 		}
 		n.children[name].emit(b, child, level+1, depth)
 	}
+}
+
+// fitInventory substitutes only the optional Files section, measuring each complete request.
+func (b *Attempt) fitInventory(input []any, fits func([]any) (bool, error)) ([]any, error) {
+	if len(input) == 0 {
+		return input, nil
+	}
+	msg, ok := input[0].(map[string]any)
+	if !ok {
+		return input, nil
+	}
+	blocks, ok := msg["content"].([]any)
+	if !ok || len(blocks) < 2 {
+		return input, nil
+	}
+	block, ok := blocks[1].(map[string]any)
+	if !ok {
+		return input, nil
+	}
+	text, ok := block["text"].(string)
+	if !ok {
+		return input, nil
+	}
+	pos := len(b.baselineText())
+	if !strings.HasPrefix(text, b.baselineText()+"# Files\n\n") {
+		return input, nil
+	}
+	suffix := ""
+	if end := strings.Index(text[pos:], "\n# Fresh conversation continuation\n"); end >= 0 {
+		suffix = text[pos+end:]
+	}
+	listing, err := b.repo.OK("ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	required := append(slices.Clone(b.Baseline), b.intent.Acceptance...)
+	replace := func(index string) []any {
+		result := slices.Clone(input)
+		m := map[string]any{}
+		for k, v := range msg {
+			m[k] = v
+		}
+		bs := slices.Clone(blocks)
+		bl := map[string]any{}
+		for k, v := range block {
+			bl[k] = v
+		}
+		bl["text"] = text[:pos] + index + suffix
+		bs[1] = bl
+		m["content"] = bs
+		result[0] = m
+		return result
+	}
+	// The minimal bounded index retains every required path and truthful omission counts.
+	guidance := "Omitted paths can be listed and searched with shell (git ls-files and git grep), and read with read_file.\n\n"
+	withGuidance := func(index string) string {
+		return strings.Replace(index, "# Files\n\n", "# Files\n\n"+guidance, 1)
+	}
+	minimal := withGuidance(fileIndexBound(listing, required, 0))
+	candidate := replace(minimal)
+	yes, err := fits(candidate)
+	if err != nil {
+		return nil, err
+	}
+	if !yes {
+		candidate = replace("# Files\n\nOmitted inventory: list and search paths with shell (git ls-files and git grep); read files with read_file.\n")
+		yes, err = fits(candidate)
+		if err != nil {
+			return nil, err
+		}
+		if yes {
+			return candidate, nil
+		}
+		return replace(""), nil
+	}
+	best := candidate
+	lo, hi := 0, fileIndexBytes
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		index := withGuidance(fileIndexBound(listing, required, mid))
+		candidate = replace(index)
+		yes, err = fits(candidate)
+		if err != nil {
+			return nil, err
+		}
+		if yes {
+			best = candidate
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return best, nil
 }
