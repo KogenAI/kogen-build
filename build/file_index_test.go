@@ -180,3 +180,45 @@ func TestFileIndexEmptyAccounting(t *testing.T) {
 		})
 	}
 }
+
+func TestDisplayPathBackslashNDiffersFromNewline(t *testing.T) {
+	literal := displayPath(`docs/a\nb.txt`)
+	newline := displayPath("docs/a\nb.txt")
+	if literal == newline {
+		t.Fatalf("distinct paths display the same: %q", literal)
+	}
+	if literal != `docs/a\\nb.txt` || newline != `docs/a\nb.txt` {
+		t.Errorf("literal %q, newline %q", literal, newline)
+	}
+}
+
+func TestDisplayPathEscapesBackslashWithoutControlCharacter(t *testing.T) {
+	cases := []struct{ path, want string }{
+		{`a\b`, `a\\b`},
+		{`a\\b`, `a\\\\b`},
+		{`dir\`, `dir\\`},
+		{"a\\\tb", `a\\\tb`},
+	}
+	for _, tc := range cases {
+		if got := displayPath(tc.path); got != tc.want {
+			t.Errorf("displayPath(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+	out := fileIndex("a\\b\x00", nil)
+	if !strings.Contains(out, "\n"+`a\\b`+"\n") {
+		t.Errorf("index does not show the escaped backslash: %q", out)
+	}
+}
+
+func TestDisplayPathOrdinaryPathsUnchanged(t *testing.T) {
+	for _, p := range []string{"docs/a b.txt", "docs/café/日本語.md", "x/!@#$%^&*()[]{};'\",.<>?|`~+=-_.txt", ""} {
+		if got := displayPath(p); got != p {
+			t.Errorf("displayPath(%q) = %q, want unchanged", p, got)
+		}
+	}
+	for p, want := range map[string]string{"a\x00b": `a\x00b`, "a\x7fb": `a\x7fb`, "a\rb": `a\rb`} {
+		if got := displayPath(p); got != want {
+			t.Errorf("displayPath(%q) = %q, want %q", p, got, want)
+		}
+	}
+}

@@ -17,12 +17,12 @@ const fileIndexBytes = 65536
 const fileIndexNotice = "The omitted paths still exist in the repository: they remain readable and searchable " +
 	"with the existing file, read and search tools."
 
-// displayPath is how the index shows a path: one that contains a control character (below 0x20
-// or 0x7f) is written on a single line with \n, \t, \r or \xNN for each control character and
-// \\ for a backslash; any other path is unchanged. Counts, ordering and required-path matching
+// displayPath is how the index shows a path: one that contains a backslash or a control character
+// (below 0x20 or 0x7f) is written on a single line with \\ for each backslash and \n, \t, \r or
+// \xNN for each control character; any other path is unchanged. Counts, ordering and required-path matching
 // use the raw names.
 func displayPath(p string) string {
-	if !strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+	if !strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f || r == '\\' }) {
 		return p
 	}
 	var b strings.Builder

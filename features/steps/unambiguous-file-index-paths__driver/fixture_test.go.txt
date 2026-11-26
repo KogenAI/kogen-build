@@ -1,0 +1,83 @@
+package build
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// unambiguousPathsMarkPassed records, once the test has finished without failure, that it ran to the end, so the
+// acceptance step can tell a passing test from an absent or skipped one.
+func unambiguousPathsMarkPassed(t *testing.T) {
+	t.Helper()
+	dir := os.Getenv("UNAMBIGUOUS_PATHS_RESULT_DIR")
+	t.Cleanup(func() {
+		if t.Failed() || t.Skipped() || dir == "" {
+			return
+		}
+		if err := os.WriteFile(filepath.Join(dir, t.Name()), []byte("ok\n"), 0o644); err != nil {
+			t.Errorf("record result: %v", err)
+		}
+	})
+}
+
+func unambiguousPathsLines(out string) map[string]int {
+	counts := map[string]int{}
+	for _, line := range strings.Split(out, "\n") {
+		counts[line]++
+	}
+	return counts
+}
+
+func TestAcceptanceUnambiguousPathsLiteralBackslashN(t *testing.T) {
+	unambiguousPathsMarkPassed(t)
+	literal := `docs/a\nb.txt`
+	withNewline := "docs/a\nb.txt"
+	out := fileIndex(literal+"\x00"+withNewline+"\x00", nil)
+	lines := unambiguousPathsLines(out)
+	for _, want := range []string{`docs/a\\nb.txt`, `docs/a\nb.txt`} {
+		if lines[want] != 1 {
+			t.Errorf("want exactly one complete line %q, got %d in %q", want, lines[want], out)
+		}
+	}
+	if strings.Contains(out, "docs/a\nb.txt") {
+		t.Errorf("raw newline path is shown unescaped in %q", out)
+	}
+}
+
+func TestAcceptanceUnambiguousPathsBackslashWithoutControl(t *testing.T) {
+	unambiguousPathsMarkPassed(t)
+	paths := []string{`pkg\dir/file.txt`, `lit\x41.txt`, `ends\`}
+	want := []string{`pkg\\dir/file.txt`, `lit\\x41.txt`, `ends\\`}
+	out := fileIndex(strings.Join(paths, "\x00")+"\x00", nil)
+	lines := unambiguousPathsLines(out)
+	for _, w := range want {
+		if lines[w] != 1 {
+			t.Errorf("want exactly one complete line %q, got %d in %q", w, lines[w], out)
+		}
+	}
+	for _, p := range paths {
+		if lines[p] != 0 {
+			t.Errorf("path %q is shown with its backslash unescaped in %q", p, out)
+		}
+	}
+}
+
+func TestAcceptanceUnambiguousPathsOrdinaryAndControl(t *testing.T) {
+	unambiguousPathsMarkPassed(t)
+	ordinary := []string{"docs/café.txt", "my dir/file-1_2.txt", "src/[a]+b(c)=d.go", "x/'q'\"r\".md"}
+	control := "c/tab\tx\rr\x1fu\x7fd\nn.txt"
+	controlShown := `c/tab\tx\rr\x1fu\x7fd\nn.txt`
+	listing := strings.Join(append(append([]string{}, ordinary...), control), "\x00") + "\x00"
+	out := fileIndex(listing, nil)
+	lines := unambiguousPathsLines(out)
+	for _, p := range append(append([]string{}, ordinary...), controlShown) {
+		if lines[p] != 1 {
+			t.Errorf("want exactly one complete line %q, got %d in %q", p, lines[p], out)
+		}
+	}
+	if again := fileIndex(listing, nil); again != out {
+		t.Errorf("repeated call differs:\n%q\n%q", out, again)
+	}
+}
