@@ -1,0 +1,138 @@
+package build
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+)
+
+func shapeEnv(t *testing.T) (*env, string) {
+	t.Helper()
+	return reuseEnv(t,
+		project.Check{Name: "a", Run: `echo a >> "$KBO_LOG"`},
+		project.Check{Name: "b", Run: `echo b >> "$KBO_LOG"`})
+}
+
+// shapeBuild approves the Intent, runs one Build and returns the one run that Build created.
+func shapeBuild(e *env) string {
+	e.t.Helper()
+	known := map[string]bool{}
+	for _, id := range e.runIDs() {
+		known[id] = true
+	}
+	e.prov.then(e.prov.calls("finish", map[string]any{"summary": "done"}), refused())
+	e.approve()
+	e.build()
+	var fresh []string
+	for _, id := range e.runIDs() {
+		if !known[id] {
+			fresh = append(fresh, id)
+		}
+	}
+	if len(fresh) != 1 {
+		e.t.Fatalf("this Build created runs %v, want exactly one new run", fresh)
+	}
+	return fresh[0]
+}
+
+func shapeFile(e *env) string { return filepath.Join(e.root, ".git", "kogen-reuse-shadow") }
+
+func shapeEvents(e *env, id, name string) []map[string]any { return eventsNamed(e.events(id), name) }
+
+const shapeBaselineLine = `{"key":"k1","name":"a","status":0,"wall_ms":0,"source":"baseline","log":"/tmp/one.jsonl"}`
+const shapePassLine = `{"key":"k2","name":"b","status":0,"wall_ms":0,"source":"pass","log":"/tmp/two.jsonl"}`
+
+func TestReceiptShapeAcceptance(t *testing.T) {
+	t.Run("r1", func(t *testing.T) {
+		incomplete := map[string]string{
+			"key and status only": `{"key":"k3","status":0}`,
+			"no name":             `{"key":"k3","status":0,"wall_ms":1,"source":"baseline","log":"/tmp/x"}`,
+			"no wall_ms":          `{"key":"k3","name":"a","status":0,"source":"baseline","log":"/tmp/x"}`,
+			"no source":           `{"key":"k3","name":"a","status":0,"wall_ms":1,"log":"/tmp/x"}`,
+			"no log":              `{"key":"k3","name":"a","status":0,"wall_ms":1,"source":"baseline"}`,
+		}
+		for name, line := range incomplete {
+			path := filepath.Join(t.TempDir(), reuseReceiptFile)
+			writeFile(t, path, shapeBaselineLine+"\n"+line+"\n", 0o600)
+			got, err := readReuseReceipts(path)
+			if err == nil || !strings.Contains(err.Error(), "is corrupt at line 2") {
+				t.Fatalf("%s: readReuseReceipts = %v, %v; want the corrupt-line error naming line 2", name, got, err)
+			}
+		}
+	})
+	t.Run("r2", func(t *testing.T) {
+		e, log := shapeEnv(t)
+		first := shapeBuild(e)
+		receipts, err := readReuseReceipts(shapeFile(e))
+		if err != nil || len(receipts) == 0 {
+			t.Fatalf("first Build left receipts %v, %v", receipts, err)
+		}
+		// Every key the first Build recorded, now as an incomplete green record.
+		var lines []string
+		for _, r := range receipts {
+			lines = append(lines, `{"key":"`+r.Key+`","status":0}`)
+		}
+		writeFile(t, shapeFile(e), strings.Join(lines, "\n")+"\n", 0o644)
+		before := len(executionsOf(t, log))
+		second := shapeBuild(e)
+		if second == first {
+			t.Fatal("the second Build reused the first run")
+		}
+		un := shapeEvents(e, second, "reuse_shadow_unavailable")
+		if len(un) != 1 || !strings.Contains(strings.TrimSpace(un[0]["reason"].(string)), "corrupt") {
+			t.Fatalf("reuse_shadow_unavailable events: %v", un)
+		}
+		eq(t, "reuse_shadow events", len(shapeEvents(e, second, "reuse_shadow")), 0)
+		got := executionsOf(t, log)[before:]
+		if len(got) < 2 || got[0] != "a" || got[1] != "b" {
+			t.Fatalf("the second Build's baseline ran %v, want a then b", got)
+		}
+		results := shapeEvents(e, second, "command_result")
+		if len(results) < 2 {
+			t.Fatalf("command_result events: %v", results)
+		}
+		bc := shapeEvents(e, second, "baseline_checks")
+		if len(bc) != 1 || len(bc[0]["failing"].([]any)) != 0 {
+			t.Fatalf("baseline_checks: %v", bc)
+		}
+	})
+	t.Run("r3", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), reuseReceiptFile)
+		writeFile(t, path, shapeBaselineLine+"\n"+shapePassLine+"\n", 0o600)
+		got, err := readReuseReceipts(path)
+		if err != nil || len(got) != 2 || got[0].Source != "baseline" || got[1].Source != "pass" {
+			t.Fatalf("complete receipts read as %+v, %v", got, err)
+		}
+		e, _ := shapeEnv(t)
+		e.prov.then(e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": "candidate\n"}, "finish", map[string]any{"summary": "done"}))
+		e.approve()
+		e.build()
+		first := e.onlyRun()
+		eq(t, "outcome", e.result(first)["outcome"], any("landed"))
+		raw, _ := os.ReadFile(shapeFile(e))
+		for _, src := range []string{`"source":"baseline"`, `"source":"pass"`} {
+			if !strings.Contains(string(raw), src) {
+				t.Fatalf("receipt file lacks %s: %s", src, raw)
+			}
+		}
+		second := shapeBuild(e)
+		if n := len(shapeEvents(e, second, "reuse_shadow_unavailable")); n != 0 {
+			t.Fatalf("reuse_shadow_unavailable events on healthy receipts: %d", n)
+		}
+		for _, c := range []string{"a", "b"} {
+			var found map[string]any
+			for _, ev := range shapeEvents(e, second, "reuse_shadow") {
+				if ev["name"] == c {
+					found = ev
+				}
+			}
+			if found == nil {
+				t.Fatalf("no reuse_shadow event for %s", c)
+			}
+			eq(t, "would_reuse "+c, found["would_reuse"], any(true))
+		}
+	})
+}

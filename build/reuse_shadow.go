@@ -121,15 +121,23 @@ func readReuseReceipts(path string) ([]reuseReceipt, error) {
 		return nil, fmt.Errorf("receipt file: %w", err)
 	}
 	var out []reuseReceipt
-	for n, line := range bytes.Split(raw, []byte("\n")) {
-		if len(bytes.TrimSpace(line)) == 0 {
+	lines := bytes.Split(raw, []byte("\n"))
+	for n, line := range lines {
+		if n == len(lines)-1 && len(line) == 0 {
 			continue
 		}
-		var r reuseReceipt
-		if err := json.Unmarshal(line, &r); err != nil || r.Key == "" {
+		var fields struct {
+			Key    *string `json:"key"`
+			Name   *string `json:"name"`
+			Status *int    `json:"status"`
+			WallMS *int64  `json:"wall_ms"`
+			Source *string `json:"source"`
+			Log    *string `json:"log"`
+		}
+		if err := json.Unmarshal(line, &fields); err != nil || fields.Key == nil || fields.Name == nil || fields.Status == nil || fields.WallMS == nil || fields.Source == nil || fields.Log == nil || *fields.Key == "" || *fields.Name == "" || *fields.Source == "" || *fields.Log == "" {
 			return nil, fmt.Errorf("receipt file %s is corrupt at line %d", path, n+1)
 		}
-		out = append(out, r)
+		out = append(out, reuseReceipt{Key: *fields.Key, Name: *fields.Name, Status: *fields.Status, WallMS: *fields.WallMS, Source: *fields.Source, Log: *fields.Log})
 	}
 	return out, nil
 }

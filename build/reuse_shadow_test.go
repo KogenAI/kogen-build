@@ -173,11 +173,49 @@ func TestReuseReceiptFileIsBounded(t *testing.T) {
 	if len(got) != reuseReceiptBound || got[0].Key != "k5" || got[len(got)-1].Key != fmt.Sprintf("k%d", reuseReceiptBound+4) {
 		t.Fatalf("%d receipts from %s to %s, want the newest %d", len(got), got[0].Key, got[len(got)-1].Key, reuseReceiptBound)
 	}
-	if err := appendReuseReceipts(path, reuseReceipt{Key: "x1"}, reuseReceipt{Key: "x2"}); err != nil {
+	if err := appendReuseReceipts(path, reuseReceipt{Key: "x1", Name: "a", Source: reuseSourceBase, Log: "log"}, reuseReceipt{Key: "x2", Name: "a", Source: reuseSourceBase, Log: "log"}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = readReuseReceipts(path)
 	if len(got) != reuseReceiptBound || got[len(got)-1].Key != "x2" || got[len(got)-2].Key != "x1" {
 		t.Fatalf("after a two-receipt append: %d receipts ending %v", len(got), got[len(got)-2:])
+	}
+}
+
+func TestReadReuseReceiptsRejectsIncompleteRecords(t *testing.T) {
+	complete := `{"key":"k","name":"n","status":0,"wall_ms":0,"source":"baseline","log":"l"}`
+	cases := []string{
+		`{"key":"k","status":0}`,
+		`{"name":"n","status":0,"wall_ms":0,"source":"baseline","log":"l"}`,
+		`{"key":"k","status":0,"wall_ms":0,"source":"baseline","log":"l"}`,
+		`{"key":"k","name":"n","wall_ms":0,"source":"baseline","log":"l"}`,
+		`{"key":"k","name":"n","status":0,"source":"baseline","log":"l"}`,
+		`{"key":"k","name":"n","status":0,"wall_ms":0,"log":"l"}`,
+		`{"key":"k","name":"n","status":0,"wall_ms":0,"source":"baseline"}`,
+		`{"key":"","name":"n","status":0,"wall_ms":0,"source":"baseline","log":"l"}`,
+		`{"key":"k","name":"","status":0,"wall_ms":0,"source":"baseline","log":"l"}`,
+		`{"key":"k","name":"n","status":0,"wall_ms":0,"source":"","log":"l"}`,
+		`{"key":"k","name":"n","status":0,"wall_ms":0,"source":"baseline","log":""}`,
+		`{"key":"k","name":"n","status":null,"wall_ms":0,"source":"baseline","log":"l"}`,
+		`not json`, `[]`, `null`,
+	}
+	path := filepath.Join(t.TempDir(), reuseReceiptFile)
+	for _, line := range cases {
+		t.Run(line, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(complete+"\n"+line+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := readReuseReceipts(path)
+			if want := fmt.Sprintf("receipt file %s is corrupt at line 2", path); err == nil || err.Error() != want {
+				t.Fatalf("error = %v, want %s", err, want)
+			}
+		})
+	}
+	if err := os.WriteFile(path, []byte(complete+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readReuseReceipts(path)
+	if err != nil || len(got) != 1 || got[0].Status != 0 || got[0].WallMS != 0 {
+		t.Fatalf("receipts = %+v, error = %v", got, err)
 	}
 }
