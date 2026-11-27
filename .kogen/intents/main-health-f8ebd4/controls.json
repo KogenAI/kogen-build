@@ -1,0 +1,1 @@
+{"deferred": "The fixture that must change (the atomic-publication observers) lives in the steps directory under features/steps, which a controls overlay may not write, so neither a correct nor a wrong implementation can be expressed as an overlay; the Build edits the fixture file directly."}

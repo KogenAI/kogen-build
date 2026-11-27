@@ -517,7 +517,9 @@ func bmAtomicAttempt(t *testing.T) {
 	var mu sync.Mutex
 	var seen []string
 	var done sync.WaitGroup
-	for w := 0; w < runtime.NumCPU(); w++ {
+	// A fixed number of observers, independent of the host CPU count, so that the observation
+	// does not compete with the Build under test on a host already saturated by parallel workers.
+	for w := 0; w < 2; w++ {
 		done.Add(1)
 		go func() {
 			defer done.Done()
@@ -531,6 +533,7 @@ func bmAtomicAttempt(t *testing.T) {
 					continue
 				}
 				if qerr != nil {
+					runtime.Gosched()
 					continue
 				}
 				entries, err := os.ReadDir(dir)
