@@ -160,3 +160,72 @@ func TestResumeVerifiesMaintainedModel(t *testing.T) {
 		t.Fatalf("resume trace: %s", data)
 	}
 }
+
+func TestPromoteEmptyDirectoryUsesApprovedModel(t *testing.T) {
+	for _, refined := range []bool{false, true} {
+		t.Run(map[bool]string{false: "empty", true: "refined"}[refined], func(t *testing.T) {
+			e := newEnv(t)
+			source := "module fixture { val Safe = true }\n"
+			if refined {
+				e.write(".kogen/local/archive/model.qnt", "old archived model\n")
+				source = "module fixture { val Safe = true val Other = true }\n"
+			}
+			original := e.read(project.IntentMDPath(testSlug))
+			e.write(project.ModelPath(testSlug), source)
+			e.write(project.IntentMDPath(testSlug), strings.Replace(original, "not applicable — no model for this fixture", project.ModelPath(testSlug)+" invariants=Safe seed=7 samples=3 steps=4", 1))
+			e.approve()
+			if err := os.MkdirAll(filepath.Join(e.root, ".kogen/models", testSlug), 0755); err != nil {
+				t.Fatal(err)
+			}
+			node, err := exec.LookPath("node")
+			if err != nil {
+				t.Fatal(err)
+			}
+			tool := filepath.Join(e.aux, "quint.js")
+			writeFile(t, tool, "", 0644)
+			e.prov.then(landScript(e.prov)...)
+			a := e.build(func(in *Input) { in.Deps.Tools = verify.Tools{Node: node, Quint: tool} })
+			if a.exit != 0 {
+				t.Fatalf("%s err=%v stderr=%s", a.shown(), a.err, a.errs.String())
+			}
+			if got := e.read(".kogen/models/fixture/model.qnt"); got != source {
+				t.Fatalf("model: %q", got)
+			}
+			var spec project.ModelSpec
+			if err := json.Unmarshal([]byte(e.read(".kogen/models/fixture/model.json")), &spec); err != nil {
+				t.Fatal(err)
+			}
+			want := project.ModelSpec{Path: ".kogen/models/fixture/model.qnt", Invariants: []string{"Safe"}, Seed: "7", Samples: "3", Steps: "4"}
+			if !reflect.DeepEqual(spec, want) {
+				t.Fatalf("spec: %#v", spec)
+			}
+		})
+	}
+}
+
+func TestPromoteEmptyApprovedSourceRefused(t *testing.T) {
+	e := newEnv(t)
+	original := e.read(project.IntentMDPath(testSlug))
+	e.write(project.ModelPath(testSlug), "")
+	e.write(project.IntentMDPath(testSlug), strings.Replace(original, "not applicable — no model for this fixture", project.ModelPath(testSlug)+" invariants=Safe seed=7 samples=3 steps=4", 1))
+	e.approve()
+	dir := filepath.Join(e.root, ".kogen/models", testSlug)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := filepath.Join(e.aux, "quint.js")
+	writeFile(t, tool, "", 0644)
+	e.prov.then(landScript(e.prov)...)
+	a := e.build(func(in *Input) { in.Deps.Tools = verify.Tools{Node: node, Quint: tool} })
+	if a.exit == 0 || !strings.Contains(a.shown()+a.errs.String(), "model directory") {
+		t.Fatalf("expected promotion refusal: %s %v %s", a.shown(), a.err, a.errs.String())
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("model directory changed: %v, %v", entries, err)
+	}
+}

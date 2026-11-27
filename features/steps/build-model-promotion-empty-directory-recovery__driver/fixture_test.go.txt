@@ -1,0 +1,655 @@
+package build
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+// Fixture for build-model-promotion-empty-directory-recovery. Each Test below is one named
+// scenario; it fails with a message naming what was observed.
+
+const bmDefaultSource = "module fixture { val Safe = true\n val Other = true }\n"
+const bmDefaultParams = "invariants=Safe,Other seed=007 samples=03 steps=04"
+const bmModelDir = ".kogen/models/fixture"
+
+type bmFix struct {
+	t      *testing.T
+	e      *env
+	node   string
+	tool   string
+	trace  string
+	source string
+	params string
+}
+
+// bmSetup is a repository whose approved Intent owns a model. pre runs before the approval,
+// so that anything it commits is part of the approved base.
+func bmSetup(t *testing.T, source, params string, pre func(f *bmFix)) *bmFix {
+	t.Helper()
+	e := newEnv(t)
+	f := &bmFix{t: t, e: e, source: source, params: params}
+	if params != "" {
+		original := e.read(project.IntentMDPath(testSlug))
+		e.write(project.ModelPath(testSlug), source)
+		e.write(project.IntentMDPath(testSlug), strings.Replace(original, "not applicable — no model for this fixture", project.ModelPath(testSlug)+" "+params, 1))
+	}
+	if pre != nil {
+		pre(f)
+	}
+	e.approve()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.node = node
+	f.trace = filepath.Join(e.aux, "models.trace")
+	f.tool = filepath.Join(e.aux, "quint.js")
+	writeFile(t, f.tool, `const fs=require('fs');fs.appendFileSync(process.env.MODEL_TRACE,JSON.stringify(process.argv.slice(2))+'\n');`, 0644)
+	e.extraEnv = append(e.extraEnv, "MODEL_TRACE="+f.trace)
+	return f
+}
+
+// interrupt stops the first Build at its second request, leaving a candidate edit and a checkpoint.
+func (f *bmFix) interrupt() string {
+	f.t.Helper()
+	opened := make(chan struct{})
+	f.e.prov.then(f.e.prov.calls("write_file", map[string]any{"path": "app.txt", "content": "candidate\n"}))
+	f.e.prov.then(hang(opened))
+	a, done := f.e.start(func(in *Input) { in.Deps.Tools = verify.Tools{Node: f.node, Quint: f.tool} })
+	select {
+	case <-opened:
+	case <-done:
+		f.t.Fatalf("the first Build ended before its second request: exit %d\n%s", a.exit, a.shown())
+	case <-time.After(60 * time.Second):
+		f.t.Fatalf("the first Build never reached its second request")
+	}
+	a.s.Interrupt("SIGINT")
+	<-done
+	if a.exit != 130 {
+		f.t.Fatalf("interrupted exit %d, want 130:\n%s", a.exit, a.shown())
+	}
+	return f.e.onlyRun()
+}
+
+func (f *bmFix) resume(id string) *attempt {
+	f.t.Helper()
+	f.e.prov.replace(f.e.prov.calls("finish", map[string]any{"summary": "done"}))
+	return f.e.resume(id, func(in *ResumeInput) { in.Deps.Tools = verify.Tools{Node: f.node, Quint: f.tool} })
+}
+
+func (f *bmFix) mkdir(rel string) {
+	f.t.Helper()
+	if err := os.MkdirAll(filepath.Join(f.e.root, rel), 0755); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *bmFix) calls() [][]string {
+	f.t.Helper()
+	data, err := os.ReadFile(f.trace)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	var out [][]string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var args []string
+		if err := json.Unmarshal([]byte(line), &args); err != nil {
+			f.t.Fatal(err)
+		}
+		out = append(out, args)
+	}
+	return out
+}
+
+func (f *bmFix) wantRun(path, invariant, seed, samples, steps string) {
+	f.t.Helper()
+	want := []string{"run", path, "--backend", "typescript", "--invariant", invariant, "--seed", seed, "--max-samples", samples, "--max-steps", steps}
+	for _, c := range f.calls() {
+		if reflect.DeepEqual(c, want) {
+			return
+		}
+	}
+	f.t.Fatalf("model verification did not run %v; model runs seen: %v", want, f.calls())
+}
+
+func bmSpecJSON(t *testing.T, path, invariants, seed, samples, steps string) string {
+	t.Helper()
+	spec := project.ModelSpec{Path: path, Invariants: strings.Split(invariants, ","), Seed: seed, Samples: samples, Steps: steps}
+	b, err := json.MarshalIndent(spec, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b) + "\n"
+}
+
+func (f *bmFix) readSpec(rel string) project.ModelSpec {
+	f.t.Helper()
+	var spec project.ModelSpec
+	if err := json.Unmarshal([]byte(f.e.read(rel)), &spec); err != nil {
+		f.t.Fatalf("%s is not a model record: %v", rel, err)
+	}
+	return spec
+}
+
+// bmTree is every regular file under dir (relative path to bytes), and directories as "path/".
+func bmTree(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		if info.IsDir() {
+			out[rel+"/"] = ""
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		out[rel] = string(b)
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return map[string]string{"<absent>": ""}
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// bmRepoState is the checkout outside the Build's own local run storage, plus HEAD and the index.
+func bmRepoState(t *testing.T, e *env) map[string]string {
+	t.Helper()
+	out := map[string]string{"HEAD": e.head()}
+	err := filepath.Walk(e.root, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(e.root, p)
+		if rel == ".git" || rel == ".kogen/local" {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+		}
+		if info.IsDir() {
+			out[rel+"/"] = ""
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		out[rel] = string(b)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := os.ReadFile(filepath.Join(e.root, ".git", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out["<index>"] = string(idx)
+	return out
+}
+
+func bmSame(t *testing.T, what string, got, want map[string]string) {
+	t.Helper()
+	if reflect.DeepEqual(got, want) {
+		return
+	}
+	var diff []string
+	for k, v := range want {
+		if g, ok := got[k]; !ok {
+			diff = append(diff, "missing "+k)
+		} else if g != v {
+			diff = append(diff, "changed "+k)
+		}
+	}
+	for k := range got {
+		if _, ok := want[k]; !ok {
+			diff = append(diff, "added "+k)
+		}
+	}
+	sort.Strings(diff)
+	t.Fatalf("%s changed: %s", what, strings.Join(diff, ", "))
+}
+
+func bmCommitted(f *bmFix, rel string) string {
+	f.t.Helper()
+	out, err := execGit(f.e, "show", "HEAD:"+rel)
+	if err != nil {
+		f.t.Fatalf("%s is not in the landed commit: %v", rel, err)
+	}
+	return out
+}
+
+// TestBMPEDEmptyDirectory: the empty directory native recovery leaves, with the Build resumed
+// from its own checkpoint.
+func TestBMPEDEmptyDirectory(t *testing.T) {
+	f := bmSetup(t, bmDefaultSource, bmDefaultParams, nil)
+	id := f.interrupt()
+	f.mkdir(bmModelDir)
+	_, state := f.e.checkpoint(id)
+	approval := state["approval_bytes"]
+	digests := state["baseline_digests"]
+	start := f.e.head()
+	a := f.resume(id)
+	if a.exit != 0 {
+		t.Fatalf("resume over an empty model directory exited %d, want 0 and a landed Build:\n%s\n%s", a.exit, a.shown(), a.errs.String()+fmt.Sprint(a.err))
+	}
+	if !strings.Contains(a.out.String(), "resuming Build "+id+" as ") || !strings.Contains(a.out.String(), "(root "+id+")") {
+		t.Fatalf("the resume did not continue the original Build %s:\n%s", id, a.out.String())
+	}
+	var resumed string
+	for _, other := range f.e.runIDs() {
+		if other != id {
+			resumed = other
+		}
+	}
+	if resumed == "" {
+		t.Fatalf("the resume left no run of its own beside the original Build %s", id)
+	}
+	_, after := f.e.checkpoint(resumed)
+	if !reflect.DeepEqual(after["approval_bytes"], approval) || !reflect.DeepEqual(after["baseline_digests"], digests) {
+		t.Fatalf("the continued Build's pinned approval or baseline differ from the original Build's")
+	}
+	if got := bmCommitted(f, bmModelDir+"/model.qnt"); got != bmDefaultSource {
+		t.Fatalf("promoted model bytes %q, want the approved source %q", got, bmDefaultSource)
+	}
+	if got := f.readSpec(bmModelDir + "/model.json"); !reflect.DeepEqual(got, project.ModelSpec{Path: bmModelDir + "/model.qnt", Invariants: []string{"Safe", "Other"}, Seed: "007", Samples: "03", Steps: "04"}) {
+		t.Fatalf("promoted manifest %#v", got)
+	}
+	if parent := f.e.gitOut("rev-parse", "HEAD~1"); parent != start {
+		t.Fatalf("landed commit parent %s, want the Build base %s", parent, start)
+	}
+	if got := f.e.gitOut("show", "--name-only", "--format=", "HEAD"); !strings.Contains(got, "app.txt") || !strings.Contains(got, bmModelDir+"/model.json") {
+		t.Fatalf("landed commit lacks the candidate edit or the model pair: %s", got)
+	}
+	f.wantRun(bmModelDir+"/model.qnt", "Safe", "007", "03", "04")
+	f.wantRun(bmModelDir+"/model.qnt", "Other", "007", "03", "04")
+	if res := f.e.result(resumed); res["outcome"] != "landed" {
+		t.Fatalf("outcome %v, want landed", res["outcome"])
+	}
+	if matches, _ := filepath.Glob(filepath.Join(f.e.root, ".kogen/local/runs", resumed, "acceptance-*")); len(matches) == 0 {
+		t.Fatalf("the resumed verification retained no acceptance report in run %s", resumed)
+	}
+}
+
+// TestBMPEDMissingDirectory: a missing directory is promoted as before.
+func TestBMPEDMissingDirectory(t *testing.T) {
+	f := bmSetup(t, bmDefaultSource, bmDefaultParams, nil)
+	id := f.interrupt()
+	a := f.resume(id)
+	if a.exit != 0 {
+		t.Fatalf("resume with a missing model directory exited %d:\n%s", a.exit, a.shown())
+	}
+	if got := bmCommitted(f, bmModelDir+"/model.qnt"); got != bmDefaultSource {
+		t.Fatalf("promoted model bytes %q", got)
+	}
+	f.wantRun(bmModelDir+"/model.qnt", "Safe", "007", "03", "04")
+}
+
+// TestBMPEDRefinedModel: a refined model is promoted from the newly approved input although
+// earlier archived bytes of the same model sit in the checkout's local storage.
+func TestBMPEDRefinedModel(t *testing.T) {
+	refined := "module fixture { val Good = true }\n"
+	pre := func(f *bmFix) {
+		stale := "module fixture { val Safe = true }\n"
+		if err := os.MkdirAll(filepath.Join(f.e.root, ".kogen/local"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		archive, err := os.MkdirTemp(filepath.Join(f.e.root, ".kogen/local"), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(archive, "model.qnt"), stale, 0644)
+		writeFile(t, filepath.Join(archive, "model.json"), bmSpecJSON(t, bmModelDir+"/model.qnt", "Safe,Other", "007", "03", "04"), 0644)
+	}
+	f := bmSetup(t, refined, "invariants=Good seed=9 samples=5 steps=6", pre)
+	id := f.interrupt()
+	f.mkdir(bmModelDir)
+	a := f.resume(id)
+	if a.exit != 0 {
+		t.Fatalf("resume exited %d:\n%s", a.exit, a.shown())
+	}
+	if got := bmCommitted(f, bmModelDir+"/model.qnt"); got != refined {
+		t.Fatalf("promoted model bytes %q, want the newly approved %q", got, refined)
+	}
+	if got := f.readSpec(bmModelDir + "/model.json"); !reflect.DeepEqual(got, project.ModelSpec{Path: bmModelDir + "/model.qnt", Invariants: []string{"Good"}, Seed: "9", Samples: "5", Steps: "6"}) {
+		t.Fatalf("promoted manifest %#v, want the newly approved parameters", got)
+	}
+	f.wantRun(bmModelDir+"/model.qnt", "Good", "9", "5", "6")
+	for _, c := range f.calls() {
+		for _, arg := range c {
+			if arg == "Safe" || arg == "007" {
+				t.Fatalf("a stale archived parameter reached verification: %v", c)
+			}
+		}
+	}
+}
+
+func bmMaintainedPair(t *testing.T, root, slug, source, invariant, seed string) (string, string) {
+	t.Helper()
+	dir := ".kogen/models/" + slug
+	record := bmSpecJSON(t, dir+"/model.qnt", invariant, seed, "2", "3")
+	writeFile(t, filepath.Join(root, dir, "model.qnt"), source, 0644)
+	writeFile(t, filepath.Join(root, dir, "model.json"), record, 0644)
+	return source, record
+}
+
+func bmCommitModels(f *bmFix) {
+	f.e.run("git", "add", ".kogen/models")
+	f.e.run("git", "commit", "-qm", "maintained models")
+}
+
+// TestBMPEDCompleteModelIntact: a complete maintained model of the Build's own slug, one that
+// differs from the approved source, and an unrelated slug's, stay byte for byte as they were.
+func TestBMPEDCompleteModelIntact(t *testing.T) {
+	var tree map[string]string
+	pre := func(f *bmFix) {
+		bmMaintainedPair(t, f.e.root, "fixture", "module fixture { val Kept = true }\n", "Kept", "5")
+		bmMaintainedPair(t, f.e.root, "other", "module other { val Fine = true }\n", "Fine", "6")
+		bmCommitModels(f)
+		tree = bmTree(t, filepath.Join(f.e.root, ".kogen/models"))
+	}
+	f := bmSetup(t, bmDefaultSource, bmDefaultParams, pre)
+	id := f.interrupt()
+	a := f.resume(id)
+	if a.exit != 0 {
+		t.Fatalf("resume with complete maintained models exited %d:\n%s", a.exit, a.shown())
+	}
+	bmSame(t, "the complete maintained models", bmTree(t, filepath.Join(f.e.root, ".kogen/models")), tree)
+	f.wantRun(bmModelDir+"/model.qnt", "Kept", "5", "2", "3")
+	f.wantRun(".kogen/models/other/model.qnt", "Fine", "6", "2", "3")
+}
+
+// TestBMPEDRepeatedPromotion: a pair already equal to the approved model, as a successful
+// promotion leaves it, is accepted and left byte for byte as it is.
+func TestBMPEDRepeatedPromotion(t *testing.T) {
+	var tree map[string]string
+	pre := func(f *bmFix) {
+		writeFile(t, filepath.Join(f.e.root, bmModelDir, "model.qnt"), bmDefaultSource, 0644)
+		writeFile(t, filepath.Join(f.e.root, bmModelDir, "model.json"), bmSpecJSON(t, bmModelDir+"/model.qnt", "Safe,Other", "007", "03", "04"), 0644)
+		bmCommitModels(f)
+		tree = bmTree(t, filepath.Join(f.e.root, ".kogen/models"))
+	}
+	f := bmSetup(t, bmDefaultSource, bmDefaultParams, pre)
+	id := f.interrupt()
+	a := f.resume(id)
+	if a.exit != 0 {
+		t.Fatalf("resume exited %d:\n%s", a.exit, a.shown())
+	}
+	bmSame(t, "the already promoted pair", bmTree(t, filepath.Join(f.e.root, ".kogen/models")), tree)
+	f.wantRun(bmModelDir+"/model.qnt", "Safe", "007", "03", "04")
+}
+
+// TestBMPEDRefusesUnsafeDirectories: partial, conflicting and unrelated contents are refused,
+// not overwritten and not accepted as green.
+func TestBMPEDRefusesUnsafeDirectories(t *testing.T) {
+	good := bmSpecJSON(t, bmModelDir+"/model.qnt", "Safe", "1", "2", "3")
+	cases := []struct {
+		name  string
+		files map[string]string
+	}{
+		{"only the model source", map[string]string{"model.qnt": "module fixture { val Safe = true }\n"}},
+		{"only the manifest", map[string]string{"model.json": good}},
+		{"an unrelated file", map[string]string{"notes.txt": "keep me\n"}},
+		{"a complete pair with an extra file", map[string]string{"model.qnt": "module fixture { val Safe = true }\n", "model.json": good, "notes.txt": "keep me\n"}},
+		{"an unreadable manifest", map[string]string{"model.qnt": "module fixture { val Safe = true }\n", "model.json": "{not json"}},
+		{"a manifest for another model", map[string]string{"model.qnt": "module fixture { val Safe = true }\n", "model.json": bmSpecJSON(t, ".kogen/models/other/model.qnt", "Safe", "1", "2", "3")}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pre := func(f *bmFix) {
+				for name, content := range c.files {
+					f.e.write(bmModelDir+"/"+name, content)
+				}
+				bmCommitModels(f)
+			}
+			f := bmSetup(t, bmDefaultSource, bmDefaultParams, pre)
+			id := f.interrupt()
+			before := bmRepoState(t, f.e)
+			a := f.resume(id)
+			if a.exit == 0 {
+				t.Fatalf("%s: resume exited 0 and landed", c.name)
+			}
+			if !strings.Contains(a.shown()+a.errs.String(), bmModelDir) {
+				t.Fatalf("%s: the refusal does not name %s:\n%s\n%s", c.name, bmModelDir, a.shown(), a.errs.String()+fmt.Sprint(a.err))
+			}
+			bmSame(t, c.name+": the repository", bmRepoState(t, f.e), before)
+			if len(f.calls()) != 0 {
+				t.Fatalf("%s: verification ran a model: %v", c.name, f.calls())
+			}
+		})
+	}
+}
+
+// TestBMPEDRefusesDrift: a changed approval, changed approved model source or a missing source
+// refuses; no model is written and nothing is committed.
+func TestBMPEDRefusesDrift(t *testing.T) {
+	drifts := map[string]func(f *bmFix){
+		"the approval changed": func(f *bmFix) {
+			cfg, err := project.LoadConfig(f.e.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			baseline, err := project.Baseline(f.e.root, testSlug, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = project.WriteApproval(f.e.root, project.Approval{Slug: testSlug, SHA256: project.Hash(f.e.root, baseline), Base: f.e.head(), Approver: "Someone Else <else@example.invalid>", ApprovedAt: "2026-11-01T00:00:00Z"})
+			if err != nil {
+				t.Fatal(err)
+			}
+		},
+		"the approved model source changed": func(f *bmFix) {
+			f.e.write(project.ModelPath(testSlug), "module fixture { val Changed = true }\n")
+		},
+		"the approved model source is missing": func(f *bmFix) {
+			if err := os.Remove(filepath.Join(f.e.root, project.ModelPath(testSlug))); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, drift := range drifts {
+		t.Run(name, func(t *testing.T) {
+			f := bmSetup(t, bmDefaultSource, bmDefaultParams, nil)
+			id := f.interrupt()
+			f.mkdir(bmModelDir)
+			drift(f)
+			before := bmRepoState(t, f.e)
+			a := f.resume(id)
+			if a.exit == 0 {
+				t.Fatalf("%s: resume exited 0 and landed", name)
+			}
+			if strings.TrimSpace(a.shown()+a.errs.String()) == "" {
+				t.Fatalf("%s: the refusal says nothing", name)
+			}
+			bmSame(t, name+": the repository", bmRepoState(t, f.e), before)
+			if len(f.calls()) != 0 {
+				t.Fatalf("%s: verification ran a model: %v", name, f.calls())
+			}
+		})
+	}
+}
+
+// TestBMPEDAtomicPublication: while the pair is published the directory is observed continuously;
+// it is either as it was (empty) or the complete pair, never anything between.
+func TestBMPEDAtomicPublication(t *testing.T) {
+	// The observation is statistical for an implementation that is not atomic; repeat it.
+	for i := 0; i < 3; i++ {
+		t.Run(fmt.Sprintf("attempt %d", i+1), bmAtomicAttempt)
+	}
+}
+
+func bmAtomicAttempt(t *testing.T) {
+	big := "module fixture { val Safe = true\n val Other = true }\n// " + strings.Repeat("0123456789abcdef", 18<<10) + "\n"
+	f := bmSetup(t, big, bmDefaultParams, nil)
+	id := f.interrupt()
+	f.mkdir(bmModelDir)
+	dir := filepath.Join(f.e.root, bmModelDir)
+	var stop atomic.Bool
+	var mu sync.Mutex
+	var seen []string
+	var done sync.WaitGroup
+	for w := 0; w < runtime.NumCPU(); w++ {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			for !stop.Load() {
+				qi, qerr := os.Lstat(filepath.Join(dir, "model.qnt"))
+				_, jerr := os.Lstat(filepath.Join(dir, "model.json"))
+				if qerr == nil && (jerr != nil || qi.Size() != int64(len(big))) {
+					mu.Lock()
+					seen = append(seen, "model.qnt without a complete model.json")
+					mu.Unlock()
+					continue
+				}
+				if qerr != nil {
+					continue
+				}
+				entries, err := os.ReadDir(dir)
+				if err == nil && len(entries) > 0 {
+					var names []string
+					for _, en := range entries {
+						names = append(names, en.Name())
+					}
+					sort.Strings(names)
+					bad := strings.Join(names, ",") != "model.json,model.qnt"
+					if !bad {
+						if q, err := os.ReadFile(filepath.Join(dir, "model.qnt")); err != nil || !bytes.Equal(q, []byte(big)) {
+							bad = true
+						}
+						if j, err := os.ReadFile(filepath.Join(dir, "model.json")); err != nil || !json.Valid(j) {
+							bad = true
+						}
+					}
+					if bad {
+						mu.Lock()
+						seen = append(seen, strings.Join(names, ","))
+						mu.Unlock()
+					}
+				}
+			}
+		}()
+	}
+	a := f.resume(id)
+	stop.Store(true)
+	done.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) > 0 {
+		t.Fatalf("a partial model was observable during publication: %q", seen[0])
+	}
+	if a.exit != 0 {
+		t.Fatalf("resume exited %d:\n%s", a.exit, a.shown())
+	}
+	if got := bmCommitted(f, bmModelDir+"/model.qnt"); got != big {
+		t.Fatalf("the published model source differs from the approved one")
+	}
+}
+
+// TestBMPEDMismatchedIdentity: a checkpoint whose pinned approval no longer matches the approval
+// is refused without changing the repository or the checkpoint.
+func TestBMPEDMismatchedIdentity(t *testing.T) {
+	f := bmSetup(t, bmDefaultSource, bmDefaultParams, nil)
+	id := f.interrupt()
+	f.mkdir(bmModelDir)
+	doc, state := f.e.checkpoint(id)
+	state["approval_bytes"] = "bm9wZQ=="
+	doc["state"] = state
+	f.e.writeCheckpoint(id, doc)
+	checkpoint := filepath.Join(f.e.root, ".kogen/local/runs", id, "checkpoint.json")
+	cpBefore, err := os.ReadFile(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := bmRepoState(t, f.e)
+	a := f.resume(id)
+	if a.exit == 0 {
+		t.Fatalf("a Build whose pinned approval differs was resumed and exited 0")
+	}
+	bmSame(t, "the repository", bmRepoState(t, f.e), before)
+	cpAfter, err := os.ReadFile(checkpoint)
+	if err != nil || !bytes.Equal(cpAfter, cpBefore) {
+		t.Fatalf("the checkpoint changed on refusal: %v", err)
+	}
+	if len(f.calls()) != 0 {
+		t.Fatalf("verification ran a model: %v", f.calls())
+	}
+}
+
+// TestBMPEDUnknownBuildRefused: a well formed Build id that has no run is refused and changes nothing.
+func TestBMPEDUnknownBuildRefused(t *testing.T) {
+	f := bmSetup(t, bmDefaultSource, bmDefaultParams, nil)
+	id := f.interrupt()
+	f.mkdir(bmModelDir)
+	before := bmRepoState(t, f.e)
+	other := "deadbeef"
+	if other == id {
+		other = "cafebabe"
+	}
+	a := f.resume(other)
+	if a.exit == 0 {
+		t.Fatalf("resuming Build %s, which has no run, exited 0", other)
+	}
+	bmSame(t, "the repository", bmRepoState(t, f.e), before)
+}
+
+// TestBMPEDUnrelatedModelKept: an Intent without a model verifies an unrelated slug's complete
+// maintained model, and leaves it as it was.
+func TestBMPEDUnrelatedModelKept(t *testing.T) {
+	var tree map[string]string
+	pre := func(f *bmFix) {
+		bmMaintainedPair(t, f.e.root, "other", "module other { val Fine = true }\n", "Fine", "6")
+		bmCommitModels(f)
+		tree = bmTree(t, filepath.Join(f.e.root, ".kogen/models"))
+	}
+	f := bmSetup(t, "", "", pre)
+	id := f.interrupt()
+	a := f.resume(id)
+	if a.exit != 0 {
+		t.Fatalf("resume exited %d:\n%s", a.exit, a.shown())
+	}
+	bmSame(t, "the unrelated model", bmTree(t, filepath.Join(f.e.root, ".kogen/models")), tree)
+	f.wantRun(".kogen/models/other/model.qnt", "Fine", "6", "2", "3")
+}
+
+// TestBMPEDModelFreeBuild: a model-less Build without any maintained model completes without
+// creating model storage.
+func TestBMPEDModelFreeBuild(t *testing.T) {
+	e := newEnv(t)
+	e.prov.then(landScript(e.prov)...)
+	a := e.build()
+	if a.exit != 0 {
+		t.Fatalf("a model-less Build exited %d:\n%s", a.exit, a.shown())
+	}
+	if _, err := os.Stat(filepath.Join(e.root, ".kogen/models")); !os.IsNotExist(err) {
+		t.Fatalf("a model-less Build created model storage: %v", err)
+	}
+}
