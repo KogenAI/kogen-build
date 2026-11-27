@@ -1,0 +1,48 @@
+--- a/build/env_failure_park_test.go
++++ b/build/env_failure_park_test.go
+@@ -186,3 +186,45 @@
+ 	contains(t, "stop", a.out.String(), "environment/host_or_base_failure: check stage-foundation-1 failed the same way in verification passes 1 and 2")
+ 	eq(t, "passes", e.result(e.onlyRun())["passes"], any(float64(2)))
+ }
++
++func TestEnvFailureKindClassifiesEveryMemoryPhrase(t *testing.T) {
++	t.Parallel()
++	for _, line := range []string{
++		"fork/exec /usr/bin/go: cannot allocate memory",
++	} {
++		eq(t, "kind of "+line, envFailureKind(line), "memory")
++	}
++}
++
++func TestHostStopDifferentMemoryPhrasesStopQuotingTheSecond(t *testing.T) {
++	t.Parallel()
++	first, second := "fork/exec /usr/bin/go: cannot allocate memory", "Out of memory: Killed process 4242 (compile)"
++	e := kindStopEnv(t, project.Check{Name: "lint", Run: kindStopScript(first, second)})
++	a := e.build()
++	if a.exit != 3 {
++		t.Fatalf("exit %d\n%s", a.exit, a.shown())
++	}
++	out := a.out.String()
++	contains(t, "stop", out, "environment/host_or_base_failure: check lint failed the same way in verification passes 1 and 2: "+second+"; this failure is in the host or the base")
++	contains(t, "failure line", out, "  failure: "+second+"\n")
++	eq(t, "requests", len(e.prov.requests()), 2)
++	id := e.onlyRun()
++	eq(t, "outcome", e.result(id)["outcome"], any("host_or_base_failure"))
++	evs := eventsNamed(e.events(id), "host_or_base_failure")
++	eq(t, "events", len(evs), 1)
++	eq(t, "event failure", evs[0]["failure"], any(second))
++	eq(t, "event passes", evs[0]["passes"], any([]any{float64(1), float64(2)}))
++}
++
++func TestHostStopMemoryAfterAnotherKindDoesNotStop(t *testing.T) {
++	t.Parallel()
++	for name, first := range map[string]string{
++		"files":   "too many open files",
++		"timeout": "panic: test timed out after 10m0s",
++	} {
++		t.Run(name, func(t *testing.T) {
++			t.Parallel()
++			kindStopNone(t, kindStopEnv(t, project.Check{Name: "lint", Run: kindStopScript(first, "fatal error: runtime: out of memory")}))
++		})
++	}
++}

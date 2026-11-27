@@ -186,3 +186,40 @@ func TestNoEditRoundAfterAStageGateTimeoutStopsAsHostOrBaseOnTheRepeat(t *testin
 	contains(t, "stop", a.out.String(), "environment/host_or_base_failure: check stage-foundation-1 failed the same way in verification passes 1 and 2")
 	eq(t, "passes", e.result(e.onlyRun())["passes"], any(float64(2)))
 }
+
+func TestMemoryFailurePhrasesClassifyAsMemory(t *testing.T) {
+	for _, line := range []string{"cannot allocate memory", "out of memory", "Out of memory: Killed process"} {
+		t.Run(line, func(t *testing.T) {
+			eq(t, "kind", envFailureKind(line), "memory")
+		})
+	}
+}
+
+func TestHostStopDifferentMemoryPhrasesQuotesSecondLine(t *testing.T) {
+	t.Parallel()
+	first := "worker: cannot allocate memory"
+	second := "worker: Out of memory: Killed process 42"
+	e := kindStopEnv(t, project.Check{Name: "lint", Run: kindStopScript(first, second)})
+	a := e.build()
+	if a.exit != 3 {
+		t.Fatalf("exit %d\n%s", a.exit, a.shown())
+	}
+	contains(t, "stop", a.out.String(), "environment/host_or_base_failure: check lint failed the same way in verification passes 1 and 2: "+second+"; this failure is in the host or the base")
+	contains(t, "failure line", a.out.String(), "  failure: "+second+"\n")
+	eq(t, "requests", len(e.prov.requests()), 2)
+	id := e.onlyRun()
+	eq(t, "outcome", e.result(id)["outcome"], any("host_or_base_failure"))
+	eq(t, "passes", e.result(id)["passes"], any(float64(2)))
+	evs := eventsNamed(e.events(id), "host_or_base_failure")
+	eq(t, "events", len(evs), 1)
+	eq(t, "event failure", evs[0]["failure"], any(second))
+	eq(t, "event passes", evs[0]["passes"], any([]any{float64(1), float64(2)}))
+}
+
+func TestHostStopMemoryAfterOtherEnvironmentKindsDoesNotStop(t *testing.T) {
+	for _, first := range []string{"too many open files", "panic: test timed out after 10m0s"} {
+		t.Run(first, func(t *testing.T) {
+			kindStopNone(t, kindStopEnv(t, project.Check{Name: "lint", Run: kindStopScript(first, "cannot allocate memory")}))
+		})
+	}
+}
