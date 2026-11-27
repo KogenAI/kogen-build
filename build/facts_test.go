@@ -246,3 +246,65 @@ func TestLegacyFactsRemainUnchangedAndEvidenceIsInherited(t *testing.T) {
 		t.Fatal("legacy facts were rewritten")
 	}
 }
+
+// inheritedHistoryFixture writes both histories so their limits are exercised independently.
+func inheritedHistoryFixture(t *testing.T) *localFacts {
+	t.Helper()
+	root := t.TempDir()
+	old := map[string]any{}
+	for key, count := range map[string]int{"verification": 25, "reviews": 27} {
+		entries := make([]any, count)
+		for i := range entries {
+			entries[i] = map[string]any{"n": i + 1}
+		}
+		old[key] = entries
+	}
+	data, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, ".kogen/local/facts/previous.json"), string(data), 0o644)
+	facts := &localFacts{record: map[string]any{}}
+	facts.inherit(&Attempt{State: State{Root: root}}, &Run{ID: "previous"})
+	return facts
+}
+
+func assertHistoryNumbers(t *testing.T, facts *localFacts, key string, first int) {
+	t.Helper()
+	entries, ok := facts.record[key].([]any)
+	if !ok || len(entries) != 20 {
+		t.Fatalf("%s = %#v, want 20 entries", key, facts.record[key])
+	}
+	for i, entry := range entries {
+		m, ok := entry.(map[string]any)
+		if !ok || !sameNumber(m["n"], first+i) {
+			t.Fatalf("%s[%d] = %#v, want n=%d", key, i, entry, first+i)
+		}
+	}
+}
+
+func TestInheritKeepsNewestVerificationHistory(t *testing.T) {
+	facts := inheritedHistoryFixture(t)
+	assertHistoryNumbers(t, facts, "verification", 6)
+}
+
+func TestInheritKeepsNewestReviewHistoryIndependently(t *testing.T) {
+	facts := inheritedHistoryFixture(t)
+	assertHistoryNumbers(t, facts, "reviews", 8)
+}
+
+func TestEvidenceHistoryTruncationAtTwentyOne(t *testing.T) {
+	facts := &localFacts{record: map[string]any{"evidence_truncated": false}}
+	for n := 1; n <= 20; n++ {
+		facts.evidence("verification", map[string]any{"n": n}, n, t.TempDir())
+	}
+	assertHistoryNumbers(t, facts, "verification", 1)
+	if facts.record["evidence_truncated"] != false {
+		t.Fatalf("truncated at 20: %v", facts.record["evidence_truncated"])
+	}
+	facts.evidence("verification", map[string]any{"n": 21}, 21, t.TempDir())
+	assertHistoryNumbers(t, facts, "verification", 2)
+	if facts.record["evidence_truncated"] != true {
+		t.Fatalf("truncated at 21: %v", facts.record["evidence_truncated"])
+	}
+}

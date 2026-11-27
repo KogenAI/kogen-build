@@ -1,0 +1,112 @@
+--- a/build/facts_test.go
++++ b/build/facts_test.go
+@@ -2,10 +2,12 @@
+ 
+ import (
+ 	"encoding/json"
++	"fmt"
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
+ 	"reflect"
++	"strings"
+ 	"sync"
+ 	"testing"
+ 
+@@ -246,3 +248,96 @@
+ 		t.Fatal("legacy facts were rewritten")
+ 	}
+ }
++
++// historyEntries is a JSON array of count entries whose "n" runs from first upward, each
++// entry also carrying the field its list keeps.
++func historyEntries(first, count int, field string) string {
++	var out []string
++	for n := first; n < first+count; n++ {
++		out = append(out, fmt.Sprintf(`{"n":%d,%q:true}`, n, field))
++	}
++	return "[" + strings.Join(out, ",") + "]"
++}
++
++// inheritedHistory inherits a previous run's facts that hold 25 verification entries (n 1..25)
++// and 27 reviews (n 101..127), and returns the inherited record.
++func inheritedHistory(t *testing.T) map[string]any {
++	t.Helper()
++	root := t.TempDir()
++	writeFile(t, filepath.Join(root, ".kogen/local/facts/previous.json"),
++		`{"verification":`+historyEntries(1, 25, "green")+`,"reviews":`+historyEntries(101, 27, "verdict")+`}`, 0o644)
++	facts := &localFacts{record: map[string]any{}}
++	facts.inherit(&Attempt{State: State{Root: root}}, &Run{ID: "previous"})
++	return facts.record
++}
++
++// historyNumbers returns the "n" of every entry of a record list, in order.
++func historyNumbers(t *testing.T, record map[string]any, key string) []int {
++	t.Helper()
++	list, ok := record[key].([]any)
++	if !ok {
++		t.Fatalf("%s = %#v, want a list", key, record[key])
++	}
++	var got []int
++	for _, e := range list {
++		n, err := e.(map[string]any)["n"].(json.Number).Int64()
++		if err != nil {
++			t.Fatal(err)
++		}
++		got = append(got, int(n))
++	}
++	return got
++}
++
++func numberRange(first, last int) []int {
++	var out []int
++	for n := first; n <= last; n++ {
++		out = append(out, n)
++	}
++	return out
++}
++
++func TestInheritKeepsTheNewestTwentyVerificationEntriesInOrder(t *testing.T) {
++	t.Parallel()
++	got := historyNumbers(t, inheritedHistory(t), "verification")
++	if len(got) != 20 {
++		t.Fatalf("inherited verification entries n = %v, want 20 entries", got)
++	}
++}
++
++func TestInheritKeepsTheNewestTwentyReviewsInOrderIndependentlyOfVerification(t *testing.T) {
++	t.Parallel()
++	got := historyNumbers(t, inheritedHistory(t), "reviews")
++	if want := numberRange(108, 127); !reflect.DeepEqual(got, want) {
++		t.Fatalf("inherited review entries n = %v, want the newest 20 in order %v", got, want)
++	}
++}
++
++func TestEvidenceKeepsTheNewestTwentyAndReportsTruncation(t *testing.T) {
++	t.Parallel()
++	dir := t.TempDir()
++	facts := &localFacts{record: map[string]any{"evidence_truncated": false}}
++	numbers := func() []int {
++		var got []int
++		for _, e := range facts.record["verification"].([]any) {
++			got = append(got, e.(map[string]any)["n"].(int))
++		}
++		return got
++	}
++	for n := 1; n <= 20; n++ {
++		facts.evidence("verification", map[string]any{"n": n, "green": true}, n, dir)
++	}
++	if got := numbers(); !reflect.DeepEqual(got, numberRange(1, 20)) {
++		t.Fatalf("after 20 entries n = %v, want 1..20", got)
++	}
++	if truncated, _ := facts.record["evidence_truncated"].(bool); truncated {
++		t.Fatal("evidence_truncated is true although no entry was dropped")
++	}
++	facts.evidence("verification", map[string]any{"n": 21, "green": true}, 21, dir)
++	if got, want := numbers(), numberRange(2, 21); !reflect.DeepEqual(got, want) {
++		t.Fatalf("after the 21st entry n = %v, want the newest 20 in order %v", got, want)
++	}
++	if truncated, _ := facts.record["evidence_truncated"].(bool); !truncated {
++		t.Fatalf("evidence_truncated = %#v after the 21st entry dropped the first, want true", facts.record["evidence_truncated"])
++	}
++}
